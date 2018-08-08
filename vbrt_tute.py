@@ -53,16 +53,16 @@ class VaeNormalFit(object):
         # approximating distributions: 
         # q(mp) ~ MVN(mp_mean, mp_covar)
                                         
-        # prior:              
+        # -- Prior:         
+        
+        # Define priors for the parameters (i.e. the mean and var of the distirbution we are trying to infer) - these are TF constants for the mean and covariance matrix of an MVN (as above)
         self.mp_mean_0 = tf.zeros([self.n_modelparams], dtype=tf.float32)         
         self.mp_covar_0 = tf.diag(tf.constant(100.0, shape=[self.n_modelparams], dtype=tf.float32))
-      
-        # reparameterisation trick              
-        # mp = mp_mean + chol(mp_covar)*eps
         
-        #import pdb; pdb.set_trace()
+        # -- Approximating Posterior:
         
         # Setup and initialise mp_mean 
+        # This is the posterior means for the parameters in the approximating distribution
         if vae_init==None:
             if mp_mean_init[0][0]==None:
                 mp_mean_init=0.1*tf.random_normal([1,self.n_modelparams],0,1, dtype=tf.float32)
@@ -71,16 +71,11 @@ class VaeNormalFit(object):
             self.mp_mean = tf.Variable(vae_init.sess.run(vae_init.mp_mean), dtype=tf.float32, name='mp_mean')
                 
         # Setup mp_covar
+        # This is the posterior covariance matrix in the approximating distribution
         # Note that parameterising using chol ensures that mp_covar is positive def, although note that this does not reduce the number of params accordingly (need a tf.tril() func)    
-        
-        # Some Matlab code to check that chol is the right thing to use with reparam trick
-        # C=[1 -0.8; -0.8 1];
-        # z=mvnrnd([0 0],[1 0; 0 1],100000);x=z*chol(C);
-        # figure;subplot(121);hist2d(x,20);
-        # x=mvnrnd([0 0],C,100000);
-        # subplot(122);hist2d(x,20);   
                 
         if self.mode_corr == 'infer_post_corr':
+            # infer a full covariance matrix with on and off-diagonal elements
                            
             if 1:
                 
@@ -113,6 +108,7 @@ class VaeNormalFit(object):
                     self.chol_mp_covar = tf.Variable(vae_init.sess.run(vae_init.chol_mp_covar), name='chol_mp_covar')                    
         
         else:     
+            # infer only diagonal elements of the covariance matrix - i.e. no correlation between the parameters
             if vae_init==None:
                 self.log_diag_chol_mp_covar = tf.Variable(tf.constant(-2,shape=(self.n_modelparams,), dtype=tf.float32), name='log_diag_chol_mp_covar')                    
             else:
@@ -120,8 +116,12 @@ class VaeNormalFit(object):
             
             self.chol_mp_covar = tf.diag(tf.exp(self.log_diag_chol_mp_covar), name='chol_mp_covar')    
         
-        # Use reparameterisation trick to get sample for mp    
+        # form the covariance matrix from the chol decomposition
         self.mp_covar = tf.matmul(tf.transpose(self.chol_mp_covar),self.chol_mp_covar, name='mp_covar')
+        
+        # -- Generate sample of mp:
+        # Use reparameterisation trick                
+        # mp = mp_mean + chol(mp_covar)*eps
         
         eps = tf.random_normal((self.n_modelparams, self.batch_size), 0, 1, dtype=tf.float32)
         self.eps=eps
@@ -138,7 +138,7 @@ class VaeNormalFit(object):
            
         # unpack params    
         mu=tf.reshape(self.mp[0,:],[self.batch_size,1])
-        log_var_mu=tf.reshape(self.mp[1,:],[self.batch_size,1])
+        log_var_mu=tf.reshape(self.mp[1,:],[self.batch_size,1]) #remebering that we are inferring the log of the variance of the generating distirbution (this was purely by choice)
         
         if self.do_folded_normal:
             # use a iid folded normal distribution
@@ -152,6 +152,7 @@ class VaeNormalFit(object):
         else:
             
             # use a iid normal distribution
+            # Calculate the loglikelihood given our supplied mp values
             reconstr_loss = tf.reduce_sum(0.5 * tf.div(tf.square(tf.subtract(self.x,mu)), tf.exp(log_var_mu)) + 0.5 * log_var_mu ,0)
                                           
         self.reconstr_loss=reconstr_loss
@@ -170,14 +171,13 @@ class VaeNormalFit(object):
         latent_loss = 0.5*(tf.trace(tf.matmul(inv_mp_covar_0,self.mp_covar))+tf.matmul(tf.matmul(tf.transpose(mn),inv_mp_covar_0),mn) - self.n_modelparams + tf.log(tf.matrix_determinant(self.mp_covar_0, name='det_mp_covar_0') ) - tf.log(tf.matrix_determinant(self.mp_covar, name='det_mp_covar') ) )
         self.latent_loss = latent_loss
         
-        self.cost = tf.reduce_mean(reconstr_loss + latent_loss)   # average over batch
-        #self.cost = tf.reduce_mean(reconstr_loss)   # average over batch
-        
-        self.opt = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+        # Add the two terms (and average over the batch)
+        self.cost = tf.reduce_mean(reconstr_loss + latent_loss)   
         
         #self.grads_and_vars = self.opt.compute_gradients(self.cost)
         
         # Use ADAM optimizer
+        self.opt = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.optimizer = \
             self.opt.minimize(self.cost)
             
@@ -191,7 +191,9 @@ class VaeNormalFit(object):
         """Train model based on mini-batch of input data.       
         Return cost of mini-batch.
         """
-                
+        
+        # Do the optimization (self.optimizer), but also calcuate the cost for reference (self.cost, gives a second return argument)
+        # Pass in X using the feed dictionary, as we want to process the batch we have been provided X         
         opt, cost = self.sess.run((self.optimizer, self.cost), feed_dict={self.x: X})
         return cost
 
@@ -251,7 +253,7 @@ def train(data, mode_corr='infer_post_corr', learning_rate=0.01,
 
 class twodGridInfer(object):
     def __init__(self, data, gridsize=[20, 21], ranges=[-10, 10, 0.1, 10], do_folded_normal=0):
-        self.n_modelparams=2
+        self.n_modelparams=2 # This is a 2D grid search over a range of plausible mean and variance values
         self.gridsize=gridsize
         self.ranges=ranges
         self.data=data
@@ -259,14 +261,14 @@ class twodGridInfer(object):
         
         self._setup_grid()        
         
-        self.cost = self._cost_function()
-        self.posterior = np.exp(-self.cost)
+        self.cost = self._cost_function() #calcuate the cost funciton, which is the log posterior at each gid location
+        self.posterior = np.exp(-self.cost) # convert to posterior (rather than log posterior)
         
     def _cost_function(self):  
         cost=0
-        for tt in range(len(self.data)):
-            xvals=self.x_values[self.gridpoints[0]]
-            yvals=self.y_values[self.gridpoints[1]]
+        for tt in range(len(self.data)): #consider each sample in turn (i.e. each data point)
+            xvals=self.x_values[self.gridpoints[0]] #these are the possible mean values (in our grid search)
+            yvals=self.y_values[self.gridpoints[1]] #these are the possible variance values
             datatt_tiled=np.tile(self.data[tt],xvals.shape)
         
             if self.do_folded_normal:
@@ -277,7 +279,9 @@ class twodGridInfer(object):
                 
             else:
                 # use a iid normal distribution
+                # calculate the log posterior (well likelihood as there is no prior defined here)
                 cost = cost + 0.5*np.divide(np.square(datatt_tiled-xvals),yvals) + 0.5 * np.log(yvals)
+                # the cost function is the log posterior summed over all data points (it would of course be the product for non log)
             
         return np.transpose(cost)
         
@@ -310,14 +314,14 @@ plt.close("all")
 parser = argparse.ArgumentParser(description='Simulate and then infer, a normal or folded normal distribution')
 parser.add_argument("--n_samples", type=int, default=100, help="number of samples", required=False)
 parser.add_argument("--true_mean", type=float, default=1, help="true mean of simulated data", required=False)
-parser.add_argument("--true_var", type=float, default=10, help="true var of simulated data", required=False)
+parser.add_argument("--true_var", type=float, default=4, help="true var of simulated data", required=False)
 parser.add_argument("--sim_folded_normal", action='store_true', help="simulate folded normal?", required=False)
 parser.add_argument("--infer_folded_normal", action='store_true', help="infer folded normal?", required=False)
 args = parser.parse_args()
 
-n_samples = args.n_samples
-true_mean = [args.true_mean]
-true_var = [[float(args.true_var)]]
+n_samples = args.n_samples #An integer
+true_mean = [args.true_mean] #We need a 1D array - create from the float value
+true_var = [[float(args.true_var)]] #We need a 2D array - create from the float value
 #import pdb; pdb.set_trace()
 
 sim_folded_normal = args.sim_folded_normal
@@ -351,8 +355,9 @@ else:
     ranges=[-5, 5, 0.1, 8]
     
 twod=twodGridInfer(x, gridsize=[200, 201], do_folded_normal=infer_folded_normal, ranges=ranges)
+# at this point twod.posterior is a 200x201 array of posterior values
 
-do_plot=False
+do_plot=True
 if do_plot:
     plt.figure(2)
     imgplot = plt.imshow(np.flipud(twod.posterior), extent=twod.ranges)
