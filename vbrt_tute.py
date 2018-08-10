@@ -61,7 +61,7 @@ class VaeNormalFit(object):
         
         # -- Approximating Posterior:
         
-        # Setup and initialise mp_mean 
+        # Setup and initialise mp_mean (as a Variable to be optimised later)
         # This is the posterior means for the parameters in the approximating distribution
         if vae_init==None:
             if mp_mean_init[0][0]==None:
@@ -70,7 +70,7 @@ class VaeNormalFit(object):
         else:
             self.mp_mean = tf.Variable(vae_init.sess.run(vae_init.mp_mean), dtype=tf.float32, name='mp_mean')
                 
-        # Setup mp_covar
+        # Setup mp_covar (as a Variable to be optimised later)
         # This is the posterior covariance matrix in the approximating distribution
         # Note that parameterising using chol ensures that mp_covar is positive def, although note that this does not reduce the number of params accordingly (need a tf.tril() func)    
                 
@@ -208,7 +208,7 @@ def train(data, mode_corr='infer_post_corr', learning_rate=0.01,
     cost_history=np.zeros([training_epochs])        
     
     # Training cycle
-    for epoch in range(training_epochs):
+    for epoch in range(training_epochs): # multiple training epochs of gradient descent, i.e. make multiple 'passes' through the data.
 
         avg_cost = 0.
         total_batch = int(n_samples / batch_size)
@@ -370,7 +370,7 @@ if do_plot:
 infer_folded_normal=sim_folded_normal
 
 learning_rate=0.02
-batch_size=n_samples
+batch_size=n_samples 
 training_epochs=400
 
 # initialise params
@@ -391,7 +391,7 @@ mp_mean_init[0,1]=np.log(init_var)
 mode_corr='infer_post_corr'            
 vae_norm_init, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=0, batch_size=batch_size, do_folded_normal=infer_folded_normal, mp_mean_init=mp_mean_init)
 
-# now train with correlation between mean and variance
+# now train with no correlation between mean and variance
 mode_corr='no_post_corr'
 vae_norm_no_post_corr, cost_history_no_post_corr = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
 
