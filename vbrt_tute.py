@@ -18,12 +18,13 @@ import argparse
 
 class VaeNormalFit(object):
     def __init__(self,  
-                 learning_rate=0.001, batch_size=100, mode_corr='infer_post_corr', do_folded_normal=0, vae_init=None, mp_mean_init=None):
+                 learning_rate=0.001, batch_size=100, mode_corr='infer_post_corr', do_folded_normal=0, vae_init=None, mp_mean_init=None, scale=1):
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.mode_corr=mode_corr
         self.n_modelparams=2
         self.do_folded_normal=do_folded_normal
+        self.scale=scale
         
         # tf Graph input
         self.x = tf.placeholder(tf.float32, [None, 1])
@@ -146,15 +147,16 @@ class VaeNormalFit(object):
             # mean is in log space to enforce positivity
             mu = tf.exp(mu)
             
-            reconstr_loss = 0.5 * tf.div(tf.add(tf.square(self.x), tf.square(mu)), tf.exp(log_var_mu)) + 0.5 * log_var_mu 
+            reconstr_loss = 0.5 * self.scale * tf.div(tf.add(tf.square(self.x), tf.square(mu)), tf.exp(log_var_mu)) + 0.5 * log_var_mu - 0.5 * np.log(scale)
             reconstr_loss = reconstr_loss - self._log_cosh(tf.div(tf.multiply(self.x,mu), tf.exp(log_var_mu)))
             reconstr_loss = tf.reduce_sum(reconstr_loss,0)
         else:
             
             # use a iid normal distribution
             # Calculate the loglikelihood given our supplied mp values
-            reconstr_loss = tf.reduce_sum(0.5 * tf.div(tf.square(tf.subtract(self.x,mu)), tf.exp(log_var_mu)) + 0.5 * log_var_mu ,0)
-                                          
+            reconstr_loss = tf.reduce_sum(0.5 * self.scale * tf.div(tf.square(tf.subtract(self.x,mu)), tf.exp(log_var_mu)) + 0.5 * log_var_mu - 0.5 * np.log(scale) ,0)
+            # NOTE: scale (the relative scale of number of samples and size of batch) appears in here to get the relative scaling of log-likehood correct, even though we have dropped the constant term log(n_samples)                              
+            
         self.reconstr_loss=reconstr_loss
         
         # 2.) log (q(mp)/p(mp)) = log(q(mp)) - log(p(mp))
@@ -201,9 +203,9 @@ class VaeNormalFit(object):
 #%%
 
 def train(data, mode_corr='infer_post_corr', learning_rate=0.01,
-          batch_size=100, training_epochs=10, display_step=1, do_folded_normal=False, vae_init=None, mp_mean_init=None):
+          batch_size=100, scale=1, training_epochs=10, display_step=1, do_folded_normal=False, vae_init=None, mp_mean_init=None):
     vae = VaeNormalFit(mode_corr=mode_corr, learning_rate=learning_rate, 
-                                 batch_size=batch_size, do_folded_normal=do_folded_normal, vae_init=vae_init, mp_mean_init=mp_mean_init)
+                                 batch_size=batch_size, scale=scale, do_folded_normal=do_folded_normal, vae_init=vae_init, mp_mean_init=mp_mean_init)
     
     cost_history=np.zeros([training_epochs])        
     
@@ -370,7 +372,8 @@ if do_plot:
 infer_folded_normal=sim_folded_normal
 
 learning_rate=0.02
-batch_size=n_samples 
+batch_size=100 #n_samples 
+scale = n_samples/batch_size
 training_epochs=400
 
 # initialise params
@@ -389,15 +392,15 @@ mp_mean_init[0,1]=np.log(init_var)
   
 # call with no training epochs to get initialisation
 mode_corr='infer_post_corr'            
-vae_norm_init, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=0, batch_size=batch_size, do_folded_normal=infer_folded_normal, mp_mean_init=mp_mean_init)
+vae_norm_init, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=0, batch_size=batch_size, scale=scale, do_folded_normal=infer_folded_normal, mp_mean_init=mp_mean_init)
 
 # now train with no correlation between mean and variance
 mode_corr='no_post_corr'
-vae_norm_no_post_corr, cost_history_no_post_corr = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
+vae_norm_no_post_corr, cost_history_no_post_corr = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, scale=scale, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
 
 # now train with correlation between mean and variance
 mode_corr='infer_post_corr'
-vae_norm, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
+vae_norm, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, scale=scale, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
 
 #mn = vae_norm.sess.run(vae_norm.mp_mean)
 #import pdb; pdb.set_trace()
