@@ -147,14 +147,14 @@ class VaeNormalFit(object):
             # mean is in log space to enforce positivity
             mu = tf.exp(mu)
             
-            reconstr_loss = 0.5 * self.scale * tf.div(tf.add(tf.square(self.x), tf.square(mu)), tf.exp(log_var_mu)) + 0.5 * log_var_mu - 0.5 * np.log(scale)
+            reconstr_loss = 0.5 * self.scale * tf.div(tf.add(tf.square(self.x), tf.square(mu)), tf.exp(log_var_mu)) + 0.5 * self.scale * log_var_mu
             reconstr_loss = reconstr_loss - self._log_cosh(tf.div(tf.multiply(self.x,mu), tf.exp(log_var_mu)))
             reconstr_loss = tf.reduce_sum(reconstr_loss,0)
         else:
             
             # use a iid normal distribution
             # Calculate the loglikelihood given our supplied mp values
-            reconstr_loss = tf.reduce_sum(0.5 * self.scale * tf.div(tf.square(tf.subtract(self.x,mu)), tf.exp(log_var_mu)) + 0.5 * log_var_mu - 0.5 * np.log(scale) ,0)
+            reconstr_loss = tf.reduce_sum(0.5 * self.scale * tf.div(tf.square(tf.subtract(self.x,mu)), tf.exp(log_var_mu)) + 0.5 * self.scale * log_var_mu ,0)
             # NOTE: scale (the relative scale of number of samples and size of batch) appears in here to get the relative scaling of log-likehood correct, even though we have dropped the constant term log(n_samples)                              
             
         self.reconstr_loss=reconstr_loss
@@ -372,7 +372,7 @@ if do_plot:
 infer_folded_normal=sim_folded_normal
 
 learning_rate=0.02
-batch_size=100 #n_samples 
+batch_size=10 #n_samples 
 scale = n_samples/batch_size
 training_epochs=400
 
