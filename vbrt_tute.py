@@ -203,20 +203,23 @@ class VaeNormalFit(object):
 #%%
 
 def train(data, mode_corr='infer_post_corr', learning_rate=0.01,
-          batch_size=100, scale=1, training_epochs=10, display_step=1, do_folded_normal=False, vae_init=None, mp_mean_init=None):
+          batch_size=100, training_epochs=10, display_step=1, do_folded_normal=False, vae_init=None, mp_mean_init=None):
+    
+    # need to determine the 'scale' between log-likihood and KL(post-prior) when using batches
+    scale = n_samples/batch_size
+    
     vae = VaeNormalFit(mode_corr=mode_corr, learning_rate=learning_rate, 
                                  batch_size=batch_size, scale=scale, do_folded_normal=do_folded_normal, vae_init=vae_init, mp_mean_init=mp_mean_init)
     
-    cost_history=np.zeros([training_epochs])        
+    cost_history=np.zeros([training_epochs]) 
+    total_batch = int(n_samples / batch_size)
+    #print("total_batch:", '%d' % total_batch )
+    #cost_full_history =  np.zeros([training_epochs * total_batch])      
     
     # Training cycle
     for epoch in range(training_epochs): # multiple training epochs of gradient descent, i.e. make multiple 'passes' through the data.
 
         avg_cost = 0.
-        total_batch = int(n_samples / batch_size)
-        
-        #print("total_batch:", '%d' % total_batch )
-        
         index = 0
         
         batch_xs = data[index:index+batch_size]
@@ -229,6 +232,7 @@ def train(data, mode_corr='infer_post_corr', learning_rate=0.01,
                      
             # Fit training using batch data
             cost = vae.partial_fit(batch_xs)
+            #cost_full_history[(epoch-1)*total_batch + i] = cost
                         
             # Compute average loss
             avg_cost += cost / n_samples * batch_size
@@ -373,7 +377,7 @@ infer_folded_normal=sim_folded_normal
 
 learning_rate=0.02
 batch_size=10 #n_samples 
-scale = n_samples/batch_size
+#scale = n_samples/batch_size
 training_epochs=400
 
 # initialise params
@@ -392,15 +396,15 @@ mp_mean_init[0,1]=np.log(init_var)
   
 # call with no training epochs to get initialisation
 mode_corr='infer_post_corr'            
-vae_norm_init, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=0, batch_size=batch_size, scale=scale, do_folded_normal=infer_folded_normal, mp_mean_init=mp_mean_init)
+vae_norm_init, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=0, batch_size=batch_size, do_folded_normal=infer_folded_normal, mp_mean_init=mp_mean_init)
 
 # now train with no correlation between mean and variance
 mode_corr='no_post_corr'
-vae_norm_no_post_corr, cost_history_no_post_corr = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, scale=scale, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
+vae_norm_no_post_corr, cost_history_no_post_corr = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
 
 # now train with correlation between mean and variance
 mode_corr='infer_post_corr'
-vae_norm, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, scale=scale, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
+#vae_norm, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
 
 #mn = vae_norm.sess.run(vae_norm.mp_mean)
 #import pdb; pdb.set_trace()
