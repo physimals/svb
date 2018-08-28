@@ -147,14 +147,14 @@ class VaeNormalFit(object):
             # mean is in log space to enforce positivity
             mu = tf.exp(mu)
             
-            reconstr_loss = 0.5 * self.scale * tf.div(tf.add(tf.square(self.x), tf.square(mu)), tf.exp(log_var_mu)) + 0.5 * self.scale * log_var_mu
-            reconstr_loss = reconstr_loss - self._log_cosh(tf.div(tf.multiply(self.x,mu), tf.exp(log_var_mu)))
+            reconstr_loss = 0.5 * self.scale * ( tf.div(tf.add(tf.square(self.x), tf.square(mu)), tf.exp(log_var_mu)) + log_var_mu + np.log( 0.5 * np.pi ) )
+            reconstr_loss = reconstr_loss - self.scale * self._log_cosh(tf.div(tf.multiply(self.x,mu), tf.exp(log_var_mu)))
             reconstr_loss = tf.reduce_sum(reconstr_loss,0)
         else:
             
             # use a iid normal distribution
             # Calculate the loglikelihood given our supplied mp values
-            reconstr_loss = tf.reduce_sum(0.5 * self.scale * tf.div(tf.square(tf.subtract(self.x,mu)), tf.exp(log_var_mu)) + 0.5 * self.scale * log_var_mu ,0)
+            reconstr_loss = tf.reduce_sum(0.5 * self.scale * ( tf.div(tf.square(tf.subtract(self.x,mu)), tf.exp(log_var_mu)) + log_var_mu + np.log( 2 * np.pi) ) ,0)
             # NOTE: scale (the relative scale of number of samples and size of batch) appears in here to get the relative scaling of log-likehood correct, even though we have dropped the constant term log(n_samples)                              
             
         self.reconstr_loss=reconstr_loss
@@ -404,7 +404,7 @@ vae_norm_no_post_corr, cost_history_no_post_corr = train(x, mode_corr=mode_corr,
 
 # now train with correlation between mean and variance
 mode_corr='infer_post_corr'
-#vae_norm, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
+vae_norm, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
 
 #mn = vae_norm.sess.run(vae_norm.mp_mean)
 #import pdb; pdb.set_trace()
