@@ -264,7 +264,7 @@ def train(t,data, mode_corr='infer_post_corr', learning_rate=0.01,
 n_samples=100
 true_amp = 1.0 # the true amplitude of the model
 true_R1 = 1.0 # the true decay rate
-true_sd = 0.1 # the s.d. of the noise
+true_sd = 1 # the s.d. of the noise
 true_var = true_sd*true_sd
 
 #time points
@@ -294,11 +294,11 @@ training_epochs=400
 mp_mean_init=np.zeros([1,3]).astype('float32')
 # some roughtloy sensible init values from the data
 init_amp = np.max(x)
-init_R1 = 1.0
+init_R1 = 0.5
 init_var=np.var(x)
 mp_mean_init[0,0]=init_amp
 mp_mean_init[0,1]=init_R1
-mp_mean_init[0,1]=np.log(init_var) #NB becuase we happen to be infering the log of the variance
+mp_mean_init[0,2]=np.log(init_var) #NB becuase we happen to be infering the log of the variance
   
 # call with no training epochs to get initialisation
 mode_corr='infer_post_corr'            
@@ -310,15 +310,15 @@ vae_norm_no_post_corr, cost_history_no_post_corr = train(t, x, mode_corr=mode_co
 
 #%%
 # now train with correlation between mean and variance
-mode_corr='infer_post_corr'
-vae_norm, cost_history = train(x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, do_folded_normal=infer_folded_normal, vae_init=vae_norm_init)
+#mode_corr='infer_post_corr'
+vae_norm, cost_history = train(t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, vae_init=vae_norm_init)
 
 #mn = vae_norm.sess.run(vae_norm.mp_mean)
 #import pdb; pdb.set_trace()
 #print("VAE Estimated mean:", "{:.9f}".format(mn[0,0]), "Estimated var=", "{:.9f}".format(np.exp(mn[0,1])))    
 #print("True mean:", "{:.9f}".format(true_mean[0]), "True var=", "{:.9f}".format(true_var[0][0]))
 
-# plot cost history
+#%% plot cost history
 plt.figure(3)
 
 ax1 = plt.subplot(1,2,1)
@@ -337,71 +337,46 @@ plt.ylabel('cost')
 plt.xlabel('epochs')
 plt.title('Infer post correlation')
 
-# compute images for plotting the vae MVN approximate posterior on the same grid as the 2Dgrid posterior
-xvals=twod.x_values[twod.gridpoints[0]]
-xvals.shape = (xvals.shape[0], xvals.shape[1], 1)
-if infer_folded_normal:
-    xvals = np.log(xvals)
-        
-yvals=np.log(twod.y_values[twod.gridpoints[1]])
-yvals.shape = (yvals.shape[0], yvals.shape[1], 1)
-rvs=np.concatenate((xvals,yvals),2)
+#%% plot the estimate functions overlaid on data
 
-mn = vae_norm_init.sess.run(vae_norm_init.mp_mean)
-vae_post_init=stats.multivariate_normal.pdf(rvs, mean=mn[0], cov=vae_norm_init.sess.run(vae_norm_init.mp_covar))
-mn = vae_norm_no_post_corr.sess.run(vae_norm_no_post_corr.mp_mean)
-vae_post_no_post_corr=stats.multivariate_normal.pdf(rvs, mean=mn[0], cov=vae_norm_no_post_corr.sess.run(vae_norm_no_post_corr.mp_covar))
-mn = vae_norm.sess.run(vae_norm.mp_mean)
-vae_post=stats.multivariate_normal.pdf(rvs, mean=mn[0], cov=vae_norm.sess.run(vae_norm.mp_covar))
-
-# do the posterior plots
 plt.figure(4)
 
-plt.subplots_adjust(hspace=0.5, wspace=0.5)
+ax1 = plt.subplot(1,2,1)
+plt.cla()
 
-ax1 = plt.subplot(2,2,1)
+# plot the data
+plt.plot(t,x,'rx')
+# plot the ground truth
+plt.plot(t,y_true,'r')
+# plot the fit using the inital guess (for reference)
+mn = vae_norm_init.sess.run(vae_norm_init.mp_mean)
+est_amp = mn[0,0]
+est_R1 = mn[0,1]
+y_est = est_amp * np.exp(-t*est_R1)
+plt.plot(t,y_est,'k.')
+# plto the fit with the estimated parameter values
+mn = vae_norm_no_post_corr.sess.run(vae_norm_no_post_corr.mp_mean)
+est_amp = mn[0,0]
+est_R1 = mn[0,1]
+y_est = est_amp * np.exp(-t*est_R1)
+plt.plot(t,y_est,'b')
 
-# plot the histogram of the sampled data
-hist, bins = np.histogram(x, bins=50, normed=True)
-width = 0.7 * (bins[1] - bins[0])
-center = (bins[:-1] + bins[1:]) / 2
-plt.bar(center, hist, align='center', width=width)
-plt.xlabel('data')
-plt.grid(True)
-if sim_folded_normal:
-    pd=np.transpose(folded_norm_pdf(bins,true_mean[0],true_var[0][0]))   
-else:
-    pd=np.transpose(stats.norm.pdf(bins,true_mean,np.sqrt(true_var)))
-plt.plot(bins, pd, 'r-', lw=5, alpha=0.6, label='norm pdf')
+ax2 = plt.subplot(1,2,2)
+plt.cla()
 
-ax1 = plt.subplot(2,2,2)
-imgplot = plt.imshow(np.flipud(twod.posterior), extent=twod.ranges, aspect='auto')
-plt.xlabel('mean')
-plt.ylabel('variance')
-plt.title('Exhastive Grid Posterior')
-
-if False:
-    imgplot = plt.imshow(np.flipud(np.transpose(vae_post_init)), extent=twod.ranges, aspect='auto')
-    plt.xlabel('mean')
-    plt.ylabel('variance')
-    plt.title('VBRT Posterior Init')
-
-ax1 = plt.subplot(2,2,3)
-imgplot = plt.imshow(np.flipud(np.transpose(vae_post_no_post_corr)), extent=twod.ranges, aspect='auto')
-plt.xlabel('mean')
-plt.ylabel('variance')
-plt.title('VBRT No Post. Corr')
-
-ax1 = plt.subplot(2,2,4)
-imgplot = plt.imshow(np.flipud(np.transpose(vae_post)), extent=twod.ranges, aspect='auto')
-plt.xlabel('mean')
-plt.ylabel('variance')
-plt.title('VBRT With Post. Corr')
-
-plt.show()
-
-#import pdb; pdb.set_trace()
-
-# source activate tensorflow14                        
-# python /Users/woolrich/Dropbox/vols_scripts/vbrt_tute/vbrt_tute.py --true_mean=1 --true_var=8 --n_samples=50 --sim_folded_normal --infer_folded_normal
-# python /Users/woolrich/Dropbox/vols_scripts/vbrt_tute/vbrt_tute.py --true_mean=1 --true_var=4 --n_samples=30 
+# plot the data
+plt.plot(t,x,'rx')
+# plot the ground truth
+plt.plot(t,y_true,'r')
+# plot the fit using the inital guess (for reference)
+mn = vae_norm_init.sess.run(vae_norm_init.mp_mean)
+est_amp = mn[0,0]
+est_R1 = mn[0,1]
+y_est = est_amp * np.exp(-t*est_R1)
+plt.plot(t,y_est,'k.')
+# plto the fit with the estimated parameter values
+mn = vae_norm.sess.run(vae_norm.mp_mean)
+est_amp = mn[0,0]
+est_R1 = mn[0,1]
+y_est = est_amp * np.exp(-t*est_R1)
+plt.plot(t,y_est,'b')
