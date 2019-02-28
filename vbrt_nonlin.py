@@ -18,10 +18,6 @@ import argparse
 ############
 #%% Non-linear model obj
 class NonLinModel:
-    def __init__(self):
-        self.sess = tf.Session()
-        init = tf.initialize_all_variables()
-        self.sess.run(init)
     
     def evaluate(self,mp,t):
         # unpack params    
@@ -58,7 +54,7 @@ class VaeNormalFit(object):
         self._create_loss_optimizer(nlinmod)
         
         # Initializing the tensor flow variables
-        init = tf.initialize_all_variables()
+        init = tf.global_variables_initializer()
 
         # Launch the session
         self.sess = tf.Session()
@@ -214,13 +210,11 @@ class VaeNormalFit(object):
 ####
 #%%
 
-def train(t,data, mode_corr='infer_post_corr', learning_rate=0.01,
+def train(nlinmod,t,data, mode_corr='infer_post_corr', learning_rate=0.01,
           batch_size=100, training_epochs=10, display_step=1, do_folded_normal=False, vae_init=None, mp_mean_init=None):
     
     # need to determine the 'scale' between log-likihood and KL(post-prior) when using batches
     scale = n_samples/batch_size
-    
-    nlinmod = NonLinModel()
     
     vae = VaeNormalFit(nlinmod,mode_corr=mode_corr, learning_rate=learning_rate, 
                                  batch_size=batch_size, scale=scale, do_folded_normal=do_folded_normal, vae_init=vae_init, mp_mean_init=mp_mean_init)
@@ -293,7 +287,14 @@ t = np.reshape(t,(-1,1))
 #%% create simulated data
 
 # calcuate forward model
-y_true = true_amp * np.exp(-t*true_R1)
+#y_true = true_amp * np.exp(-t*true_R1)
+# we will use the non-linear model as defined in the class (therefore need a TF session too)
+nlinmod=NonLinModel()
+init = tf.global_variables_initializer()
+sess = tf.Session()
+sess.run(init)
+mptrue = np.reshape(np.array([true_amp,true_R1]),[-1,1])
+y_true = sess.run(nlinmod.evaluate(mptrue,t))
 
 # add noise
 x = np.random.normal(y_true,true_sd)
@@ -319,16 +320,16 @@ mp_mean_init[0,2]=np.log(init_var) #NB becuase we happen to be infering the log 
   
 # call with no training epochs to get initialisation
 mode_corr='infer_post_corr'            
-vae_norm_init, cost_history = train(t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=0, batch_size=batch_size, mp_mean_init=mp_mean_init)
+vae_norm_init, cost_history = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=0, batch_size=batch_size, mp_mean_init=mp_mean_init)
 
 # now train with no correlation between mean and variance
 mode_corr='no_post_corr'
-vae_norm_no_post_corr, cost_history_no_post_corr = train(t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, vae_init=vae_norm_init)
+vae_norm_no_post_corr, cost_history_no_post_corr = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, vae_init=vae_norm_init)
 
 #%%
 # now train with correlation between mean and variance
 #mode_corr='infer_post_corr'
-vae_norm, cost_history = train(t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, vae_init=vae_norm_init)
+vae_norm, cost_history = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, vae_init=vae_norm_init)
 
 #mn = vae_norm.sess.run(vae_norm.mp_mean)
 #import pdb; pdb.set_trace()
