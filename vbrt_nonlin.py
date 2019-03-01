@@ -16,8 +16,10 @@ import scipy.stats as stats
 import argparse
 
 ############
-#%% Non-linear model obj
-class NonLinModel:
+#%% Non-linear model obj - exponential
+class ExpModel:
+    
+    nparams = 2
     
     def evaluate(self,mp,t):
         # unpack params    
@@ -27,7 +29,39 @@ class NonLinModel:
         y_pred = A * tf.exp(-R1 * t)
         return y_pred
     
+    def init_params(self,t,x,mp_mean_init):
+        init_amp = np.max(x)
+        init_R1 = 0.5
+        
+        mp_mean_init[0,0]=init_amp
+        mp_mean_init[0,1]=init_R1
+        return mp_mean_init
     
+class BiExpModel:
+    
+    nparams = 4
+    
+    def evaluate(self,mp,t):
+        A1 = tf.reshape(mp[0,:],[-1,1])
+        R1 = tf.reshape(mp[2,:],[-1,1])
+        A2 = tf.reshape(mp[1,:],[-1,1])
+        R2 = tf.reshape(mp[3,:],[-1,1])
+        
+        y_pred = A1 * tf.exp(-R1 * t) + A2 * tf.exp(-R2 * t)
+        return y_pred
+    
+    def init_params(self,t,x,mp_mean_init):
+        init_amp1 = 0.9*np.max(x)
+        init_amp2 = 0.1*np.max(x)
+        init_R1 = 0.5
+        init_R2 = 0.1
+        
+        mp_mean_init[0,0]=init_amp1
+        mp_mean_init[0,2]=init_R1
+        mp_mean_init[0,1]=init_amp2
+        mp_mean_init[0,3]=init_R2
+        return mp_mean_init
+        
         
 #%% VAE obj
 
@@ -37,7 +71,7 @@ class VaeNormalFit(object):
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.mode_corr=mode_corr
-        self.n_modelparams=3
+        self.n_modelparams=nlinmod.nparams +1 #the total model parameters is the non-linear model parameters plus noise parameters
         self.scale=scale
         
         # tf Graph input
@@ -273,8 +307,10 @@ def train(nlinmod,t,data, mode_corr='infer_post_corr', learning_rate=0.01,
 
 # set the properties of the simulated data
 n_samples=100
-true_amp = 1.0 # the true amplitude of the model
+true_amp1 = 1.0 # the true amplitude of the model
+true_amp2 = 0.5
 true_R1 = 1.0 # the true decay rate
+true_R2 = 0.2
 true_sd = 0.2 # the s.d. of the noise
 true_var = true_sd*true_sd
 
@@ -289,11 +325,18 @@ t = np.reshape(t,(-1,1))
 # calcuate forward model
 #y_true = true_amp * np.exp(-t*true_R1)
 # we will use the non-linear model as defined in the class (therefore need a TF session too)
-nlinmod=NonLinModel()
 init = tf.global_variables_initializer()
 sess = tf.Session()
 sess.run(init)
-mptrue = np.reshape(np.array([true_amp,true_R1]),[-1,1])
+
+model="biexp"
+if model == "exp":
+    nlinmod=ExpModel()
+    mptrue = np.reshape(np.array([true_amp1,true_R1]),[-1,1])
+elif model == "biexp":
+    nlinmod=BiExpModel()
+    mptrue = np.reshape(np.array([true_amp1,true_amp2,true_R1,true_R2]),[-1,1])
+    
 y_true = sess.run(nlinmod.evaluate(mptrue,t))
 
 # add noise
@@ -306,17 +349,14 @@ x = np.reshape(x, (-1,1))
 learning_rate=0.02
 batch_size=10 #n_samples 
 #scale = n_samples/batch_size
-training_epochs=100
+training_epochs=400
 
 # initialise params
-mp_mean_init=np.zeros([1,3]).astype('float32')
-# some roughtloy sensible init values from the data
-init_amp = np.max(x)
-init_R1 = 0.5
+# some roughly sensible init values from the data
+mp_mean_init=np.zeros([1,nlinmod.nparams+1]).astype('float32')
+mp_mean_init = nlinmod.init_params(t,x,mp_mean_init)
 init_var=np.var(x)
-mp_mean_init[0,0]=init_amp
-mp_mean_init[0,1]=init_R1
-mp_mean_init[0,2]=np.log(init_var) #NB becuase we happen to be infering the log of the variance
+mp_mean_init[0,nlinmod.nparams] = np.log(init_var) #NB becuase we happen to be infering the log of the variance
   
 # call with no training epochs to get initialisation
 mode_corr='infer_post_corr'            
@@ -368,15 +408,11 @@ plt.plot(t,x,'rx')
 plt.plot(t,y_true,'r')
 # plot the fit using the inital guess (for reference)
 mn = vae_norm_init.sess.run(vae_norm_init.mp_mean)
-est_amp = mn[0,0]
-est_R1 = mn[0,1]
-y_est = est_amp * np.exp(-t*est_R1)
+y_est = sess.run(nlinmod.evaluate(np.reshape(mn[0,0:nlinmod.nparams],[-1,1]),t))
 plt.plot(t,y_est,'k.')
 # plto the fit with the estimated parameter values
 mn = vae_norm_no_post_corr.sess.run(vae_norm_no_post_corr.mp_mean)
-est_amp = mn[0,0]
-est_R1 = mn[0,1]
-y_est = est_amp * np.exp(-t*est_R1)
+y_est = sess.run(nlinmod.evaluate(np.reshape(mn[0,0:nlinmod.nparams],[-1,1]),t))
 plt.plot(t,y_est,'b')
 
 ax2 = plt.subplot(1,2,2)
@@ -388,13 +424,9 @@ plt.plot(t,x,'rx')
 plt.plot(t,y_true,'r')
 # plot the fit using the inital guess (for reference)
 mn = vae_norm_init.sess.run(vae_norm_init.mp_mean)
-est_amp = mn[0,0]
-est_R1 = mn[0,1]
-y_est = est_amp * np.exp(-t*est_R1)
+y_est = sess.run(nlinmod.evaluate(np.reshape(mn[0,0:nlinmod.nparams],[-1,1]),t))
 plt.plot(t,y_est,'k.')
 # plto the fit with the estimated parameter values
 mn = vae_norm.sess.run(vae_norm.mp_mean)
-est_amp = mn[0,0]
-est_R1 = mn[0,1]
-y_est = est_amp * np.exp(-t*est_R1)
+y_est = sess.run(nlinmod.evaluate(np.reshape(mn[0,0:nlinmod.nparams],[-1,1]),t))
 plt.plot(t,y_est,'b')
