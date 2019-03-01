@@ -67,9 +67,10 @@ class BiExpModel:
 
 class VaeNormalFit(object):
     def __init__(self, nlinmod, 
-                 learning_rate=0.001, batch_size=100, mode_corr='infer_post_corr', do_folded_normal=0, vae_init=None, mp_mean_init=None, scale=1):
+                 learning_rate=0.001, batch_size=100, draw_size=100, mode_corr='infer_post_corr', do_folded_normal=0, vae_init=None, mp_mean_init=None, scale=1):
         self.learning_rate = learning_rate
         self.batch_size = batch_size
+        self.draw_size = draw_size
         self.mode_corr=mode_corr
         self.n_modelparams=nlinmod.nparams +1 #the total model parameters is the non-linear model parameters plus noise parameters
         self.scale=scale
@@ -176,7 +177,9 @@ class VaeNormalFit(object):
         # Use reparameterisation trick                
         # mp = mp_mean + chol(mp_covar)*eps
         
-        eps = tf.random_normal((self.n_modelparams, self.batch_size), 0, 1, dtype=tf.float32)
+        eps = tf.random_normal((self.n_modelparams, self.draw_size), 0, 1, dtype=tf.float32)
+        ntile = np.floor_divide(self.batch_size,self.draw_size)
+        eps = tf.tile(eps,[1,ntile])
         self.eps=eps
                
         self.mp = tf.add(tf.tile(tf.reshape(self.mp_mean,[self.n_modelparams,1]),[1,self.batch_size]), tf.matmul(self.chol_mp_covar, eps))
@@ -245,13 +248,14 @@ class VaeNormalFit(object):
 #%%
 
 def train(nlinmod,t,data, mode_corr='infer_post_corr', learning_rate=0.01,
-          batch_size=100, training_epochs=10, display_step=1, do_folded_normal=False, vae_init=None, mp_mean_init=None):
+          batch_size=100, draw_size=100, training_epochs=10, display_step=1, do_folded_normal=False, vae_init=None, mp_mean_init=None):
     
     # need to determine the 'scale' between log-likihood and KL(post-prior) when using batches
-    scale = n_samples/batch_size
+    #scale = n_samples/batch_size
+    scale = np.floor_divide(n_samples,batch_size)
     
     vae = VaeNormalFit(nlinmod,mode_corr=mode_corr, learning_rate=learning_rate, 
-                                 batch_size=batch_size, scale=scale, do_folded_normal=do_folded_normal, vae_init=vae_init, mp_mean_init=mp_mean_init)
+                                 batch_size=batch_size, draw_size=draw_size, scale=scale, do_folded_normal=do_folded_normal, vae_init=vae_init, mp_mean_init=mp_mean_init)
     
     cost_history=np.zeros([training_epochs]) 
     total_batch = int(n_samples / batch_size)
@@ -264,15 +268,18 @@ def train(nlinmod,t,data, mode_corr='infer_post_corr', learning_rate=0.01,
         avg_cost = 0.
         index = 0
         
-        batch_xs = data[index:index+batch_size]
-        t_xs = t[index:index+batch_size]
-        # print(vae.sess.run((vae.log_diag_chol_mp_covar,vae.mp_covar), feed_dict={vae.x: batch_xs}))
          
         # Loop over all batches
         for i in range(total_batch):
-            batch_xs = data[index:index+batch_size]
-            t_xs = t[index:index+batch_size]
-            index = index + batch_size
+            if 0:
+                # batches are defined sequential datapoints
+                batch_xs = data[index:index+batch_size]
+                t_xs = t[index:index+batch_size]
+                index = index + batch_size
+            else:
+                # batches are defined evenly through the samples
+                batch_xs = data[i::scale]
+                t_xs = t[i::scale]
                      
             # Fit training using batch data
             cost = vae.partial_fit(t_xs,batch_xs)
@@ -348,8 +355,9 @@ x = np.reshape(x, (-1,1))
 
 learning_rate=0.02
 batch_size=10 #n_samples 
+draw_size=1 #number of draws to make when doing reparameterization
 #scale = n_samples/batch_size
-training_epochs=400
+training_epochs=100
 
 # initialise params
 # some roughly sensible init values from the data
@@ -360,16 +368,15 @@ mp_mean_init[0,nlinmod.nparams] = np.log(init_var) #NB becuase we happen to be i
   
 # call with no training epochs to get initialisation
 mode_corr='infer_post_corr'            
-vae_norm_init, cost_history = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=0, batch_size=batch_size, mp_mean_init=mp_mean_init)
+vae_norm_init, cost_history = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=0, batch_size=batch_size, draw_size=draw_size, mp_mean_init=mp_mean_init)
 
 # now train with no correlation between mean and variance
 mode_corr='no_post_corr'
-vae_norm_no_post_corr, cost_history_no_post_corr = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, vae_init=vae_norm_init)
+vae_norm_no_post_corr, cost_history_no_post_corr = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, draw_size=draw_size, vae_init=vae_norm_init)
 
-#%%
 # now train with correlation between mean and variance
 #mode_corr='infer_post_corr'
-vae_norm, cost_history = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, vae_init=vae_norm_init)
+vae_norm, cost_history = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=learning_rate, training_epochs=training_epochs, batch_size=batch_size, draw_size=draw_size, vae_init=vae_norm_init)
 
 #mn = vae_norm.sess.run(vae_norm.mp_mean)
 #import pdb; pdb.set_trace()
@@ -380,6 +387,7 @@ vae_norm, cost_history = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=
 plt.figure(3)
 
 ax1 = plt.subplot(1,2,1)
+#plt.cla()
 
 plt.subplots_adjust(hspace=2)
 plt.subplots_adjust(wspace=0.8)
@@ -390,12 +398,14 @@ plt.xlabel('epochs')
 plt.title('No post correlation')
 
 ax2 = plt.subplot(1,2,2)
+#plt.cla()
+
 plt.plot(cost_history)
 plt.ylabel('cost')
 plt.xlabel('epochs')
 plt.title('Infer post correlation')
 
-#%% plot the estimate functions overlaid on data
+#%% plot the estimated functions overlaid on data
 
 plt.figure(4)
 
