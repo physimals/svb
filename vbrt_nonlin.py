@@ -355,7 +355,7 @@ x = np.reshape(x, (-1,1))
 
 learning_rate=0.02
 batch_size=10 #n_samples 
-draw_size=1 #number of draws to make when doing reparameterization
+draw_size=batch_size #number of draws to make when doing reparameterization
 #scale = n_samples/batch_size
 training_epochs=100
 
