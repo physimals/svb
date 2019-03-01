@@ -21,6 +21,9 @@ class ExpModel:
     
     nparams = 2
     
+    prior_means=None
+    prior_vars=None
+    
     def evaluate(self,mp,t):
         # unpack params    
         A = tf.reshape(mp[0,:],[-1,1])
@@ -40,6 +43,9 @@ class ExpModel:
 class BiExpModel:
     
     nparams = 4
+    
+    prior_means=[1,1,1,1]
+    prior_vars=[10,10,10,10]
     
     def evaluate(self,mp,t):
         A1 = tf.reshape(mp[0,:],[-1,1])
@@ -101,17 +107,22 @@ class VaeNormalFit(object):
         # generative model p(x | mu) = N(A*exp(-t*R1), var)
         # prior p(mp)~MVN(mp_mean_0,mp_covar_0)
         # where mp=model_params
-        # e.g.  mp[0] is A
-        #       mp[1] is R1
-        #       mp[2] is log(var)
         # approximating distributions: 
         # q(mp) ~ MVN(mp_mean, mp_covar)
                                         
         # -- Prior:         
         
         # Define priors for the parameters  - these are TF constants for the mean and covariance matrix of an MVN (as above)
-        self.mp_mean_0 = tf.zeros([self.n_modelparams], dtype=tf.float32)         
-        self.mp_covar_0 = tf.diag(tf.constant(100.0, shape=[self.n_modelparams], dtype=tf.float32))
+        temp_mean_0 = np.zeros(self.n_modelparams)
+        temp_covar_0 = 100*np.ones(self.n_modelparams)
+        #if specified, bring in non-linear model parameter prior values
+        if nlinmod.prior_means is not None:
+            temp_mean_0[0:nlinmod.nparams] = nlinmod.prior_means
+        if nlinmod.prior_vars is not None:
+            temp_covar_0[0:nlinmod.nparams] = nlinmod.prior_vars
+            
+        self.mp_mean_0 = tf.constant(temp_mean_0, dtype=tf.float32)  
+        self.mp_covar_0 = tf.diag(tf.constant(temp_covar_0, dtype=tf.float32))
         
         # -- Approximating Posterior:
         
@@ -387,7 +398,7 @@ vae_norm, cost_history = train(nlinmod,t, x, mode_corr=mode_corr, learning_rate=
 plt.figure(3)
 
 ax1 = plt.subplot(1,2,1)
-#plt.cla()
+plt.cla()
 
 plt.subplots_adjust(hspace=2)
 plt.subplots_adjust(wspace=0.8)
@@ -398,7 +409,7 @@ plt.xlabel('epochs')
 plt.title('No post correlation')
 
 ax2 = plt.subplot(1,2,2)
-#plt.cla()
+plt.cla()
 
 plt.plot(cost_history)
 plt.ylabel('cost')
