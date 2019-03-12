@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 
 class Parameter:
     """
@@ -58,39 +59,83 @@ class Model:
         """
         Evaluate the model
         
-        :param t: Sequence of time values
+        :param t: Sequence of time values of length N
         :param params Sequence of parameter values arrays, one for each parameter.
-                      Each array is a Numpy array with the same length as ``t``
-
-        :return: Numpy array of same length as ``t`` containing model output
-                 at the corresponding value of ``t`` and corresponding parameter
-                 values.
+                      Each array is MxN tensor where M is the number of voxels. This
+                      may be supplied as a PxMxN tensor where P is the number of 
+                      parameters.
+                      
+        :return: MxN tensor containing model output at the specified time values
+                 and for each time value using the specified parameter values
         """
         raise NotImplementedError("evaluate")
 
     def ievaluate(self, params, t):
+        """
+        Evaluate the model outside of a TensorFlow session
+
+        Same as :func:`evaluate` but will run the evaluation
+        within a session and return the evaluated output tensor
+        """
         with tf.Session():
             return self.evaluate(params, t).eval()
 
+    def update_initial_posterior(self, t, data, post):
+        """
+        Optional method to update the initial posterior mean values
+
+        :param t: Tensor of time values of length N
+        :param data: MxN tensor containing input data, where M is the number of voxels
+        :param post: Sequence of tensors of length M, one for each model parameter. This
+                     sequence can be updated by indexing to initialize the posterior
+                     distribution mean for the corresponding parameter at each voxel
+        """
+        pass
+
     def test_data(self, t, params_map):
-        param_values = [params_map[param.name] for param in self.params]
+        """
+        Generate test data by evaluating the model on known parameter values
+        with optional added noise
+        
+        :param t: Sequence of time values of length N
+        :param params_map: Mapping from parameter name either a single parameter
+                           value or a sequence of M parameter values. The special
+                           key ``noise_sd``, if present, should containing the 
+                           standard deviation of Gaussian noise to add to the 
+                           output.
+        :return If noise is present, a tuple of two MxN Numpy arrays. The first
+                contains the 'clean' output data without noise, the second 
+                contains the noisy data. If noise is not present, only a single
+                array is returned. 
+        """
+        param_values = None
+        for idx, param in enumerate(self.params):
+            if param.name not in params_map:
+                raise IndexError("Required parameter not found: %s" % param.name)
+            elif isinstance(params_map[param.name], (float, int)):
+                value_sequence = np.reshape([params_map[param.name]], (1, 1))
+            else:
+                # FIXME check if sequence type
+                value_sequence = np.reshape(params_map[param.name], (-1, 1))
+
+            if param_values is None:
+                param_values = np.zeros((len(self.params), len(value_sequence), len(t)))
+            
+            if len(value_sequence) != param_values.shape[1]:
+                raise ValueError("Parameter %s has wrong number of values: %i (expected %i)" % (param.name, len(value_sequence), param_values.shape[1]))
+            else:
+                param_values[idx, :, :] = value_sequence
+
+            print(param.name, param_values[idx, :, :])
+
         with tf.Session():
             clean = self.evaluate(param_values, t).eval()
             if "noise_sd" in params_map:
-                import numpy as np
                 np.random.seed(1)
                 noisy = np.random.normal(clean, params_map["noise_sd"])
                 return clean, noisy
             else:
                 return clean
-
-    def update_initial_posterior(self, t, data, post):
-        """
-        Update the initial posterior mean values
-
-        This is an optional method
-        """
-        pass
 
 class ExpModel(Model):
     
@@ -105,9 +150,9 @@ class ExpModel(Model):
         return amp * tf.exp(-r * t)
         
     def update_initial_posterior(self, t, data, post):
-        post[self.param_idx("amp1")] = tf.reduce_max(data)
-        post[self.param_idx("r1")] = 0.5
-
+        post[self.param_idx("amp1")] = tf.reduce_max(data, axis=1)
+        post[self.param_idx("r1")] = tf.fill([tf.shape(data)[0]], 0.5)
+        
 class BiExpModel(Model):
 
     def __init__(self, options):

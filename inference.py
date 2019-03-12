@@ -1,5 +1,11 @@
 """
 Stochastic Bayesian inference of a nonlinear model
+
+General order for tensor dimensions:
+
+parameter indexing - including matrix dimensions for e.g. covariance matrix
+voxel indexing
+time point indexing
 """
 import numpy as np
 import tensorflow as tf
@@ -12,6 +18,14 @@ class VaeNormalFit(object):
      - Mean values of model parameters
      - log(noise variance)
      - A covariance matrix in which the diagonal elements are log variances
+
+    Tensors (all named within graph - P=number of parameters, M=number of voxels, 
+             N=total number of time points, B=batch size):
+
+     - ``mp_mean_0`` P containing prior mean values for each parameter
+     - ``mp_covar_0`` PxP containing prior covariance matrix (always diagnoal)
+     - ``mp_mean`` PxM containing posterior mean values at each voxel
+     - ``mp_covar`` PxPxM containing posterior covariance matrix for each voxel
     """
     def __init__(self, model, vae_init=None, **kwargs):
         self.model = model
@@ -22,6 +36,9 @@ class VaeNormalFit(object):
         # Each learning epoch processes a batch of data
         self.batch_size = kwargs.get("batch_size", 100)
 
+        self.nvoxels = kwargs.get("nvoxels", 1)
+        self.nt = kwargs.get("nt", self.batch_size)
+        
         # Number of samples per parameter for the sampling of the prior distribution
         self.draw_size = kwargs.get("draw_size", 100)
 
@@ -39,12 +56,18 @@ class VaeNormalFit(object):
         with self.graph.as_default():
             tf.set_random_seed(1)
             
-            # Tensorflow parameters required for the training run - x and t are
-            # the data and time values of the batch being trained against, xfull
-            # is the full data (used to initialize the posterior in some cases)
-            self.x = tf.placeholder(tf.float32, [None])
-            self.xfull = tf.placeholder(tf.float32, [None])
-            self.t = tf.placeholder(tf.float32, [None])
+            # Tensorflow parameters required for the training run
+            # 
+            # x will have shape MxB where B is the batch size and M the number of voxels
+            # xfull is the full data so will have shape MxN where N is the full time size
+            # t will have shape B
+            # 
+            # NB we don't know M and N at this stage
+            self.x = tf.placeholder(tf.float32, [self.nvoxels, self.batch_size])
+            self.xfull = tf.placeholder(tf.float32, [self.nvoxels, self.nt])
+            self.t = tf.placeholder(tf.float32, [self.batch_size])
+            #self.nvoxels = tf.shape(self.xfull)[0]
+            #self.nt = tf.shape(self.xfull)[1]
             
             # Create prior distribution, initial posterior and samples from the posterior
             self._init_prior()
@@ -74,7 +97,7 @@ class VaeNormalFit(object):
             prior_vars[idx] = param.prior_var
             
         self.mp_mean_0 = tf.constant(prior_means, dtype=tf.float32, name="mp_mean_0")  
-        self.mp_covar_0 = tf.diag(tf.constant(prior_vars, dtype=tf.float32), name="mp_covar_0")
+        self.mp_covar_0 = tf.matrix_diag(tf.constant(prior_vars, dtype=tf.float32), name="mp_covar_0")
         
     def _init_posterior(self, vae_init):
         """
@@ -103,9 +126,11 @@ class VaeNormalFit(object):
             self._init_posterior_chol_from_model()
             
         # form the covariance matrix from the chol decomposition
-        self.mp_covar = tf.matmul(tf.transpose(self.chol_mp_covar), self.chol_mp_covar, name='mp_covar')
+        print("chol mp covar", self.chol_mp_covar.shape)
+        self.mp_covar = tf.matmul(tf.transpose(self.chol_mp_covar, perm=(0, 2, 1)), self.chol_mp_covar, name='mp_covar')
     
         if self.mode_corr != 'infer_post_corr':
+            # Define this constant in case we want to later use this to initialize a full correlation run
             tf.constant(np.zeros([self.nparams, self.nparams], dtype=np.float32), name='off_diag_chol_mp_covar')
         
         # For preventing singular covariance matrix
@@ -117,14 +142,15 @@ class VaeNormalFit(object):
         the model and the full data
         """
         # Initialize posterior means for the parameters in the approximating distribution
-        post_means = list(0.1 * np.random.normal(0, 1, size=self.nparams))
+        post_means = [0.1 * tf.random.normal([self.nvoxels], 0, 1) for n in range(self.nparams)]
         self.model.update_initial_posterior(self.t, self.xfull, post_means)
 
         # Initialize noise posterior mean using data variance - NB we happen to be infering the log of the variance
-        mean, variance = tf.nn.moments(self.xfull, axes=[0])
-        post_means[self.nparams - 1] = tf.log(variance)
+        mean, variance = tf.nn.moments(self.xfull, axes=[1])
+        post_means[-1] = tf.log(variance)
 
-        self.mp_mean = tf.Variable(tf.stack(post_means), dtype=tf.float32, name="mp_mean")
+        self.mp_mean = tf.Variable(tf.transpose(tf.stack(post_means)), dtype=tf.float32, name="mp_mean")
+        print("mp_mean", self.mp_mean.shape)
                 
         # Setup post_covar (as a Variable to be optimised later)
         # This is the posterior covariance matrix in the approximating distribution
@@ -132,22 +158,25 @@ class VaeNormalFit(object):
         if self.mode_corr == 'infer_post_corr':
             # Infer a full covariance matrix with on and off-diagonal elements     
             if True:
-                off_diag_chol_mp_covar = tf.Variable(tf.truncated_normal((self.nparams,self.nparams),0,0.1,dtype=tf.float32, seed=1), name='off_diag_chol_mp_covar')
-                log_diag_chol_mp_covar = tf.Variable(tf.truncated_normal((self.nparams,),-2,0.4, dtype=tf.float32, seed=1), name='log_diag_chol_mp_covar')
-            
+                off_diag_chol_mp_covar = tf.Variable(tf.truncated_normal((self.nvoxels, self.nparams, self.nparams),0,0.1,dtype=tf.float32, seed=1), name='off_diag_chol_mp_covar')
+                log_diag_chol_mp_covar = tf.Variable(tf.truncated_normal((self.nvoxels, self.nparams),-2,0.4, dtype=tf.float32, seed=1), name='log_diag_chol_mp_covar')
+                print("off diag", off_diag_chol_mp_covar.shape)
+                print("log diag", log_diag_chol_mp_covar.shape)
+
                 # Combine diagonal and off-diagonal elements and reshape to matrix
-                diag_chol_mp_covar_mat = tf.diag(tf.exp(log_diag_chol_mp_covar))
+                diag_chol_mp_covar_mat = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar))
                 self.chol_mp_covar = tf.add((diag_chol_mp_covar_mat), tf.matrix_band_part(off_diag_chol_mp_covar, -1, 0), name='chol_mp_covar')
 
             else:
                 # Alternative not inferring the log of the diagnoal
-                self.chol_mp_covar = tf.Variable(0.05+tf.diag(tf.constant(0.1,shape=(self.nparams,))), dtype=tf.float32, name='chol_mp_covar')          
+                self.chol_mp_covar = tf.Variable(0.05+tf.matrix_diag(tf.fill((self.nvoxels, self.nparams), 0.1)), dtype=tf.float32, name='chol_mp_covar')          
         
         else:     
             # Infer only diagonal elements of the covariance matrix - i.e. no correlation between the parameters
-            log_diag_chol_mp_covar = tf.Variable(tf.constant(-2,shape=(self.nparams,), dtype=tf.float32), name='log_diag_chol_mp_covar')               
-            
-            self.chol_mp_covar = tf.diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar')    
+            log_diag_chol_mp_covar = tf.Variable(tf.fill((self.nvoxels, self.nparams), -2.0), name='log_diag_chol_mp_covar')               
+            print("log diag", log_diag_chol_mp_covar.shape)
+
+            self.chol_mp_covar = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar')    
 
     def _init_posterior_chol_from_vae(self, vae_init):
         """
@@ -162,10 +191,10 @@ class VaeNormalFit(object):
         log_diag_chol_mp_covar = tf.Variable(vae_init.output('log_diag_chol_mp_covar'), name='log_diag_chol_mp_covar')
         if self.mode_corr == 'infer_post_corr':
             off_diag_chol_mp_covar = tf.Variable(vae_init.output('off_diag_chol_mp_covar'), name='off_diag_chol_mp_covar')
-            diag_chol_mp_covar_mat = tf.diag(tf.exp(log_diag_chol_mp_covar))
+            diag_chol_mp_covar_mat = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar))
             self.chol_mp_covar = tf.add((diag_chol_mp_covar_mat), tf.matrix_band_part(off_diag_chol_mp_covar, -1, 0), name='chol_mp_covar')
         else:
-            self.chol_mp_covar = tf.diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar')    
+            self.chol_mp_covar = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar')    
             
     def _create_samples(self):
         """
@@ -175,17 +204,17 @@ class VaeNormalFit(object):
         scaling by the posterior mean and std.dev. ``self.draw_size`` unique samples
         are created but are then tiled to form ``self.batch_size`` actual samples
         """
-        eps = tf.random_normal((self.nparams, self.draw_size), 0, 1, dtype=tf.float32, seed=1)
+        eps = tf.random_normal((self.nvoxels, self.nparams, self.draw_size), 0, 1, dtype=tf.float32, seed=1)
 
         # This seems to assume that draw_size is a factor of batch_size? If so, we end
         # up with batch_size samples for each parameter but only draw_size unique samples
         # FIXME is floor division right here?
-        ntile = np.floor_divide(self.batch_size,self.draw_size)
-        eps = tf.tile(eps,[1,ntile])
+        ntile = np.floor_divide(self.batch_size, self.draw_size)
+        eps = tf.tile(eps, [1, 1, ntile])
                
         # NB self.chol_mp_covar is the Cholesky decomposition of the covariance matrix
         # so plays the role of the std.dev. 
-        sample = tf.tile(tf.reshape(self.mp_mean,[self.nparams,1]),[1,self.batch_size])
+        sample = tf.tile(tf.reshape(self.mp_mean, [self.nvoxels, self.nparams, 1]),[1, 1, self.batch_size])
         self.mp = tf.add(sample, tf.matmul(self.chol_mp_covar, eps))
                         
     def _create_loss_optimizer(self):
@@ -198,19 +227,20 @@ class VaeNormalFit(object):
         2.) log (q(mp)/p(mp)) = log(q(mp)) - log(p(mp))
         """
 
-        # Unpack noise parameter
-        # Remembering that we are inferring the log of the variance of the generating distirbution (this was purely by choice)
-        log_var = tf.reshape(self.mp[self.nparams-1,:],[self.batch_size]) 
+        # Unpack noise parameter remembering that we are inferring the log of the variance of the generating distirbution (this was purely by choice)
+        log_var = self.mp[:, -1, :]
+        print(log_var.shape)
 
         # use a iid normal distribution
         # Calculate the loglikelihood given our supplied mp values
-        y_pred = self.model.evaluate(self.mp, self.t)
+        print(self.mp.shape)
+        y_pred = self.model.evaluate(tf.transpose(self.mp, (1, 0, 2)), self.t)
 
         # This prediction currently has a different set of model parameters for each data point (i.e. it is not amortized) - due to the sampling process above
         # NOTE: scale (the relative scale of number of samples and size of batch) appears in here to get the relative scaling of log-likehood correct, even though we have dropped the constant term log(n_samples)
-        scale = tf.to_float(tf.floordiv(tf.size(self.xfull), self.batch_size))
-        self.reconstr_loss = tf.reduce_sum(0.5 * scale * ( tf.div(tf.square(tf.subtract(self.x, y_pred)), tf.exp(log_var)) + log_var + np.log( 2 * np.pi) ), 0, name="reconstr_loss")
-        #self.reconstr_loss = tf.Print(self.reconstr_loss, [self.reconstr_loss], "reconstr")
+        scale = tf.to_float(tf.floordiv(self.nt, self.batch_size))
+        self.reconstr_loss = tf.reduce_sum(0.5 * scale * ( tf.div(tf.square(tf.subtract(self.x, y_pred)), tf.exp(log_var)) + log_var + np.log( 2 * np.pi) ), axis=(0, 1), name="reconstr_loss")
+        self.reconstr_loss = tf.Print(self.reconstr_loss, [self.reconstr_loss], "reconstr")
 
         # 2.) log (q(mp)/p(mp)) = log(q(mp)) - log(p(mp))
         # latent_loss = log_mvn_pdf(self.mp, self.mp_mean, mp_covar) \
@@ -218,15 +248,20 @@ class VaeNormalFit(object):
         # 2.) D_KL{q(mp)~ MVN(mp_mean, mp_covar), p(mp)~ MVN(mp_mean_0, mp_covar_0)}
         
         inv_mp_covar_0 = tf.matrix_inverse(self.mp_covar_0)
-        mn = tf.reshape(tf.subtract(self.mp_mean,self.mp_mean_0),[self.nparams,1])
+        inv_mp_covar_0 = tf.tile(tf.reshape(inv_mp_covar_0, (1, self.nparams, self.nparams)), (self.nvoxels, 1, 1))
+        mn = tf.subtract(self.mp_mean, tf.reshape(self.mp_mean_0, (1, -1)))
 
-        t1 = tf.trace(tf.matmul(inv_mp_covar_0,self.mp_covar))
+        print(self.mp_covar.shape)
+        t1 = tf.trace(tf.matmul(inv_mp_covar_0, self.mp_covar))
         #t1 = tf.Print(t1, [t1], "t1")
 
-        t2 = tf.matmul(tf.transpose(mn), inv_mp_covar_0)
+        print("mn", mn.shape)
+        print("covar", inv_mp_covar_0.shape)
+        t2 = tf.matmul(tf.reshape(mn, (self.nvoxels, 1, -1)), inv_mp_covar_0)
         #t2 = tf.Print(t2, [t2], "t2")
 
-        t3 = tf.matmul(t2, mn)
+        print("t2", t2.shape)
+        t3 = tf.matmul(t2, tf.reshape(mn, (self.nvoxels, -1, 1)))
         #t3 = tf.Print(t3, [t3], "t3")
 
         t4 = tf.log(tf.matrix_determinant(self.mp_covar_0, name='det_mp_covar_0')) 
@@ -237,16 +272,19 @@ class VaeNormalFit(object):
         #t5 = tf.Print(t5, [t5], "t5")
 
         latent_loss = 0.5*(t1 + t3 - self.nparams + t4 - t5)
-        self.latent_loss = tf.identity(latent_loss, name="latent_loss")
-        #self.latent_loss = tf.Print(self.latent_loss, [self.latent_loss], "latent")
+        self.latent_loss = tf.reduce_sum(latent_loss, name="latent_loss")
+        self.latent_loss = tf.Print(self.latent_loss, [self.latent_loss], "latent")
 
         # Add the two terms (and average over the batch)
+        print("loss cost", self.reconstr_loss.shape, self.latent_loss.shape)
         self.cost = tf.reduce_mean(self.reconstr_loss + self.latent_loss, name="cost")   
-        
+        print("cost ", self.cost.shape, self.x.shape)
+
         # Use ADAM optimizer
         opt = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
-        self.optimizer = opt.minimize(self.cost)
-        
+        #self.optimizer = opt.minimize(self.cost)
+        self.optimizer = self.cost
+
     def initialize(self, Xfull):
         """
         Initialize global variables - i.e. initial values of posterior which
@@ -273,9 +311,9 @@ class VaeNormalFit(object):
         """
         Train the graph to infer the posterior distribution given timeseries data 
         """
-        n_samples = data.size
+        n_samples = t.size
         n_batches = np.floor_divide(n_samples, self.batch_size)
-        
+        print("batches: ", n_batches)
         cost_history=np.zeros([training_epochs]) 
         
         # Training cycle
@@ -291,17 +329,18 @@ class VaeNormalFit(object):
             for i in range(n_batches):
                 if 0:
                     # Batches are defined by sequential data samples
-                    batch_xs = data[index:index+self.batch_size]
+                    batch_xs = data[:, index:index+self.batch_size]
                     t_xs = t[index:index+self.batch_size]
                     index = index + self.batch_size
                 else:
                     # Batches are defined by constant strides through the data samples
-                    batch_xs = data[i::n_batches]
+                    batch_xs = data[:, i::n_batches]
                     t_xs = t[i::n_batches]
                         
                 # Fit training using batch data
+                print(t_xs.shape, batch_xs.shape, data.shape)
                 #print("initial cost", self.sess.run((self.reconstr_loss, self.latent_loss), feed_dict={self.xfull : data, self.x: batch_xs, self.t: t_xs}))
-                cost = self.partial_fit(t_xs,batch_xs, data)
+                cost = self.partial_fit(t_xs, batch_xs, data)
                             
                 # Compute average cost
                 avg_cost += cost / n_samples * self.batch_size
