@@ -126,8 +126,6 @@ class Model:
             else:
                 param_values[idx, :, :] = value_sequence
 
-            print(param.name, param_values[idx, :, :])
-
         with tf.Session():
             clean = self.evaluate(param_values, t).eval()
             if "noise_sd" in params_map:
@@ -138,6 +136,9 @@ class Model:
                 return clean
 
 class ExpModel(Model):
+    """
+    Simple exponential decay model
+    """
     
     def __init__(self, options):
         Model.__init__(self, options)
@@ -154,13 +155,16 @@ class ExpModel(Model):
         post[self.param_idx("r1")] = tf.fill([tf.shape(data)[0]], 0.5)
         
 class BiExpModel(Model):
+    """
+    Exponential decay with two independent decay rates
+    """
 
     def __init__(self, options):
         Model.__init__(self, options)
-        self.params.append(Parameter("amp1", prior_mean=1, prior_var=10))
-        self.params.append(Parameter("amp2", prior_mean=1, prior_var=10))
-        self.params.append(Parameter("r1", prior_mean=1, prior_var=10))
-        self.params.append(Parameter("r2", prior_mean=1, prior_var=10))
+        self.params.append(Parameter("amp1", prior_mean=0, prior_var=100))
+        self.params.append(Parameter("amp2", prior_mean=0, prior_var=100))
+        self.params.append(Parameter("r1", prior_mean=0, prior_var=100))
+        self.params.append(Parameter("r2", prior_mean=0, prior_var=100))
     
     def evaluate(self, params, t):
         amp1 = params[0]
@@ -170,8 +174,8 @@ class BiExpModel(Model):
         return amp1 * tf.exp(-r1 * t) + amp2 * tf.exp(-r2 * t)
 
     def update_initial_posterior(self, t, data, post):
-        post[self.param_idx("amp1")] = 0.9*tf.reduce_max(data)
-        post[self.param_idx("amp2")] = 0.1*tf.reduce_max(data)
-        post[self.param_idx("r1")] = 0.5
-        post[self.param_idx("r2")] = 0.1
+        post[self.param_idx("amp1")] = 0.9*tf.reduce_max(data, axis=1)
+        post[self.param_idx("amp2")] = 0.1*tf.reduce_max(data, axis=1)
+        post[self.param_idx("r1")] = tf.fill([tf.shape(data)[0]], 0.5)
+        post[self.param_idx("r2")] = tf.fill([tf.shape(data)[0]], 0.1)
         
