@@ -1,0 +1,4 @@
+*.pyc
+graphs
+*.nii
+*.nii.gz
