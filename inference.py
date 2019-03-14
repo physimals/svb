@@ -214,8 +214,11 @@ class VaeNormalFit(object):
         # NB self.chol_mp_covar is the Cholesky decomposition of the covariance matrix
         # so plays the role of the std.dev. 
         sample = tf.tile(tf.reshape(self.mp_mean, [self.nvoxels, self.nparams, 1]),[1, 1, self.batch_size])
-        self.mp = tf.add(sample, tf.matmul(self.chol_mp_covar, eps))
-                        
+
+        self.mp = tf.add(sample, tf.matmul(self.chol_mp_covar, eps))              
+        if self.debug:
+            self.mp = tf.Print(self.mp, [self.mp], "mp", summarize=100)
+
     def _create_loss_optimizer(self):
         """
         Create the loss optimizer which will minimise the cost function
