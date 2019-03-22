@@ -1,3 +1,5 @@
+import dist
+
 import tensorflow as tf
 import numpy as np
 
@@ -6,11 +8,12 @@ class Parameter:
     A model parameter
     """
 
-    def __init__(self, name, desc="No description given", **kwargs):
+    def __init__(self, name, dist, desc="No description given", **kwargs):
         """
         Constructor
 
         :param name: Parameter name
+        :param dist: Dist instance giving the parameter's prior distribution
         :param desc: Optional parameter description
 
         Keyword arguments:
@@ -20,13 +23,7 @@ class Parameter:
         """
         self.name = name
         self.desc = desc
-        self.prior_mean = kwargs.get("prior_mean", 0)
-        if "prior_var" in kwargs and "prior_sd" in kwargs:
-            raise ValueError("Can't specify prior standard deviation and variance at the same time for parameter %s" % name)
-        elif "prior_sd" in kwargs:
-            self.prior_var = kwargs["prior_sd"]**2
-        else:
-            self.prior_var = kwargs.get("prior_var", 100)
+        self.dist = dist
     
 class Model:
     """
@@ -38,6 +35,9 @@ class Model:
 
     def __init__(self, options):
         self.params = []
+        self._t0 = options.get("t0", 0)
+        self._dt = options.get("dt", 1)
+        self.debug = options.get("debug", False)
 
     @property
     def nparams(self):
@@ -55,6 +55,20 @@ class Model:
                 return idx
         raise ValueError("Parameter not found in model: %s" % name)
         
+    @property
+    def t(self, nt):
+        """
+        Get the full set of timeseries time values
+
+        :param nt: Number of time points required for the data to be fitted
+
+        By default this is a linear space using the attributes ``t0`` and ``dt``.
+        Some models may have time values fixed by some other configuration. If
+        the number of time points is fixed by the model it must match the
+        supplied value ``nt``.
+        """
+        return np.linspace(self._t0, self._t0+nt*self._dt, num=nt, endpoint=False)
+
     def evaluate(self, params, t):
         """
         Evaluate the model
@@ -78,13 +92,13 @@ class Model:
         within a session and return the evaluated output tensor
         """
         with tf.Session():
-            return self.evaluate(params, t).eval()
+            return self.evaluate(tf.constant(params, dtype=tf.float32), tf.constant(t, dtype=tf.float32)).eval()
 
     def update_initial_posterior(self, t, data, post):
         """
         Optional method to update the initial posterior mean values
 
-        :param t: Tensor of time values of length N
+        :param t: 1xN or MxN tensor of time values (possibly varying by voxel)
         :param data: MxN tensor containing input data, where M is the number of voxels
         :param post: Sequence of tensors of length M, one for each model parameter. This
                      sequence can be updated by indexing to initialize the posterior
@@ -97,7 +111,7 @@ class Model:
         Generate test data by evaluating the model on known parameter values
         with optional added noise
         
-        :param t: Sequence of time values of length N
+        :param t: 1xN or MxN tensor of time values (possibly varying by voxel)
         :param params_map: Mapping from parameter name either a single parameter
                            value or a sequence of M parameter values. The special
                            key ``noise_sd``, if present, should containing the 
@@ -142,8 +156,8 @@ class ExpModel(Model):
     
     def __init__(self, options):
         Model.__init__(self, options)
-        self.params.append(Parameter("amp1", prior_mean=0, prior_var=100))
-        self.params.append(Parameter("r1", prior_mean=0, prior_var=100))
+        self.params.append(Parameter("amp1", dist.Normal(0, 100)))
+        self.params.append(Parameter("r1", dist.Normal(0, 100)))
     
     def evaluate(self, params, t):
         amp = params[0]
@@ -161,10 +175,10 @@ class BiExpModel(Model):
 
     def __init__(self, options):
         Model.__init__(self, options)
-        self.params.append(Parameter("amp1", prior_mean=0, prior_var=100))
-        self.params.append(Parameter("amp2", prior_mean=0, prior_var=100))
-        self.params.append(Parameter("r1", prior_mean=0, prior_var=100))
-        self.params.append(Parameter("r2", prior_mean=0, prior_var=100))
+        self.params.append(Parameter("amp1", dist.FoldedNormal(1, 100)))
+        self.params.append(Parameter("amp2", dist.FoldedNormal(1, 100)))
+        self.params.append(Parameter("r1", dist.FoldedNormal(1, 100)))
+        self.params.append(Parameter("r2", dist.FoldedNormal(1, 100)))
     
     def evaluate(self, params, t):
         amp1 = params[0]
