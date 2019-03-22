@@ -4,6 +4,7 @@ Stochastic Bayesian inference of a nonlinear model
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python import debug as tf_debug
 
 class VaeNormalFit(object):
     """
@@ -102,6 +103,8 @@ class VaeNormalFit(object):
 
             # Tensorflow session for runnning graph
             self.sess = tf.Session()
+            #if self.debug:
+            #    self.sess = tf_debug.LocalCLIDebugWrapperSession(self.sess)
         
     def _init_prior(self):
         """
@@ -165,6 +168,7 @@ class VaeNormalFit(object):
         tf.stack(model_means, name="mp_mean_model")
          
         if self.debug:
+            self.mp_covar = tf.Print(self.mp_covar, [self.mp_covar], "\nmp_covar", summarize=100)
             self.chol_mp_covar = tf.Print(self.chol_mp_covar, [self.chol_mp_covar], "\nchol_mp_covar", summarize=100)
             self.mp_mean = tf.Print(self.mp_mean, [self.mp_mean], "\nmp_mean", summarize=100)
 
@@ -219,9 +223,9 @@ class VaeNormalFit(object):
         if self.mode_corr == 'infer_post_corr':
             off_diag_chol_mp_covar = tf.Variable(vae_init.output('off_diag_chol_mp_covar'), name='off_diag_chol_mp_covar', validate_shape=False)
             diag_chol_mp_covar_mat = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar))
-            self.chol_mp_covar = tf.add((diag_chol_mp_covar_mat), tf.matrix_band_part(off_diag_chol_mp_covar, -1, 0), name='chol_mp_covar', validate_shape=False)
+            self.chol_mp_covar = tf.add((diag_chol_mp_covar_mat), tf.matrix_band_part(off_diag_chol_mp_covar, -1, 0), name='chol_mp_covar')
         else:
-            self.chol_mp_covar = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar', validate_shape=False)   
+            self.chol_mp_covar = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar')   
             
     def _create_samples(self):
         """
@@ -347,6 +351,10 @@ class VaeNormalFit(object):
         """
         Train the graph to infer the posterior distribution given timeseries data 
         """
+        # Expect t to have a dimension for voxelwise variation even if it is the same for all voxels
+        if t.ndim == 1:
+            t = t.reshape(1, -1)
+
         n_samples = t.shape[1]
         n_batches = np.floor_divide(n_samples, batch_size)
         print("%i batches" % n_batches)
