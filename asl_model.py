@@ -46,18 +46,6 @@ class AslRestModel(Model):
         ftiss = params[0]
         delt = params[1]
 
-        # Reshape t for broadcasting with voxelwise data
-        # FIXME should be done automatically
-        #t = tf.reshape(t, (1, -1))
-        #if self.debug:
-        #   t = tf.Print(t, [t], "\nt", summarize=100)
-
-        t1_app = 1 / (1 / self.t1 + self.f_calib / self.pc)
-        r = 1 / t1_app - 1 / self.t1b
-        f = 2 * tf.exp(-t / t1_app)
-        if self.debug:
-           t1_app = tf.Print(t1_app, [t1_app], "\nt1_app", summarize=100)
-
         # Boolean masks indicating which voxel-timepoints are during the
         # bolus arrival and which are after
         post_bolus = tf.greater(t, tf.add(self.tau, delt))
@@ -66,17 +54,20 @@ class AslRestModel(Model):
             post_bolus = tf.Print(post_bolus, [post_bolus], "\npost_bolus", summarize=100)
             during_bolus = tf.Print(during_bolus, [during_bolus], "\nduring_bolus", summarize=100)
 
+        # Rate constants
+        t1_app = 1 / (1 / self.t1 + self.f_calib / self.pc)
+        r = 1 / t1_app - 1 / self.t1b
+        f = 2 * tf.exp(-t / t1_app)
+        if self.debug:
+           t1_app = tf.Print(t1_app, [t1_app], "\nt1_app", summarize=100)
+
         # Calculate signal
         if self.casl:
             during_bolus_signal = 2 * t1_app * tf.exp(-delt / self.t1b) * (1 - tf.exp(-(t - delt) / t1_app))
             post_bolus_signal = 2 * t1_app * tf.exp(-delt / self.t1b) * tf.exp(-(t - self.tau - delt) / t1_app) * (1 - tf.exp(-self.tau / t1_app))
         else:
             during_bolus_signal = f / r * ((tf.exp(r * t) - tf.exp(r * delt)))
-            post_bolus_signal = f/r * ((tf.exp(r * (delt + self.tau)) - tf.exp(r * delt)))
-
-        # FIXME why is this needed?
-        post_bolus_signal = tf.broadcast_to(post_bolus_signal, tf.shape(during_bolus_signal))
-
+            post_bolus_signal = f / r * ((tf.exp(r * (delt + self.tau)) - tf.exp(r * delt)))
         if self.debug:
             post_bolus_signal = tf.Print(post_bolus_signal, [post_bolus_signal], "\npost_bolus_signal", summarize=100)
             during_bolus_signal = tf.Print(during_bolus_signal, [during_bolus_signal], "\nduring_bolus_signal", summarize=100)
