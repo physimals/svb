@@ -115,13 +115,12 @@ class LogNormal(Dist):
 
     @property
     def nmean(self):
-        #return math.log(self.mean)
+        # See https://uk.mathworks.com/help/stats/lognstat.html
         return math.log(self.mean**2/math.sqrt(self.var + self.mean**2))
-        
+
     @property
     def nvar(self):
-        """ FIXME not as simple as this"""
-        #return math.log(self.var)
+        # See https://uk.mathworks.com/help/stats/lognstat.html
         return math.log(self.var/self.mean**2 + 1)
 
     def tomodel(self, values):
