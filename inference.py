@@ -44,9 +44,6 @@ class VaeNormalFit(object):
         # Learning rate for the optimizer
         self.learning_rate = kwargs.get("learning_rate", 0.02)
 
-        # Number of samples per parameter for the sampling of the prior distribution
-        self.draw_size = kwargs.get("draw_size", 100)
-
         # Inference mode for the posterior variance - if set to INFER_POST_CORR then
         # co-variances will be estimated, otherwise only parameter variances (diagonal
         # elements) will be estimated
@@ -67,18 +64,31 @@ class VaeNormalFit(object):
             # 
             # x will have shape MxB where B is the batch size and M the number of voxels
             # xfull is the full data so will have shape MxN where N is the full time size
-            # t will have shape B
+            # t will have shape 1xB or MxB depending on whether the timeseries is voxel
+            # dependent (e.g. in 2D multi-slice readout)
             # 
             # NB we don't know M and N at this stage so we set placeholder variables
             # self.nvoxels and self.nt and use validate_shape=False when creating 
             # tensorflow Variables
             self.x = tf.placeholder(tf.float32, [None, None])
             self.xfull = tf.placeholder(tf.float32, [None, None])
-            self.t = tf.placeholder(tf.float32, [None])
+            self.t = tf.placeholder(tf.float32, [None, None])
+         
+            if self.debug:
+                self.xfull = tf.Print(self.xfull, [self.xfull], "\nxfull", summarize=100)
+
+            # Number of voxels in full data - known at runtime
             self.nvoxels = tf.shape(self.xfull)[0]
+
+            # Number of time points in full data - known at runtime
             self.nt = tf.shape(self.xfull)[1]
+
+            # Number of samples in each training batch - known at runtime
             self.batch_size = tf.shape(self.x)[1]
             
+            # Number of samples per parameter for the sampling of the posterior distribution
+            self.draw_size = kwargs.get("draw_size", self.batch_size)
+
             # Create prior distribution, initial posterior and samples from the posterior
             self._init_prior()
             self._init_posterior(vae_init)
@@ -103,12 +113,15 @@ class VaeNormalFit(object):
         prior_means = np.zeros(self.nparams)
         prior_vars = 100*np.ones(self.nparams)
         for idx, param in enumerate(self.model.params):
-            prior_means[idx] = param.prior_mean
-            prior_vars[idx] = param.prior_var
+            prior_means[idx] = param.dist.nmean
+            prior_vars[idx] = param.dist.nvar
             
         self.mp_mean_0 = tf.constant(prior_means, dtype=tf.float32, name="mp_mean_0")  
         self.mp_covar_0 = tf.matrix_diag(tf.constant(prior_vars, dtype=tf.float32), name="mp_covar_0")
-        
+        if self.debug:
+            self.mp_mean_0 = tf.Print(self.mp_mean_0, [self.mp_mean_0], "\nmp_mean_0", summarize=100)
+            self.mp_covar_0 = tf.Print(self.mp_covar_0, [self.mp_covar_0], "\nmp_covar_0", summarize=100)
+
     def _init_posterior(self, vae_init):
         """
         Define initial approximating posterior distribution
@@ -145,6 +158,16 @@ class VaeNormalFit(object):
         # For preventing singular covariance matrix
         self.reg_cov = 1e-6 * tf.constant(np.identity(self.nparams, dtype=np.float32), name="reg_cov")
 
+        # Define tensor containing output means in transformed model space
+        model_means = []
+        for idx, param in enumerate(self.model.params):
+            model_means.append(param.dist.tomodel(self.mp_mean[:, idx]))
+        tf.stack(model_means, name="mp_mean_model")
+         
+        if self.debug:
+            self.chol_mp_covar = tf.Print(self.chol_mp_covar, [self.chol_mp_covar], "\nchol_mp_covar", summarize=100)
+            self.mp_mean = tf.Print(self.mp_mean, [self.mp_mean], "\nmp_mean", summarize=100)
+
     def _init_posterior_chol_from_model(self):
         """
         Initialize posterior mean and Cholesky decomposition of posterior covariance from
@@ -156,7 +179,12 @@ class VaeNormalFit(object):
 
         # Initialize noise posterior mean using data variance - NB we happen to be infering the log of the variance
         mean, variance = tf.nn.moments(self.xfull, axes=[1])
-        post_means[-1] = tf.log(variance)
+        
+        if self.debug:
+            mean = tf.Print(mean, [mean], "\ndata mean", summarize=100)
+            variance = tf.Print(variance, [variance], "\ndata variance", summarize=100)
+            
+        post_means[-1] = tf.log(tf.maximum(variance, 1e-4))
 
         self.mp_mean = tf.Variable(tf.transpose(tf.stack(post_means)), dtype=tf.float32, name="mp_mean", validate_shape=False)
                 
@@ -193,7 +221,7 @@ class VaeNormalFit(object):
             diag_chol_mp_covar_mat = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar))
             self.chol_mp_covar = tf.add((diag_chol_mp_covar_mat), tf.matrix_band_part(off_diag_chol_mp_covar, -1, 0), name='chol_mp_covar', validate_shape=False)
         else:
-            self.chol_mp_covar = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar', validate_shape=False)    
+            self.chol_mp_covar = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar', validate_shape=False)   
             
     def _create_samples(self):
         """
@@ -213,11 +241,13 @@ class VaeNormalFit(object):
                
         # NB self.chol_mp_covar is the Cholesky decomposition of the covariance matrix
         # so plays the role of the std.dev. 
-        sample = tf.tile(tf.reshape(self.mp_mean, [self.nvoxels, self.nparams, 1]),[1, 1, self.batch_size])
+        sample = tf.tile(tf.reshape(self.mp_mean, [self.nvoxels, self.nparams, 1]),[1, 1, self.batch_size])      
+        if self.debug:
+            sample = tf.Print(sample, [sample], "\nsample", summarize=100)
 
         self.mp = tf.add(sample, tf.matmul(self.chol_mp_covar, eps))              
         if self.debug:
-            self.mp = tf.Print(self.mp, [self.mp], "mp", summarize=100)
+            self.mp = tf.Print(self.mp, [self.mp], "\nmp", summarize=100)
 
     def _create_loss_optimizer(self):
         """
@@ -225,23 +255,41 @@ class VaeNormalFit(object):
 
         The loss is composed of two terms:
     
-        1.) log likelihood
-        2.) log (q(mp)/p(mp)) = log(q(mp)) - log(p(mp))
+        1. log likelihood. This is a measure of how likely the data are given the
+           current posterior, i.e. how well the data fit the model using
+           the inferred parameters.
+
+        2. The latent loss. This is a measure of how closely the posterior fits the
+           'true' posterior
         """
 
+        ## Part 1: Log likelihood
+        
         # Unpack noise parameter remembering that we are inferring the log of the variance of the generating distirbution (this was purely by choice)
-        log_var = self.mp[:, -1, :]
-
-        # use a iid normal distribution
-        # Calculate the loglikelihood given our supplied mp values
-        y_pred = self.model.evaluate(tf.transpose(self.mp, (1, 0, 2)), self.t)
-
-        # This prediction currently has a different set of model parameters for each data point (i.e. it is not amortized) - due to the sampling process above
-        # NOTE: scale (the relative scale of number of samples and size of batch) appears in here to get the relative scaling of log-likehood correct, even though we have dropped the constant term log(n_samples)
-        scale = tf.to_float(tf.floordiv(self.nt, self.batch_size))
-        self.reconstr_loss = tf.reduce_sum(0.5 * scale * ( tf.div(tf.square(tf.subtract(self.x, y_pred)), tf.exp(log_var)) + log_var + np.log( 2 * np.pi) ), axis=1, name="reconstr_loss")
+        noise_log_var = self.mp[:, -1, :]
         if self.debug:
-            self.reconstr_loss = tf.Print(self.reconstr_loss, [self.reconstr_loss], "reconstr", summarize=100)
+            noise_log_var = tf.Print(noise_log_var, [noise_log_var], "\nnoise_log_var", summarize=100)
+
+        # Transform the underlying Gaussian samples into the values required by the model
+        # This depends on each model parameter's underlying distribution
+        param_values = tf.transpose(self.mp, (1, 0, 2))
+        model_values = []
+        for idx, param in enumerate(self.model.params):
+            model_values.append(param.dist.tomodel(self.mp[:, idx, :]))
+
+        # Evaluate the model using the transformed values
+        y_pred = self.model.evaluate(model_values, self.t)
+
+        # Calculate the log likelihood given our supplied mp values
+        # This prediction currently has a different set of model parameters for each data point (i.e. it is not amortized) - due to the sampling process above
+        # NOTE: scale (the relative scale of number of samples and size of batch) appears in here to get the relative scaling of log-likehood correct, 
+        # even though we have dropped the constant term log(n_samples)
+        scale = tf.to_float(tf.floordiv(self.nt, self.batch_size))
+        self.reconstr_loss = tf.reduce_sum(0.5 * scale * ( tf.div(tf.square(tf.subtract(self.x, y_pred)), tf.exp(noise_log_var)) + noise_log_var + np.log( 2 * np.pi) ), axis=1, name="reconstr_loss")
+        if self.debug:
+            self.reconstr_loss = tf.Print(self.reconstr_loss, [self.reconstr_loss], "\nreconstr", summarize=100)
+
+        ## Part 1: Latent loss
 
         # 2.) log (q(mp)/p(mp)) = log(q(mp)) - log(p(mp))
         # latent_loss = log_mvn_pdf(self.mp, self.mp_mean, mp_covar) \
@@ -260,7 +308,7 @@ class VaeNormalFit(object):
         latent_loss = 0.5*(t1 + t3 - self.nparams + t4 - t5)
         self.latent_loss = tf.identity(latent_loss, name="latent_loss")
         if self.debug:
-            self.latent_loss = tf.Print(self.latent_loss, [self.latent_loss], "latent", summarize=100)
+            self.latent_loss = tf.Print(self.latent_loss, [self.latent_loss], "\nlatent", summarize=100)
 
         # Sum the cost from each voxel and use a single optimizer
         self.cost = tf.reduce_sum(self.reconstr_loss + self.latent_loss, name="cost")   
@@ -276,7 +324,7 @@ class VaeNormalFit(object):
         self.mp_mean_1 = self.output("mp_mean")
         self.mp_covar_1 = self.output("mp_covar")
 
-    def partial_fit(self, T, X, Xfull):
+    def fit_batch(self, T, X, Xfull):
         """
         Train model based on mini-batch of input data.       
 
@@ -299,8 +347,9 @@ class VaeNormalFit(object):
         """
         Train the graph to infer the posterior distribution given timeseries data 
         """
-        n_samples = t.size
+        n_samples = t.shape[1]
         n_batches = np.floor_divide(n_samples, batch_size)
+        print("%i batches" % n_batches)
         cost_history=np.zeros([training_epochs]) 
         
         # Training cycle
@@ -317,16 +366,16 @@ class VaeNormalFit(object):
                 if 0:
                     # Batches are defined by sequential data samples
                     batch_xs = data[:, index:index+batch_size]
-                    t_xs = t[index:index+batch_size]
+                    t_xs = t[:, index:index+batch_size]
                     index = index + batch_size
                 else:
                     # Batches are defined by constant strides through the data samples
                     batch_xs = data[:, i::n_batches]
-                    t_xs = t[i::n_batches]
+                    t_xs = t[:, i::n_batches]
                         
                 # Fit training using batch data
                 #print("initial cost", self.sess.run((self.reconstr_loss, self.latent_loss), feed_dict={self.xfull : data, self.x: batch_xs, self.t: t_xs}))
-                cost = np.mean(self.partial_fit(t_xs, batch_xs, data))
+                cost = np.mean(self.fit_batch(t_xs, batch_xs, data))
                             
                 # Compute average cost
                 avg_cost += cost / n_samples * batch_size
@@ -336,7 +385,7 @@ class VaeNormalFit(object):
                                                 
             # Display logs per epoch step
             if epoch % display_step == 0:
-                print("Epoch: %04d, mean cost=%f, mean params=%s" % ((epoch+1), avg_cost, np.mean(self.output("mp_mean"), axis=0)))
+                print("Epoch: %04d, mean cost=%f, mean params=%s" % ((epoch+1), avg_cost, np.mean(self.output("mp_mean_model"), axis=1)))
             cost_history[epoch]=avg_cost   
             
         return self, cost_history
