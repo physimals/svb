@@ -63,17 +63,18 @@ class VaeNormalFit(object):
 
             # Tensorflow input required for training
             # 
-            # x will have shape MxB where B is the batch size and M the number of voxels
-            # xfull is the full data so will have shape MxN where N is the full time size
-            # t will have shape 1xB or MxB depending on whether the timeseries is voxel
+            # x will have shape VxB where B is the batch size and V the number of voxels
+            # xfull is the full data so will have shape VxN where N is the full time size
+            # t will have shape 1xB or VxB depending on whether the timeseries is voxel
             # dependent (e.g. in 2D multi-slice readout)
             # 
-            # NB we don't know M and N at this stage so we set placeholder variables
+            # NB we don't know V and N at this stage so we set placeholder variables
             # self.nvoxels and self.nt and use validate_shape=False when creating 
             # tensorflow Variables
             self.x = tf.placeholder(tf.float32, [None, None])
             self.xfull = tf.placeholder(tf.float32, [None, None])
             self.t = tf.placeholder(tf.float32, [None, None])
+            self.actual_learning_rate = tf.placeholder(tf.float32, shape=[])
          
             if self.debug:
                 self.xfull = tf.Print(self.xfull, [self.xfull], "\nxfull", summarize=100)
@@ -114,11 +115,13 @@ class VaeNormalFit(object):
         prior covariance matrix is always diagonal (no inter-parameter correlations)
         """
         prior_means = np.zeros(self.nparams)
-        prior_vars = 100*np.ones(self.nparams)
+        prior_vars = np.zeros(self.nparams)
         for idx, param in enumerate(self.model.params):
-            prior_means[idx] = param.dist.nmean
-            prior_vars[idx] = param.dist.nvar
+            prior_means[idx], prior_vars[idx] = param.prior()
             
+        # Noise prior mean is 0, variance 1e6 (i.e. non-informative)
+        prior_vars[self.nparams-1] = 1e6
+
         self.mp_mean_0 = tf.constant(prior_means, dtype=tf.float32, name="mp_mean_0")  
         self.mp_covar_0 = tf.matrix_diag(tf.constant(prior_vars, dtype=tf.float32), name="mp_covar_0")
         if self.debug:
@@ -144,20 +147,51 @@ class VaeNormalFit(object):
         a subsequent run with correlation enabled can be performed using the non-correlated
         run as initialization.
         """
+        mean_init, log_var_init = [None]*self.nparams, [None]*self.nparams
+        covar_init = tf.truncated_normal((self.nvoxels, self.nparams, self.nparams), 0, 0.1, dtype=tf.float32)
         if vae_init is not None:
-            # Set self.mp_mean and self.chol_mp_covar from a previous run
-            self._init_posterior_chol_from_vae(vae_init)
-        else:
-            # Set self.mp_mean and self.chol_mp_covar from the model / data
-            self._init_posterior_chol_from_model()
+            mean_init = np.transpose(vae_init.output("mp_mean"))
+            log_var_init = np.transpose(vae_init.output('log_diag_chol_mp_covar'))
+            covar_init = vae_init.output('off_diag_chol_mp_covar')
+
+        # Get posteriors for model parameters
+        post_means = []
+        post_log_vars = []
+        for idx, param in enumerate(self.model.params):
+            mean, log_var = param.posterior(self.t, self.xfull, 
+                                            mean_init=mean_init[idx],
+                                            log_var_init=log_var_init[idx])
+            post_means.append(mean)
+            post_log_vars.append(log_var)
+
+        # Noise FIXME need NoiseModel class for this
+        mean, variance = tf.nn.moments(self.xfull, axes=[1])
+        post_means.append(tf.Variable(tf.log(tf.maximum(variance, 1e-4)), validate_shape=False))
+        post_log_vars.append(tf.Variable(tf.truncated_normal([self.nvoxels], -2, 0.4, dtype=tf.float32), validate_shape=False))
+
+        # Stack initialized posterior mean and log-variance and transpose
+        # so dimensions are (VxP) not (PxV)
+        self.mp_mean = tf.transpose(tf.stack(post_means), name="mp_mean")
+        log_diag_chol_mp_covar = tf.transpose(tf.stack(post_log_vars), name="log_diag_chol_mp_covar")
+        
+        # Create off-diagonal covariances to infer if required
+        if self.mode_corr == 'infer_post_corr':
+            # Infer a full covariance matrix with on and off-diagonal elements
+            off_diag_chol_mp_covar = tf.Variable(covar_init, name='off_diag_chol_mp_covar', validate_shape=False)
             
-        # form the covariance matrix from the chol decomposition
-        self.mp_covar = tf.matmul(tf.transpose(self.chol_mp_covar, perm=(0, 2, 1)), self.chol_mp_covar, name='mp_covar')
-    
-        if self.mode_corr != 'infer_post_corr':
+            # Combine diagonal and off-diagonal elements into full matrix
+            diag_chol_mp_covar_mat = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar))
+            self.chol_mp_covar = tf.add((diag_chol_mp_covar_mat), tf.matrix_band_part(off_diag_chol_mp_covar, -1, 0), name='chol_mp_covar')
+        else:     
             # Define this constant in case we want to later use this to initialize a full correlation run
             tf.constant(np.zeros([self.nparams, self.nparams], dtype=np.float32), name='off_diag_chol_mp_covar')
         
+            # Infer only diagonal elements of the covariance matrix - i.e. no correlation between the parameters
+            self.chol_mp_covar = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar')    
+        
+        # Form the covariance matrix from the chol decomposition
+        self.mp_covar = tf.matmul(tf.transpose(self.chol_mp_covar, perm=(0, 2, 1)), self.chol_mp_covar, name='mp_covar')
+    
         # For preventing singular covariance matrix
         self.reg_cov = 1e-6 * tf.constant(np.identity(self.nparams, dtype=np.float32), name="reg_cov")
 
@@ -168,65 +202,10 @@ class VaeNormalFit(object):
         tf.stack(model_means, name="mp_mean_model")
          
         if self.debug:
-            self.mp_covar = tf.Print(self.mp_covar, [self.mp_covar], "\nmp_covar", summarize=100)
             self.chol_mp_covar = tf.Print(self.chol_mp_covar, [self.chol_mp_covar], "\nchol_mp_covar", summarize=100)
+            self.mp_covar = tf.Print(self.mp_covar, [self.mp_covar], "\nmp_covar", summarize=100)
             self.mp_mean = tf.Print(self.mp_mean, [self.mp_mean], "\nmp_mean", summarize=100)
-
-    def _init_posterior_chol_from_model(self):
-        """
-        Initialize posterior mean and Cholesky decomposition of posterior covariance from
-        the model and the full data
-        """
-        # Initialize posterior means for the parameters in the approximating distribution
-        post_means = [0.1 * tf.random.normal([self.nvoxels], 0, 1) for n in range(self.nparams)]
-        self.model.update_initial_posterior(self.t, self.xfull, post_means)
-
-        # Initialize noise posterior mean using data variance - NB we happen to be infering the log of the variance
-        mean, variance = tf.nn.moments(self.xfull, axes=[1])
-        
-        if self.debug:
-            mean = tf.Print(mean, [mean], "\ndata mean", summarize=100)
-            variance = tf.Print(variance, [variance], "\ndata variance", summarize=100)
-            
-        post_means[-1] = tf.log(tf.maximum(variance, 1e-4))
-
-        self.mp_mean = tf.Variable(tf.transpose(tf.stack(post_means)), dtype=tf.float32, name="mp_mean", validate_shape=False)
-                
-        # Setup post_covar (as a Variable to be optimised later)
-        # This is the posterior covariance matrix in the approximating distribution
-        # Note that parameterising using chol ensures that mp_covar is positive def, although note that this does not reduce the number of params accordingly (need a tf.tril() func)    
-        if self.mode_corr == 'infer_post_corr':
-            # Infer a full covariance matrix with on and off-diagonal elements
-            off_diag_chol_mp_covar = tf.Variable(tf.truncated_normal((self.nvoxels, self.nparams, self.nparams),0,0.1,dtype=tf.float32), name='off_diag_chol_mp_covar', validate_shape=False)
-            log_diag_chol_mp_covar = tf.Variable(tf.truncated_normal((self.nvoxels, self.nparams),-2,0.4, dtype=tf.float32), name='log_diag_chol_mp_covar', validate_shape=False)
-
-            # Combine diagonal and off-diagonal elements into full matrix
-            diag_chol_mp_covar_mat = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar))
-            self.chol_mp_covar = tf.add((diag_chol_mp_covar_mat), tf.matrix_band_part(off_diag_chol_mp_covar, -1, 0), name='chol_mp_covar')
-        else:     
-            # Infer only diagonal elements of the covariance matrix - i.e. no correlation between the parameters
-            log_diag_chol_mp_covar = tf.Variable(tf.fill((self.nvoxels, self.nparams), -2.0), name='log_diag_chol_mp_covar', validate_shape=False)
-
-            self.chol_mp_covar = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar')    
-
-    def _init_posterior_chol_from_vae(self, vae_init):
-        """
-        Initialize posterior mean and Cholesky decomposition of posterior covariance from
-        the model and the full data
-        """
-        # The initial posterior mean is taken directly from the initializing distribution
-        self.mp_mean = tf.Variable(vae_init.output("mp_mean"), name="mp_mean", validate_shape=False) 
-
-        # If we are inferring the off diagonal elements then initialize them from the previous run. Note
-        # that they may be zero if the previous run did not infer them itself.
-        log_diag_chol_mp_covar = tf.Variable(vae_init.output('log_diag_chol_mp_covar'), name='log_diag_chol_mp_covar', validate_shape=False)
-        if self.mode_corr == 'infer_post_corr':
-            off_diag_chol_mp_covar = tf.Variable(vae_init.output('off_diag_chol_mp_covar'), name='off_diag_chol_mp_covar', validate_shape=False)
-            diag_chol_mp_covar_mat = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar))
-            self.chol_mp_covar = tf.add((diag_chol_mp_covar_mat), tf.matrix_band_part(off_diag_chol_mp_covar, -1, 0), name='chol_mp_covar')
-        else:
-            self.chol_mp_covar = tf.matrix_diag(tf.exp(log_diag_chol_mp_covar), name='chol_mp_covar')   
-            
+  
     def _create_samples(self):
         """
         Create samples of parameter values from the current posterior distribution
@@ -316,8 +295,10 @@ class VaeNormalFit(object):
 
         # Sum the cost from each voxel and use a single optimizer
         self.cost = tf.reduce_sum(self.reconstr_loss + self.latent_loss, name="cost")   
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(tf.reduce_sum(self.cost))
-        
+        self.opt = tf.train.AdamOptimizer(learning_rate=self.actual_learning_rate)
+        self.optimizer = self.opt.minimize(tf.reduce_sum(self.cost))
+        self.grads = self.opt.compute_gradients(self.cost)
+
     def initialize(self, Xfull):
         """
         Initialize global variables - i.e. initial values of posterior which
@@ -336,7 +317,11 @@ class VaeNormalFit(object):
         """
         # Do the optimization (self.optimizer), but also calcuate the cost for reference (self.cost, gives a second return argument)
         # Pass in X using the feed dictionary, as we want to process the batch we have been provided X
-        _, cost = self.sess.run([self.optimizer, self.cost], feed_dict={self.xfull : Xfull, self.x: X, self.t: T})
+        _, cost = self.sess.run([self.optimizer, self.cost], 
+                                feed_dict={self.xfull : Xfull, 
+                                           self.x: X, 
+                                           self.t: T,
+                                           self.actual_learning_rate: self.learning_rate})
         return cost
 
     def output(self, name):
@@ -357,7 +342,6 @@ class VaeNormalFit(object):
 
         n_samples = t.shape[1]
         n_batches = np.floor_divide(n_samples, batch_size)
-        print("%i batches" % n_batches)
         cost_history=np.zeros([training_epochs]) 
         
         # Training cycle
@@ -382,13 +366,20 @@ class VaeNormalFit(object):
                     t_xs = t[:, i::n_batches]
                         
                 # Fit training using batch data
-                #print("initial cost", self.sess.run((self.reconstr_loss, self.latent_loss), feed_dict={self.xfull : data, self.x: batch_xs, self.t: t_xs}))
                 cost = np.mean(self.fit_batch(t_xs, batch_xs, data))
                             
                 # Compute average cost
                 avg_cost += cost / n_samples * batch_size
 
                 if np.any(np.isnan(cost)):
+                    covar = self.output("mp_covar")
+                    mean = self.output("mp_mean")
+                    for idx, cov in enumerate(covar):
+                        if np.any(np.isnan(mean[idx])):
+                            print(idx, mean[idx])
+                            print(cov)
+                            print(np.linalg.inv(cov))
+                    #self.learning_rate /= 10
                     import pdb; pdb.set_trace()
                                                 
             # Display logs per epoch step
