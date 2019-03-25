@@ -3,27 +3,7 @@ import dist
 import tensorflow as tf
 import numpy as np
 
-class Parameter:
-    """
-    A model parameter
-    """
-
-    def __init__(self, name, dist, desc="No description given", **kwargs):
-        """
-        Constructor
-
-        :param name: Parameter name
-        :param dist: Dist instance giving the parameter's prior distribution
-        :param desc: Optional parameter description
-
-        Keyword arguments:
-         - ``prior_mean`` Built in prior mean value (default: 0)
-         - ``prior_var`` Built in prior variance (default: 100)
-         - ``prior_sd`` Alternative to ``prior_var`` - built in prior standard deviation
-        """
-        self.name = name
-        self.desc = desc
-        self.dist = dist
+from parameter import Parameter
     
 class Model:
     """
@@ -33,7 +13,7 @@ class Model:
     :attr nparams: Number of model parameters
     """
 
-    def __init__(self, options):
+    def __init__(self, **options):
         self.params = []
         self._t0 = options.get("t0", 0)
         self._dt = options.get("dt", 1)
@@ -94,18 +74,6 @@ class Model:
         with tf.Session():
             return self.evaluate(tf.constant(params, dtype=tf.float32), tf.constant(t, dtype=tf.float32)).eval()
 
-    def update_initial_posterior(self, t, data, post):
-        """
-        Optional method to update the initial posterior mean values
-
-        :param t: 1xN or MxN tensor of time values (possibly varying by voxel)
-        :param data: MxN tensor containing input data, where M is the number of voxels
-        :param post: Sequence of tensors of length M, one for each model parameter. This
-                     sequence can be updated by indexing to initialize the posterior
-                     distribution mean for the corresponding parameter at each voxel
-        """
-        pass
-
     def test_data(self, t, params_map):
         """
         Generate test data by evaluating the model on known parameter values
@@ -148,48 +116,3 @@ class Model:
                 return clean, noisy
             else:
                 return clean
-
-class ExpModel(Model):
-    """
-    Simple exponential decay model
-    """
-    
-    def __init__(self, options):
-        Model.__init__(self, options)
-        self.params.append(Parameter("amp1", dist.Normal(0, 100)))
-        self.params.append(Parameter("r1", dist.Normal(0, 100)))
-    
-    def evaluate(self, params, t):
-        amp = params[0]
-        r = params[1]
-        return amp * tf.exp(-r * t)
-        
-    def update_initial_posterior(self, t, data, post):
-        post[self.param_idx("amp1")] = tf.reduce_max(data, axis=1)
-        post[self.param_idx("r1")] = tf.fill([tf.shape(data)[0]], 0.5)
-        
-class BiExpModel(Model):
-    """
-    Exponential decay with two independent decay rates
-    """
-
-    def __init__(self, options):
-        Model.__init__(self, options)
-        self.params.append(Parameter("amp1", dist.FoldedNormal(1, 100)))
-        self.params.append(Parameter("amp2", dist.FoldedNormal(1, 100)))
-        self.params.append(Parameter("r1", dist.FoldedNormal(1, 100)))
-        self.params.append(Parameter("r2", dist.FoldedNormal(1, 100)))
-    
-    def evaluate(self, params, t):
-        amp1 = params[0]
-        amp2 = params[1]
-        r1 = params[2]
-        r2 = params[3]
-        return amp1 * tf.exp(-r1 * t) + amp2 * tf.exp(-r2 * t)
-
-    def update_initial_posterior(self, t, data, post):
-        post[self.param_idx("amp1")] = 0.9*tf.reduce_max(data, axis=1)
-        post[self.param_idx("amp2")] = 0.1*tf.reduce_max(data, axis=1)
-        post[self.param_idx("r1")] = tf.fill([tf.shape(data)[0]], 0.5)
-        post[self.param_idx("r2")] = tf.fill([tf.shape(data)[0]], 0.1)
-        
