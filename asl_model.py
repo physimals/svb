@@ -29,12 +29,18 @@ class AslRestModel(Model):
         self.pc = options.get("pc", 0.9)
         self.f_calib = options.get("fcalib", 0.01)
 
-        self.params.append(Parameter("ftiss", dist.LogNormal(1, 1e12)))
-        self.params.append(Parameter("delt", dist.LogNormal(self.bat, sd=self.batsd)))
+        self.params.append(Parameter("ftiss", dist.LogNormal(1, 1e12, geom=True), mean_init=self._init_flow))
+        self.params.append(Parameter("delt", dist.Normal(self.bat, sd=self.batsd)))
     
-    #def update_initial_posterior(self, t, data, post):
-    #    post[self.param_idx("ftiss")] = tf.reduce_max(data, axis=1)
-        
+    def _init_flow(self, t, data, param=None):
+        """
+        Initial value for the flow parameter
+        """
+        print("Initial ftiss=", tf.reduce_max(data, axis=1))
+        flow = tf.log(tf.reduce_max(data, axis=1))
+        #return tf.Print(flow, [flow], "flow", summarize=100)
+        return flow
+
     def evaluate(self, params, t):
         """
         Basic PASL/pCASL kinetic model
