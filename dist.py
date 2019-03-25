@@ -17,7 +17,7 @@ class Dist:
     than providing a default implementation
     """
 
-    def __init__(self, mean, var=None, sd=None):
+    def __init__(self, mean, var=None, sd=None, **kwargs):
         """
         Constructor. 
         
@@ -112,16 +112,23 @@ class LogNormal(Dist):
 
     def __init__(self, *args, **kwargs):
         Dist.__init__(self, *args, **kwargs)
+        self._geom = kwargs.get("geom", False)
 
     @property
     def nmean(self):
-        # See https://uk.mathworks.com/help/stats/lognstat.html
-        return math.log(self.mean**2/math.sqrt(self.var + self.mean**2))
+        if self._geom:
+            return math.log(self.mean)
+        else:
+            # See https://uk.mathworks.com/help/stats/lognstat.html
+            return math.log(self.mean**2/math.sqrt(self.var + self.mean**2))
 
     @property
     def nvar(self):
-        # See https://uk.mathworks.com/help/stats/lognstat.html
-        return math.log(self.var/self.mean**2 + 1)
+        if self._geom:
+            return math.log(self.var)
+        else:
+            # See https://uk.mathworks.com/help/stats/lognstat.html
+            return math.log(self.var/self.mean**2 + 1)
 
     def tomodel(self, values):
         return tf.exp(values)
