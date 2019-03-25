@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-from model import ExpModel, BiExpModel
+from exp_models import ExpModel, BiExpModel
 from inference import VaeNormalFit
 
 def test_biexp(fname, t0, dt, outdir=".", learning_rate=0.02, batch_size=10, epochs=100, **kwargs):
@@ -22,7 +22,7 @@ def test_biexp(fname, t0, dt, outdir=".", learning_rate=0.02, batch_size=10, epo
     shape = d.shape
     d_flat = d.reshape(-1, shape[-1])
 
-    model = BiExpModel({})
+    model = BiExpModel()
 
     # Generate timeseries FIXME should be derivable from the model
     t = np.linspace(t0, t0+shape[3]*dt, num=shape[3], endpoint=False)
@@ -32,7 +32,7 @@ def test_biexp(fname, t0, dt, outdir=".", learning_rate=0.02, batch_size=10, epo
     time, ret = runtime(vae.train, t, d_flat, batch_size=batch_size, training_epochs=epochs)
     cost_history = ret[1]
     for idx, cost in enumerate(cost_history):
-        ct = idx * time / EPOCHS 
+        ct = idx * time / epochs 
         print("%f\t%f" % (ct, cost))
 
     # Transpose output so the first index is by parameter
@@ -74,7 +74,5 @@ if __name__ == "__main__":
     tf.set_random_seed(1)
     np.random.seed(1)
 
-    #test_onevox(BiExpModel({}))
-    #test_multivox(BiExpModel({}))
     test_biexp("test_data_exp.nii", 0, 0.02, "noisy")
 
