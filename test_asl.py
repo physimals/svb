@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from asl_model import AslRestModel
 from inference import VaeNormalFit
 
-def test_asl(fname, mask=None, learning_rate=0.02, batch_size=10, epochs=100, outdir=".", limit_voxels=None, **kwargs):
+def test_asl(fname, mask=None, learning_rate=0.02, batch_size=10, epochs=100, outdir=".", limit_voxels=None, limit_voxel_start=0, **kwargs):
     """
     Fit to a 4D ASL data
     
@@ -32,24 +32,25 @@ def test_asl(fname, mask=None, learning_rate=0.02, batch_size=10, epochs=100, ou
     # Generate timeseries 
     # FIXME derivable from the model?
     # FIXME assuming grouped by PLDs
+    plds, repeats = kwargs["plds"], kwargs["repeats"]
     slicedt = kwargs.get("slicedt", 0)
     if slicedt > 0:
         # Generate voxelwise timings array using the slicedt value
         t = np.zeros(shape)
         for z in range(shape[2]):
-            t[:, :, z, :] = np.array(sum([[pld + model.tau + z*slicedt] * model.repeats for pld in model.plds], []))
+            t[:, :, z, :] = np.array(sum([[pld + model.tau + z*slicedt] * repeats for pld in plds], []))
         if mask is not None:
             t = t[d_mask > 0]
         else:
             t = t.reshape(-1, shape[-1])
     else:
         # Timings are the same for all voxels
-        t = np.array(sum([[pld + model.tau] * model.repeats for pld in model.plds], [])).reshape(1, -1)
+        t = np.array(sum([[pld + model.tau] * repeats for pld in plds], [])).reshape(1, -1)
 
     if limit_voxels is not None:
         # Run on voxel subset
-        d_flat = d_flat[:limit_voxels, :].reshape(-1, shape[3])
-        t = t[:limit_voxels, :].reshape(-1, shape[3])
+        d_flat = d_flat[limit_voxel_start:limit_voxels, :].reshape(-1, shape[3])
+        t = t[limit_voxel_start:limit_voxels, :].reshape(-1, shape[3])
 
     # Example evaluation (ftiss=10, delt=0.7)
     ftiss, delt = 10.0, 0.7

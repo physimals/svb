@@ -17,10 +17,8 @@ class AslRestModel(Model):
     """
 
     def __init__(self, **options):
-        Model.__init__(self, options)
-        self.plds = options["plds"]
+        Model.__init__(self, **options)
         self.tau = options["tau"]
-        self.repeats = options.get("repeats", 1)
         self.casl = options.get("casl", True)
         self.bat = options.get("bat", 1.3)
         self.batsd = options.get("batsd", 1.0)
@@ -36,7 +34,6 @@ class AslRestModel(Model):
         """
         Initial value for the flow parameter
         """
-        print("Initial ftiss=", tf.reduce_max(data, axis=1))
         flow = tf.log(tf.reduce_max(data, axis=1))
         #return tf.Print(flow, [flow], "flow", summarize=100)
         return flow
