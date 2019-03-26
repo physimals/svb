@@ -124,3 +124,20 @@ class GlobalParameter(Parameter):
 
     def __init__(self, *args, **kwargs):
         Parameter.__init__(self, *args, **kwargs)
+
+    def posterior(self, t, data, mean_init=None, log_var_init=None):
+        """
+        Create a single Variable to initialize the posterior mean
+        and log variance and broadcast it across all voxels
+        """
+        nvoxels = tf.shape(data)[0]
+        if mean_init is None:
+            mean_init = self.mean_init(t, data)
+
+        if log_var_init is None:
+            log_var_init = self.log_var_init(t, data)
+            
+        mean = tf.Variable(tf.reduce_mean(mean_init), validate_shape=False)
+        log_var = tf.Variable(tf.reduce_mean(log_var_init), validate_shape=False)
+        return tf.fill([nvoxels], mean), tf.fill([nvoxels], log_var)
+        
