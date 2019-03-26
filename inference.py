@@ -299,17 +299,17 @@ class VaeNormalFit(object):
         self.optimizer = self.opt.minimize(tf.reduce_sum(self.cost))
         self.grads = self.opt.compute_gradients(self.cost)
 
-    def initialize(self, Xfull):
+    def initialize(self):
         """
         Initialize global variables - i.e. initial values of posterior which
         may depend on the full data
         """
-        self.sess.run(self.init, feed_dict={self.xfull: Xfull})
+        self.sess.run(self.init, feed_dict=self.feed_dict)
         # Save the initial posterior
-        self.mp_mean_1 = self.output("mp_mean")
-        self.mp_covar_1 = self.output("mp_covar")
+        self.mp_mean_1 = self.output("mp_mean", feed_dict=self.feed_dict)
+        self.mp_covar_1 = self.output("mp_covar", feed_dict=self.feed_dict)
 
-    def fit_batch(self, T, X, Xfull):
+    def fit_batch(self):
         """
         Train model based on mini-batch of input data.       
 
@@ -317,20 +317,16 @@ class VaeNormalFit(object):
         """
         # Do the optimization (self.optimizer), but also calcuate the cost for reference (self.cost, gives a second return argument)
         # Pass in X using the feed dictionary, as we want to process the batch we have been provided X
-        _, cost = self.sess.run([self.optimizer, self.cost], 
-                                feed_dict={self.xfull : Xfull, 
-                                           self.x: X, 
-                                           self.t: T,
-                                           self.actual_learning_rate: self.learning_rate})
+        _, cost = self.sess.run([self.optimizer, self.cost], feed_dict=self.feed_dict)
         return cost
 
-    def output(self, name):
+    def output(self, name, feed_dict=None):
         """
         Evaluate an output tensor
 
         e.g. ``output("mp_mean")`` returns the current posterior means
         """
-        return self.sess.run((self.sess.graph.get_tensor_by_name("%s:0" % name),))[0]
+        return self.sess.run((self.sess.graph.get_tensor_by_name("%s:0" % name),), feed_dict=self.feed_dict)[0]
 
     def train(self, t, data, batch_size, training_epochs=100, display_step=1, output_graph=None):
         """
@@ -345,7 +341,11 @@ class VaeNormalFit(object):
         cost_history=np.zeros([training_epochs]) 
         
         # Training cycle
-        self.initialize(data)
+        self.feed_dict={
+            self.xfull : data, 
+            self.actual_learning_rate: self.learning_rate
+        }
+        self.initialize()
         if output_graph:
             writer = tf.summary.FileWriter(output_graph, self.sess.graph)
         
@@ -366,6 +366,8 @@ class VaeNormalFit(object):
                     t_xs = t[:, i::n_batches]
                         
                 # Fit training using batch data
+                self.feed_dict[self.x] = batch_xs
+                self.feed_dict[self.t] = t_xs
                 cost = np.mean(self.fit_batch(t_xs, batch_xs, data))
                             
                 # Compute average cost
