@@ -1,6 +1,7 @@
 """
 Stochastic Bayesian inference of a nonlinear model
 """
+import sys
 
 import numpy as np
 import tensorflow as tf
@@ -101,6 +102,9 @@ class VaeNormalFit(object):
 
             # Variable initializer
             self.init = tf.global_variables_initializer()
+
+            # Variable saver
+            self.saver = tf.train.Saver()
 
             # Tensorflow session for runnning graph
             self.sess = tf.Session()
@@ -243,7 +247,7 @@ class VaeNormalFit(object):
            the inferred parameters.
 
         2. The latent loss. This is a measure of how closely the posterior fits the
-           'true' posterior
+           prior
         """
 
         ## Part 1: Log likelihood
@@ -267,7 +271,8 @@ class VaeNormalFit(object):
         # This prediction currently has a different set of model parameters for each data point (i.e. it is not amortized) - due to the sampling process above
         # NOTE: scale (the relative scale of number of samples and size of batch) appears in here to get the relative scaling of log-likehood correct, 
         # even though we have dropped the constant term log(n_samples)
-        scale = tf.to_float(tf.floordiv(self.nt, self.batch_size))
+        scale = tf.div(tf.to_float(self.nt), tf.to_float(self.batch_size))
+
         self.reconstr_loss = tf.reduce_sum(0.5 * scale * ( tf.div(tf.square(tf.subtract(self.x, y_pred)), tf.exp(noise_log_var)) + noise_log_var + np.log( 2 * np.pi) ), axis=1, name="reconstr_loss")
         if self.debug:
             self.reconstr_loss = tf.Print(self.reconstr_loss, [self.reconstr_loss], "\nreconstr", summarize=100)
@@ -287,17 +292,27 @@ class VaeNormalFit(object):
         t2 = tf.matmul(tf.reshape(mn, (self.nvoxels, 1, -1)), inv_mp_covar_0)
         t3 = tf.reshape(tf.matmul(t2, tf.reshape(mn, (self.nvoxels, -1, 1))), [self.nvoxels])
         t4 = tf.log(tf.matrix_determinant(self.mp_covar_0, name='det_mp_covar_0'))
+        #t5 = tf.log(tf.matrix_determinant(self.mp_covar, name='det_mp_covar'))
         t5 = tf.log(tf.matrix_determinant(self.mp_covar + self.reg_cov, name='det_mp_covar'))
+
+        if self.debug:
+            t1 = tf.Print(t1, [t1], "t1")
+            t3 = tf.Print(t3, [t3], "\nt3")
+            t4 = tf.Print(t4, [t4], "t4")
+            t5 = tf.Print(t5, [t5], "t5")
+
         latent_loss = 0.5*(t1 + t3 - self.nparams + t4 - t5)
         self.latent_loss = tf.identity(latent_loss, name="latent_loss")
         if self.debug:
             self.latent_loss = tf.Print(self.latent_loss, [self.latent_loss], "\nlatent", summarize=100)
 
         # Sum the cost from each voxel and use a single optimizer
-        self.cost = tf.reduce_sum(self.reconstr_loss + self.latent_loss, name="cost")   
-        self.opt = tf.train.AdamOptimizer(learning_rate=self.actual_learning_rate)
-        self.optimizer = self.opt.minimize(tf.reduce_sum(self.cost))
-        self.grads = self.opt.compute_gradients(self.cost)
+        self.cost = tf.add(self.reconstr_loss, self.latent_loss, name="cost")
+        self.mean_cost = tf.reduce_mean(self.cost, name="mean_cost")
+        #self.cost = tf.square(tf.subtract(self.x, y_pred), name="cost")   
+        #self.cost = tf.Print(self.cost, [self.cost], "cost", summarize=10)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.actual_learning_rate)
+        self.optimize = self.optimizer.minimize(self.mean_cost)
 
     def initialize(self):
         """
@@ -317,7 +332,7 @@ class VaeNormalFit(object):
         """
         # Do the optimization (self.optimizer), but also calcuate the cost for reference (self.cost, gives a second return argument)
         # Pass in X using the feed dictionary, as we want to process the batch we have been provided X
-        _, cost = self.sess.run([self.optimizer, self.cost], feed_dict=self.feed_dict)
+        _, cost = self.sess.run([self.optimize, self.cost], feed_dict=self.feed_dict)
         return cost
 
     def output(self, name, feed_dict=None):
@@ -335,10 +350,11 @@ class VaeNormalFit(object):
         # Expect t to have a dimension for voxelwise variation even if it is the same for all voxels
         if t.ndim == 1:
             t = t.reshape(1, -1)
-
+        n_voxels = data.shape[0]
         n_samples = t.shape[1]
-        n_batches = np.floor_divide(n_samples, batch_size)
-        cost_history=np.zeros([training_epochs]) 
+        n_batches = int(np.ceil(float(n_samples) / batch_size))
+        cost_history=np.zeros([training_epochs+1]) 
+        param_history=np.zeros([training_epochs+1, self.model.nparams]) 
         
         # Training cycle
         self.feed_dict={
@@ -349,44 +365,73 @@ class VaeNormalFit(object):
         if output_graph:
             writer = tf.summary.FileWriter(output_graph, self.sess.graph)
         
+        trials, best_cost = 0, 1e12
+        saved = False
+        max_trials = 20
         for epoch in range(training_epochs): # multiple training epochs of gradient descent, i.e. make multiple 'passes' through the data.
-            avg_cost = 0.
+            err, avg_cost = 0, 0.0
             index = 0
             
-            # Loop over all batches
-            for i in range(n_batches):
-                if 0:
-                    # Batches are defined by sequential data samples
-                    batch_xs = data[:, index:index+batch_size]
-                    t_xs = t[:, index:index+batch_size]
-                    index = index + batch_size
-                else:
-                    # Batches are defined by constant strides through the data samples
-                    batch_xs = data[:, i::n_batches]
-                    t_xs = t[:, i::n_batches]
-                        
-                # Fit training using batch data
-                self.feed_dict[self.x] = batch_xs
-                self.feed_dict[self.t] = t_xs
-                cost = np.mean(self.fit_batch(t_xs, batch_xs, data))
-                            
-                # Compute average cost
-                avg_cost += cost / n_samples * batch_size
+            try:
+                # Loop over all batches
+                for i in range(n_batches):
+                    if 0:
+                        # Batches are defined by sequential data samples
+                        batch_xs = data[:, index:index+batch_size]
+                        t_xs = t[:, index:index+batch_size]
+                        index = index + batch_size
+                    else:
+                        # Batches are defined by constant strides through the data samples
+                        batch_xs = data[:, i::n_batches]
+                        t_xs = t[:, i::n_batches]
+                    
+                    batch_xs = np.tile(batch_xs, (1, 5))
+                    t_xs = np.tile(t_xs, (1, 5))
+                    # Fit training using batch data
+                    self.feed_dict[self.x] = batch_xs
+                    self.feed_dict[self.t] = t_xs
+                    cost = np.mean(self.fit_batch())
+                                
+                    # Compute average cost
+                    avg_cost += cost / n_batches
+            except tf.OpError:
+                import traceback
+                traceback.print_exc()
+                err = 1
 
-                if np.any(np.isnan(cost)):
-                    covar = self.output("mp_covar")
-                    mean = self.output("mp_mean")
-                    for idx, cov in enumerate(covar):
-                        if np.any(np.isnan(mean[idx])):
-                            print(idx, mean[idx])
-                            print(cov)
-                            print(np.linalg.inv(cov))
-                    #self.learning_rate /= 10
-                    import pdb; pdb.set_trace()
-                                                
-            # Display logs per epoch step
-            if epoch % display_step == 0:
-                print("Epoch: %04d, mean cost=%f, mean params=%s" % ((epoch+1), avg_cost, np.mean(self.output("mp_mean_model"), axis=1)))
-            cost_history[epoch]=avg_cost   
-            
-        return self, cost_history
+            mean_params = np.mean(self.output("mp_mean_model"), axis=1)
+            latent = np.mean(self.output("latent_loss"))
+            reconstr = np.mean(self.output("reconstr_loss"))
+            if err or np.isnan(avg_cost) or np.any(np.isnan(mean_params)) or np.isnan(latent) or np.isnan(reconstr):
+                self.feed_dict[self.actual_learning_rate] *= 0.9
+                if saved:
+                    self.saver.restore(self.sess, "/tmp/model.ckpt")
+                sys.stdout.write("NaN values - reverting to previous best step with lower learning rate (%f)\n" % self.feed_dict[self.actual_learning_rate])
+            else:
+                # Display logs per epoch step
+                cost_history[epoch] = avg_cost
+                param_history[epoch, :] = mean_params
+                if epoch % display_step == 0:
+                    sys.stdout.write("Epoch: %04d, mean cost=%f (%f, %f), mean params=%s" % ((epoch+1), avg_cost, latent, reconstr, mean_params))
+
+                if avg_cost < best_cost:
+                    sys.stdout.write(" - Saving\n")
+                    best_cost = avg_cost
+                    self.saver.save(self.sess, "/tmp/model.ckpt")
+                    saved = True
+                    trials = 0
+                else:
+                    trials += 1
+                    if trials < max_trials:
+                        sys.stdout.write(" - Cost reversal trial %i\n" % trials)
+                    else:
+                        self.feed_dict[self.actual_learning_rate] *= 0.9
+                        self.saver.restore(self.sess, "/tmp/model.ckpt")
+                        trials = 0
+                        sys.stdout.write(" - Reverting with learning rate (%f)\n" % self.feed_dict[self.actual_learning_rate])
+  
+        self.saver.restore(self.sess, "/tmp/model.ckpt")
+        final_mean_params = np.mean(self.output("mp_mean_model"), axis=1)
+        cost_history[training_epochs] = best_cost
+        param_history[training_epochs, :] = final_mean_params
+        return self, cost_history, param_history
