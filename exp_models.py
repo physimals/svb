@@ -16,11 +16,12 @@ class MultiExpModel(Model):
         self.num_exps = options.get("num_exps", 1)
         for n in range(self.num_exps):
             self.params.append(Parameter("amp%i" % (n+1), 
-                                         dist.LogNormal(1, 100), 
-                                         mean_init=self._init_amp))
+                                         dist.FoldedNormal(1.0, 100), 
+                                         mean_init=self._init_amp,
+                                         **options))
             self.params.append(Parameter("r%i" % (n+1), 
-                                         dist.LogNormal(1, 100), 
-                                         mean_init=0.5))
+                                         dist.FoldedNormal(10.0, 100),
+                                         **options))
     
     def evaluate(self, params, t):
         ret = None
@@ -35,10 +36,7 @@ class MultiExpModel(Model):
         return ret
 
     def _init_amp(self, t, data, param):
-        if param.name == "amp1":
-            return (1.1-self.num_exps*0.1)*tf.reduce_max(data, axis=1)
-        else:
-            return 0.1*tf.reduce_max(data, axis=1)
+        return tf.reduce_max(data, axis=1) / self.num_exps
         
 class ExpModel(MultiExpModel):
     """

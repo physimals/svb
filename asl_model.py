@@ -6,7 +6,8 @@ import math
 import tensorflow as tf
 import numpy as np
 
-from model import Model, Parameter
+from model import Model
+from parameter import Parameter, RoiParameter
 import dist
 
 class AslRestModel(Model):
@@ -27,15 +28,25 @@ class AslRestModel(Model):
         self.pc = options.get("pc", 0.9)
         self.f_calib = options.get("fcalib", 0.01)
 
-        self.params.append(Parameter("ftiss", dist.LogNormal(1, 1e12, geom=True), mean_init=self._init_flow))
-        self.params.append(Parameter("delt", dist.Normal(self.bat, sd=self.batsd)))
+        pvgm = options.get("pvgm", None)
+        pvwm = options.get("pvwm", None)
+        if pvgm is not None and pvwm is not None:
+            pvcsf = np.ones(pvgm.shape, dtype=np.float32) - pvgm - pvwm
+            self.params.append(RoiParameter("ftiss", dist.FoldedNormal(0, 1e12), mean_init=self._init_flow, log_var_init=0.0, rois=[pvgm, pvwm, pvcsf]))
+        else:
+            self.params.append(Parameter("ftiss", dist.FoldedNormal(0, 1e12), mean_init=self._init_flow, log_var_init=0.0))
+
+        self.params.append(Parameter("delttiss", dist.FoldedNormal(self.bat, sd=self.batsd)))
     
     def _init_flow(self, t, data, param=None):
         """
         Initial value for the flow parameter
         """
-        flow = tf.log(tf.reduce_max(data, axis=1))
-        #return tf.Print(flow, [flow], "flow", summarize=100)
+        flow = tf.reduce_max(data, axis=1)
+        #init_flow = tf.reduce_mean(tf.reduce_max(data, axis=1))
+        #init_flow = tf.Print(init_flow, [init_flow], "initial flow")
+        #nvoxels = tf.shape(data)[0]
+        #flow = tf.fill([nvoxels], init_flow)
         return flow
 
     def evaluate(self, params, t):

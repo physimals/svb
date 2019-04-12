@@ -325,11 +325,11 @@ def train(nlinmod,t,data, mode_corr='infer_post_corr', learning_rate=0.01,
 
 # set the properties of the simulated data
 n_samples=100
-true_amp1 = 1.0 # the true amplitude of the model
-true_amp2 = 0.5
+true_amp1 = 10.0 # the true amplitude of the model
+true_amp2 = 10.0
 true_R1 = 1.0 # the true decay rate
-true_R2 = 0.2
-true_sd = 0.2 # the s.d. of the noise
+true_R2 = 10.0
+true_sd = 0.1 # the s.d. of the noise
 true_var = true_sd*true_sd
 
 #time points
@@ -451,3 +451,4 @@ plt.plot(t,y_est,'k.')
 mn = vae_norm.sess.run(vae_norm.mp_mean)
 y_est = sess.run(nlinmod.evaluate(np.reshape(mn[0,0:nlinmod.nparams],[-1,1]),t))
 plt.plot(t,y_est,'b')
+plt.show()

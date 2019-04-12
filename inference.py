@@ -120,8 +120,8 @@ class VaeNormalFit(object):
         """
         prior_means = np.zeros(self.nparams)
         prior_vars = np.zeros(self.nparams)
-        for idx, param in enumerate(self.model.params):
-            prior_means[idx], prior_vars[idx] = param.prior()
+        for idx, param in enumerate(self.params):
+            prior_means[idx], prior_vars[idx] = param.prior.nmean, param.prior.nvar
             
         # Noise prior mean is 0, variance 1e6 (i.e. non-informative)
         prior_vars[self.nparams-1] = 1e6
@@ -158,13 +158,13 @@ class VaeNormalFit(object):
             log_var_init = np.transpose(vae_init.output('log_diag_chol_mp_covar'))
             covar_init = vae_init.output('off_diag_chol_mp_covar')
 
-        # Get posteriors for model parameters
+        # Get initial posteriors for model parameters
         post_means = []
         post_log_vars = []
         for idx, param in enumerate(self.model.params):
-            mean, log_var = param.posterior(self.t, self.xfull, 
-                                            mean_init=mean_init[idx],
-                                            log_var_init=log_var_init[idx])
+            mean, log_var = param.initial(self.t, self.xfull, 
+                                          mean_init=mean_init[idx],
+                                          log_var_init=log_var_init[idx])
             post_means.append(mean)
             post_log_vars.append(log_var)
 
@@ -236,7 +236,7 @@ class VaeNormalFit(object):
         if self.debug:
             self.mp = tf.Print(self.mp, [self.mp], "\nmp", summarize=100)
 
-    def _create_loss_optimizer(self):
+    def _create_loss_optimizer_mvn(self):
         """
         Create the loss optimizer which will minimise the cost function
 
@@ -314,6 +314,99 @@ class VaeNormalFit(object):
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.actual_learning_rate)
         self.optimize = self.optimizer.minimize(self.mean_cost)
 
+    def _create_loss_optimizer(self):
+        """
+        Create the loss optimizer which will minimise the cost function
+
+        The loss is composed of two terms:
+    
+        1. log likelihood. This is a measure of how likely the data are given the
+           current posterior, i.e. how well the data fit the model using
+           the inferred parameters.
+
+        2. The latent loss. This is a measure of how closely the posterior fits the
+           prior
+        """
+
+        ## Part 1: Log likelihood
+        
+        # Unpack noise parameter remembering that we are inferring the log of the variance of the generating distirbution (this was purely by choice)
+        noise_log_var = self.mp[:, -1, :]
+        if self.debug:
+            noise_log_var = tf.Print(noise_log_var, [tf.shape(self.mp), tf.shape(self.mp_mean), tf.shape(self.mp_covar), tf.shape(self.mp_mean_0), tf.shape(self.mp_covar_0)], "shapes", summarize=100)
+
+        # Transform the underlying Gaussian samples into the values required by the model
+        # This depends on each model parameter's underlying distribution
+        param_values = tf.transpose(self.mp, (1, 0, 2))
+        model_values = []
+        for idx, param in enumerate(self.model.params):
+            model_values.append(param.dist.tomodel(self.mp[:, idx, :]))
+
+        # Evaluate the model using the transformed values
+        y_pred = self.model.evaluate(model_values, self.t)
+        
+        # Calculate the log likelihood given our supplied mp values
+        # This prediction currently has a different set of model parameters for each data point (i.e. it is not amortized) - due to the sampling process above
+        # NOTE: scale (the relative scale of number of samples and size of batch) appears in here to get the relative scaling of log-likehood correct, 
+        # even though we have dropped the constant term log(n_samples)
+        scale = tf.div(tf.to_float(self.nt), tf.to_float(self.batch_size))
+        self.reconstr_loss = tf.reduce_sum(0.5 * scale * (tf.div(tf.square(tf.subtract(self.x, y_pred)), tf.exp(noise_log_var)) + noise_log_var), axis=1, name="reconstr_loss")
+        if self.debug:
+            self.reconstr_loss = tf.Print(self.reconstr_loss, [self.reconstr_loss], "\nreconstr", summarize=100)
+
+        ## Part 1: Latent loss
+
+        # 2.) log (q(mp)/p(mp)) = log(q(mp)) - log(p(mp))
+        # latent_loss = log_mvn_pdf(self.mp, self.mp_mean, mp_covar) \
+        #                    - log_mvn_pdf(self.mp, self.mp_mean_0, self.mp_covar_0)     
+        
+        # MVN pdf = (2pi)^(-k/2) |C|^(-1/2) exp(-0.5*(self.mp - self.mp_mean))
+        
+        mean_0 = tf.tile(tf.reshape(self.mp_mean_0, [1, self.nparams]), [self.nvoxels, 1])
+        covar_0 = tf.tile(tf.reshape(self.mp_covar_0, [1, self.nparams, self.nparams]), [self.nvoxels, 1, 1])
+        latent_loss = self.log_mvn_pdf(self.mp_mean, self.mp_covar, self.mp, "mp") - self.log_mvn_pdf(mean_0, covar_0, self.mp, "mp0")
+        self.latent_loss = tf.identity(latent_loss, name="latent_loss")
+        if self.debug:
+            self.latent_loss = tf.Print(self.latent_loss, [self.latent_loss], "\nlatent", summarize=100)
+
+        # Sum the cost from each voxel and use a single optimizer
+        self.cost = tf.add(self.reconstr_loss, self.latent_loss, name="cost")
+        self.mean_cost = tf.reduce_mean(self.cost, name="mean_cost")
+        #self.cost = tf.square(tf.subtract(self.x, y_pred), name="cost")   
+        #self.cost = tf.Print(self.cost, [self.cost], "cost", summarize=10)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.actual_learning_rate)
+        self.optimize = self.optimizer.minimize(self.mean_cost)
+
+    def log_mvn_pdf(self, mean, cov, values, name):
+        """
+        :param mean: [NV x P]
+        :param cov: [NV x P x P]
+        :param values: [NV x P x B]
+        """
+        #values = tf.Print(values, [values[95]], "\n%s_vals" % name, summarize=100)
+        det_covar = tf.matrix_determinant(cov, name="%s_det" % name) # [NV]
+        inv_covar = tf.matrix_inverse(cov, name="%s_inv" % name) # [NV, P, P]
+        
+        dx = tf.subtract(values, tf.expand_dims(mean, axis=-1)) # [NV x P x B]
+        #dx = tf.Print(dx, [dx[95]], "\n%s_dxo" % name, summarize=100)
+
+        dx = tf.expand_dims(tf.transpose(dx, [0, 2, 1]), axis=2, name="%s_dx" % name) # [NV x B x 1 x P]
+        #dx = tf.Print(dx, [tf.shape(dx)], "dx", summarize=10)
+
+        dxt = tf.reshape(dx, [self.nvoxels, self.batch_size, self.nparams, 1], name="%s_dxt" % name) # [NV x B x P x 1]
+        #dxt = tf.Print(dxt, [dxt[95]], "\ndxt", summarize=100)
+
+        inv_covar_tile = tf.tile(tf.reshape(inv_covar, [self.nvoxels, 1, self.nparams, self.nparams]), [1, self.batch_size, 1, 1]) # [NV x B x P x P]
+        #inv_covar_tile = tf.Print(inv_covar_tile, [tf.shape(inv_covar_tile)], "inv_covar_tile", summarize=10)
+
+        mul1 = tf.matmul(inv_covar_tile, dxt) # [NV x B x P x 1]
+        mul2 = tf.matmul(dx, mul1, name="%s_mul" % name) # [NV x B x 1 x 1]
+        #mul2 = tf.Print(mul2, [mul2[95]], "mul2", summarize=100)
+
+        pdf = -0.5*(tf.tile(tf.reshape(tf.log(det_covar), [self.nvoxels, 1]), [1, self.batch_size]) + tf.reshape(mul2, [self.nvoxels, self.batch_size]))
+        #pdf = tf.Print(pdf, [tf.reduce_mean(pdf, axis=1)[95]], "\n%s_pdf" % name, summarize=100)
+        return tf.reduce_mean(pdf, axis=1)
+
     def initialize(self):
         """
         Initialize global variables - i.e. initial values of posterior which
@@ -353,6 +446,7 @@ class VaeNormalFit(object):
         n_voxels = data.shape[0]
         n_samples = t.shape[1]
         n_batches = int(np.ceil(float(n_samples) / batch_size))
+        print(n_voxels, n_samples, n_batches)
         cost_history=np.zeros([training_epochs+1]) 
         param_history=np.zeros([training_epochs+1, self.model.nparams]) 
         
@@ -385,8 +479,8 @@ class VaeNormalFit(object):
                         batch_xs = data[:, i::n_batches]
                         t_xs = t[:, i::n_batches]
                     
-                    batch_xs = np.tile(batch_xs, (1, 5))
-                    t_xs = np.tile(t_xs, (1, 5))
+                    #batch_xs = np.tile(batch_xs, (1, 5))
+                    #t_xs = np.tile(t_xs, (1, 5))
                     # Fit training using batch data
                     self.feed_dict[self.x] = batch_xs
                     self.feed_dict[self.t] = t_xs
