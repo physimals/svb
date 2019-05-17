@@ -1,14 +1,13 @@
-import dist
-
+"""
+Base class for a forward model whose parameters are to be fitted
+"""
 import tensorflow as tf
 import numpy as np
 
-from parameter import Parameter
-    
 class Model:
     """
     A forward model
-    
+
     :attr params: Sequence of ``Parameter`` objects
     :attr nparams: Number of model parameters
     """
@@ -34,7 +33,7 @@ class Model:
             if param.name == name:
                 return idx
         raise ValueError("Parameter not found in model: %s" % name)
-        
+
     @property
     def t(self, nt):
         """
@@ -52,13 +51,13 @@ class Model:
     def evaluate(self, params, t):
         """
         Evaluate the model
-        
+
         :param t: Sequence of time values of length N
         :param params Sequence of parameter values arrays, one for each parameter.
                       Each array is MxN tensor where M is the number of voxels. This
-                      may be supplied as a PxMxN tensor where P is the number of 
+                      may be supplied as a PxMxN tensor where P is the number of
                       parameters.
-                      
+
         :return: MxN tensor containing model output at the specified time values
                  and for each time value using the specified parameter values
         """
@@ -78,17 +77,17 @@ class Model:
         """
         Generate test data by evaluating the model on known parameter values
         with optional added noise
-        
+
         :param t: 1xN or MxN tensor of time values (possibly varying by voxel)
         :param params_map: Mapping from parameter name either a single parameter
                            value or a sequence of M parameter values. The special
-                           key ``noise_sd``, if present, should containing the 
-                           standard deviation of Gaussian noise to add to the 
+                           key ``noise_sd``, if present, should containing the
+                           standard deviation of Gaussian noise to add to the
                            output.
         :return If noise is present, a tuple of two MxN Numpy arrays. The first
-                contains the 'clean' output data without noise, the second 
+                contains the 'clean' output data without noise, the second
                 contains the noisy data. If noise is not present, only a single
-                array is returned. 
+                array is returned.
         """
         param_values = None
         for idx, param in enumerate(self.params):
@@ -102,7 +101,7 @@ class Model:
 
             if param_values is None:
                 param_values = np.zeros((len(self.params), len(value_sequence), len(t)))
-            
+
             if len(value_sequence) != param_values.shape[1]:
                 raise ValueError("Parameter %s has wrong number of values: %i (expected %i)" % (param.name, len(value_sequence), param_values.shape[1]))
             else:

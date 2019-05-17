@@ -12,28 +12,30 @@ class Parameter:
     A model parameter
     """
 
-    def __init__(self, name, prior, desc="No description given", **kwargs):
+    def __init__(self, name, **kwargs):
         """
         Constructor
 
         :param name: Parameter name
-        :param prior: Dist instance giving the parameter's prior distribution
+        :param prior: Dist instance giving the parameter's prior distribution. Required.
+        :param post:  Dist instance giving the initial posterior distribution. If not
+                      given, uses prior as initial posterior. 
         :param desc: Optional parameter description
-
-        Keyword arguments (optional):
-         - ``mean_init`` Initial value for the posterior mean either as a numeric
-                         value or a callable which takes the parameters t, data, param_name 
-         - ``log_var_init`` Initial value for the posterior log variance either as a numeric
-                            value or a callable which takes the parameters t, data, param_name 
+        :param initialise: Optional Callable which will be called to initialise the mean and variance
+                           of the posterior from the data
         """
-        custom_vals = kwargs.get("param_overrides", {}).get(name, {})
+        custom_vals = kwargs.pop("param_overrides", {}).get(name, {})
+        kwargs.update(custom_vals)
 
         self.name = name
-        self.desc = desc
+        self.desc = kwargs.get("desc", "No description given")
         self.debug = kwargs.get("debug", False)
-        self.prior = custom_vals.get("prior", prior)
-        self._mean_init = custom_vals.get("mean_init", kwargs.get("mean_init", self.prior.nmean))
-        self._var_init = custom_vals.get("var_init", kwargs.get("var_init", self.prior.nvar/100))
+        self.prior = kwargs.get("prior")
+        self.post = kwargs.get("post", self.prior)
+        self._initialise = kwargs.get("initialise", self._null_init)
+
+    def _null_init(self, *args):
+        return None, None
 
     def _initial_mean(self, t, data):
         """
@@ -49,7 +51,7 @@ class Parameter:
             else:
                 mean_init = tf.fill([nvoxels], self._mean_init)
         else:
-            mean_init = tf.random.normal([nvoxels], self.prior.nmean, math.sqrt(self.prior.nvar), dtype=tf.float32)
+            mean_init = tf.random.normal([nvoxels], self.prior.mean, math.sqrt(self.prior.var), dtype=tf.float32)
         return mean_init
 
     def _initial_var(self, t, data):
@@ -59,10 +61,9 @@ class Parameter:
         Note that this is the variance for the underlying Gaussian distribution
         of the parameter which will be inferred
         """
-        print("initial_var: %s" % self.name)
         nvoxels = tf.shape(data)[0]
         if self._var_init is not None:
-            print(self._var_init, self.prior.nvar)
+            print(self._var_init, self.prior.var)
             if isinstance(self._var_init, collections.Callable):
                 var_init = self._var_init(t, data, self)
             else:
@@ -86,25 +87,20 @@ class Parameter:
         :param data: Data Tensor of shape (VxN) where V is the 
                      number of voxels and N is the number of time 
                      points.
-        :param mean_init: Tensor of shape (V) containing the initial 
-                          value of the mean of the posterior at each 
-                          voxel.
-        :param var_init: Tensor of shape (V) containing the initial
-                         value of the variance for the 
-                         posterior at each voxel.
 
         :return: Tuple of two tf.Tensor objects. The first is the
                  initial mean, the second the variance. 
-                 These should be backed by tf.Variable objects
-                 which will be inferred. The exact mapping of
-                 Variables to the mean/variance tensors is not
-                 specified. By default it is one per voxel but
-                 it could equallly be a single variable for
-                 all voxels, or one per ROI, etc. Initial
-                 values of the posterior may be based on the
-                 data supplied.
         """
-        return self._initial_mean(t, data), self._initial_var(t, data)
+        nvoxels = tf.shape(data)[0]
+        initial_mean, initial_var = self._initialise(self, t, data)
+
+        if initial_mean is None:
+            print("postmean", self.name, self.post.mean)
+            initial_mean = tf.fill([nvoxels], self.post.mean)
+        if initial_var is None:
+            print("postvar",self.name, self.post.var)
+            initial_var = tf.fill([nvoxels], self.post.var)
+        return initial_mean, initial_var
 
 class GlobalParameter(Parameter):
     """
