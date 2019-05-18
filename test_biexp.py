@@ -6,7 +6,7 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-from svb.exp_models import ExpModel, BiExpModel
+from svb.models.exp_models import ExpModel, BiExpModel
 from svb.svb import SvbFit
 from svb.dist import FoldedNormal, Normal
 
