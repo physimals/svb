@@ -1,6 +1,7 @@
 """
 Definition of the voxelwise posterior distribution
 """
+import numpy as np
 import tensorflow as tf
 
 from .utils import debug
@@ -69,7 +70,7 @@ class FactorisedPosterior(Posterior):
         self.mean = debug(self, tf.stack(means, axis=-1, name="%s_mean" % self.name))
         self.var = debug(self, tf.stack(variances, axis=-1, name="%s_var" % self.name))
         self.std = tf.sqrt(self.var, name="%s_std" % self.name)
-        self.nvoxels = tf.shape(self.mean)[0]
+        self.nvoxels = posts[0].nvoxels
 
         # Covariance matrix is diagonal
         self.cov = tf.matrix_diag(self.var, name='%s_cov' % self.name)
@@ -85,30 +86,20 @@ class FactorisedPosterior(Posterior):
             entropy = tf.add(entropy, post.entropy(), name="%s_entropy" % self.name)
         return debug(self, entropy)
 
-class MVNPosterior(Posterior):
+class MVNPosterior(FactorisedPosterior):
     """
     Multivariate Normal posterior distribution
     """
 
     def __init__(self, posts, **kwargs):
-        self.posts = posts
-        self.nparams = len(self.posts)
-        self.debug = kwargs.get("debug", False)
-        self.name = kwargs.get("name", "FactPost")
-
-        means = [post.mean for post in self.posts]
-        variances = [post.var for post in self.posts]
-        self.mean = debug(self, tf.stack(means, axis=-1, name="%s_mean" % self.name))
-        self.var = debug(self, tf.stack(variances, axis=-1, name="%s_var" % self.name))
-        self.std = tf.sqrt(self.var, name="%s_std" % self.name)
-        self.nvoxels = tf.shape(self.mean)[0]
+        FactorisedPosterior.__init__(self, posts, **kwargs)
 
         # Covariance matrix is formed from the Cholesky decomposition
         # NB we have to create PxP variables but since we extract only the
         # off diagonal elements below we are only training on the lower
         # diagonal (excluding the diagonal itself which is comes from
         # the parameter variances provided)
-        covar_init = tf.zeros([self.nvoxels, self.nparams, self.nparams])
+        covar_init = tf.zeros([self.nvoxels, self.nparams, self.nparams], dtype=tf.float32)
         self.off_diag_vars = tf.Variable(covar_init, validate_shape=False,
                                          name='%s_off_diag_vars' % self.name)
         self.off_diag_cov_chol = tf.matrix_set_diag(tf.matrix_band_part(self.off_diag_vars, -1, 0),
@@ -125,7 +116,6 @@ class MVNPosterior(Posterior):
 
         self.cov_chol = debug(self, self.cov_chol)
         self.cov = debug(self, self.cov)
-        self.mean = debug(self, self.mean)
 
     def sample(self, nsamples):
         # Use the 'reparameterization trick' to return the samples
