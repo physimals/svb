@@ -1,15 +1,20 @@
 """
 Definition of the voxelwise posterior distribution
 """
-import numpy as np
 import tensorflow as tf
 
-from .utils import debug
+from svb.utils import LogBase
 
-class Posterior:
+class Posterior(LogBase):
     """
     Posterior distribution
     """
+    def __init__(self, **kwargs):
+        """
+        :param mean: Tensor of shape [V] containing the mean at each voxel
+        :param var: Tensor of shape [V] containing the variance at each voxel
+        """
+        LogBase.__init__(self, **kwargs)
 
     def sample(self, nsamples):
         """
@@ -25,6 +30,23 @@ class Posterior:
         """
         raise NotImplementedError()
 
+    def state(self):
+        """
+        :return Sequence of tf.Tensor objects containing the state of all variables in this
+                posterior. The tensors returned will be evaluated to create a savable state
+                which may then be passed back into set_state()
+        """
+        raise NotImplementedError()
+
+    def set_state(self, state):
+        """
+        :param state: State of variables in this posterior, as returned by previous call to state()
+
+        :return Sequence of tf.Operation objects containing which will set the variables in
+                this posterior to the specified state
+        """
+        raise NotImplementedError()
+
 class NormalPosterior(Posterior):
     """
     Posterior distribution for a single voxelwise parameter with a normal
@@ -36,23 +58,36 @@ class NormalPosterior(Posterior):
         :param mean: Tensor of shape [V] containing the mean at each voxel
         :param var: Tensor of shape [V] containing the variance at each voxel
         """
+        Posterior.__init__(self, **kwargs)
         self.nvoxels = tf.shape(mean)[0]
         self.debug = kwargs.get("debug", False)
         self.name = kwargs.get("name", "NormPost")
-        self.mean = debug(self, tf.Variable(mean, dtype=tf.float32, validate_shape=False, name="%s_mean" % self.name))
-        self.var = debug(self, tf.exp(tf.Variable(tf.log(var), dtype=tf.float32, validate_shape=False), name="%s_var" % self.name))
-        self.std = debug(self, tf.sqrt(self.var, name="%s_std" % self.name))
+        self.mean = self.log_tf(tf.Variable(mean, dtype=tf.float32, validate_shape=False,
+                                            name="%s_mean" % self.name))
+        self.log_var = tf.Variable(tf.log(var), dtype=tf.float32, validate_shape=False,
+                                   name="%s_log_var" % self.name)
+        self.var = self.log_tf(tf.exp(self.log_var, name="%s_var" % self.name))
+        self.std = self.log_tf(tf.sqrt(self.var, name="%s_std" % self.name))
 
     def sample(self, nsamples):
         eps = tf.random_normal((self.nvoxels, 1, nsamples), 0, 1, dtype=tf.float32)
         tiled_mean = tf.tile(tf.reshape(self.mean, [self.nvoxels, 1, 1]), [1, 1, nsamples])
-        sample = debug(self, tf.add(tiled_mean, tf.multiply(tf.reshape(self.std, [self.nvoxels, 1, 1]), eps),
-                        name="%s_sample" % self.name))
+        sample = self.log_tf(tf.add(tiled_mean, tf.multiply(tf.reshape(self.std, [self.nvoxels, 1, 1]), eps),
+                                    name="%s_sample" % self.name))
         return sample
 
     def entropy(self):
         entropy = tf.identity(-0.5 * tf.log(self.var), name="%s_entropy" % self.name)
-        return debug(self, entropy)
+        return self.log_tf(entropy)
+
+    def state(self):
+        return [self.mean, self.log_var]
+
+    def set_state(self, state):
+        return [
+            tf.assign(self.mean, state[0]),
+            tf.assign(self.log_var, state[1])
+        ]
 
 class FactorisedPosterior(Posterior):
     """
@@ -60,6 +95,7 @@ class FactorisedPosterior(Posterior):
     """
 
     def __init__(self, posts, **kwargs):
+        Posterior.__init__(self, **kwargs)
         self.posts = posts
         self.nparams = len(self.posts)
         self.debug = kwargs.get("debug", False)
@@ -67,8 +103,8 @@ class FactorisedPosterior(Posterior):
 
         means = [post.mean for post in self.posts]
         variances = [post.var for post in self.posts]
-        self.mean = debug(self, tf.stack(means, axis=-1, name="%s_mean" % self.name))
-        self.var = debug(self, tf.stack(variances, axis=-1, name="%s_var" % self.name))
+        self.mean = self.log_tf(tf.stack(means, axis=-1, name="%s_mean" % self.name))
+        self.var = self.log_tf(tf.stack(variances, axis=-1, name="%s_var" % self.name))
         self.std = tf.sqrt(self.var, name="%s_std" % self.name)
         self.nvoxels = posts[0].nvoxels
 
@@ -78,13 +114,25 @@ class FactorisedPosterior(Posterior):
     def sample(self, nsamples):
         samples = [post.sample(nsamples) for post in self.posts]
         sample = tf.concat(samples, axis=1, name="%s_sample" % self.name)
-        return debug(self, sample)
+        return self.log_tf(sample)
 
     def entropy(self):
         entropy = tf.zeros([self.nvoxels], dtype=tf.float32)
         for post in self.posts:
             entropy = tf.add(entropy, post.entropy(), name="%s_entropy" % self.name)
-        return debug(self, entropy)
+        return self.log_tf(entropy)
+
+    def state(self):
+        state = []
+        for post in self.posts:
+            state.extend(post.state())
+        return state
+
+    def set_state(self, state):
+        ops = []
+        for idx, post in enumerate(self.posts):
+            ops += post.set_state(state[idx*2:idx*2+2])
+        return ops
 
 class MVNPosterior(FactorisedPosterior):
     """
@@ -100,8 +148,8 @@ class MVNPosterior(FactorisedPosterior):
         # diagonal (excluding the diagonal itself which is comes from
         # the parameter variances provided)
         covar_init = tf.zeros([self.nvoxels, self.nparams, self.nparams], dtype=tf.float32)
-        self.off_diag_vars = tf.Variable(covar_init, validate_shape=False,
-                                         name='%s_off_diag_vars' % self.name)
+        self.off_diag_vars = self.log_tf(tf.Variable(covar_init, validate_shape=False,
+                                                     name='%s_off_diag_vars' % self.name))
         self.off_diag_cov_chol = tf.matrix_set_diag(tf.matrix_band_part(self.off_diag_vars, -1, 0),
                                                     tf.zeros([self.nvoxels, self.nparams]),
                                                     name='%s_off_diag_cov_chol' % self.name)
@@ -114,8 +162,8 @@ class MVNPosterior(FactorisedPosterior):
         self.cov = tf.matmul(tf.transpose(self.cov_chol, perm=(0, 2, 1)), self.cov_chol,
                              name='%s_cov' % self.name)
 
-        self.cov_chol = debug(self, self.cov_chol)
-        self.cov = debug(self, self.cov)
+        self.cov_chol = self.log_tf(self.cov_chol)
+        self.cov = self.log_tf(self.cov)
 
     def sample(self, nsamples):
         # Use the 'reparameterization trick' to return the samples
@@ -126,9 +174,17 @@ class MVNPosterior(FactorisedPosterior):
         tiled_mean = tf.tile(tf.reshape(self.mean, [self.nvoxels, self.nparams, 1]),
                              [1, 1, nsamples])
         sample = tf.add(tiled_mean, tf.matmul(self.cov_chol, eps), name="%s_sample" % self.name)
-        return debug(self, sample)
+        return self.log_tf(sample)
 
     def entropy(self):
         det_covar = tf.matrix_determinant(self.cov, name="%s_det" % self.name) # [V]
         entropy = tf.identity(-0.5 * tf.log(det_covar), name="%s_entropy" % self.name)
-        return debug(self, entropy)
+        return self.log_tf(entropy)
+
+    def state(self):
+        return list(FactorisedPosterior.state(self)) + [self.off_diag_vars]
+
+    def set_state(self, state):
+        ops = list(FactorisedPosterior.set_state(self, state[:-1]))
+        ops += [tf.assign(self.off_diag_vars, state[-1], validate_shape=False)]
+        return ops
