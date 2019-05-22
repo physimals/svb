@@ -25,7 +25,7 @@ class Parameter(LogBase):
                             value or a callable which takes the parameters t, data, param_name
         """
         LogBase.__init__(self)
-        
+
         custom_vals = kwargs.pop("param_overrides", {}).get(name, {})
         kwargs.update(custom_vals)
 

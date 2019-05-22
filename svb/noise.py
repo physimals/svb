@@ -5,7 +5,6 @@ import tensorflow as tf
 
 from svb.parameter import Parameter
 import svb.dist as dist
-from svb.utils import debug
 
 class NoiseParameter(Parameter):
     """
@@ -13,14 +12,10 @@ class NoiseParameter(Parameter):
     """
 
     def __init__(self, **kwargs):
-        Parameter.__init__(self, "noise", 
-                           prior=dist.Normal(0.0, 1.0e4), 
+        Parameter.__init__(self, "noise",
+                           prior=dist.Normal(0.0, 1.0e4),
                            post=dist.Normal(2.6, 0.02),
                            **kwargs)
-
-    def _initialise(self, _param, t, data):
-        print("Initialising noise post")
-        return tf.fill([tf.shape(data)[0]], -2.0), tf.fill([tf.shape(data)[0]], 1.0)
 
     def log_likelihood(self, data, pred, noise, nt):
         """
@@ -39,22 +34,21 @@ class NoiseParameter(Parameter):
 
         log_noise = noise # for clarity
         #log_noise = tf.fill([nvoxels, draw_size], 0.0)
-        data = debug(self, tf.tile(tf.reshape(data, [nvoxels, 1, batch_size]), [1, draw_size, 1], name="data"))
-        pred = debug(self, pred)
+        data = self.log_tf(tf.tile(tf.reshape(data, [nvoxels, 1, batch_size]), [1, draw_size, 1], name="data"))
+        pred = self.log_tf(pred)
 
         # Square_diff has shape [NV, D, B]
-        square_diff = debug(self, tf.square(data - pred, name="square_diff"))
+        square_diff = self.log_tf(tf.square(data - pred, name="square_diff"))
 
         # Since we are processing only a batch of the data at a time, we need to scale this term
         # correctly to the latent loss
-        scale = debug(self, tf.divide(tf.to_float(nt), tf.to_float(batch_size), name="scale"))
+        scale = self.log_tf(tf.divide(tf.to_float(nt), tf.to_float(batch_size), name="scale"))
 
         # Log likelihood has shape [NV, D]
-        noise_var = debug(self, tf.exp(log_noise, name="noise_var"))
-        log_likelihood = 0.5 * (log_noise * tf.to_float(nt) + 
+        noise_var = self.log_tf(tf.exp(log_noise, name="noise_var"))
+        log_likelihood = 0.5 * (log_noise * tf.to_float(nt) +
                                 scale * tf.reduce_sum(square_diff, axis=-1) / noise_var)
-        log_likelihood = debug(self, tf.identity(log_likelihood, name="log_likelihood"))
+        log_likelihood = self.log_tf(tf.identity(log_likelihood, name="log_likelihood"))
 
         # Mean over samples - reconstr_loss has shape [NV]
-        return debug(self, tf.reduce_mean(log_likelihood, axis=1, name="reconstr_loss"))
-        
+        return self.log_tf(tf.reduce_mean(log_likelihood, axis=1, name="mean_log_likelihood"))

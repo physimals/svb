@@ -83,13 +83,13 @@ class Dist(LogBase):
     """
     A parameter distribution
     """
-    def voxelwise_prior(self, nvoxels):
+    def voxelwise_prior(self, nvoxels, **kwargs):
         """
         :return: Prior instance for the given number of voxels
         """
         raise NotImplementedError()
 
-    def voxelwise_posterior(self, t, data, initialise=None):
+    def voxelwise_posterior(self, param, t, data, initialise=None, **kwargs):
         """
         :return: Posterior instance for the given number of voxels
         """
@@ -124,6 +124,7 @@ class Normal(Dist):
     def voxelwise_prior(self, nvoxels, **kwargs):
         mean = tf.fill([nvoxels], self.mean)
         var = tf.fill([nvoxels], self.var)
+        self.log.info("Parameter %s: Normal prior (%f, %f)", kwargs.get("name", "unknown"), self.mean, self.var)
         return NormalPrior(mean, var, **kwargs)
 
     def voxelwise_posterior(self, param, t, data, initialise=None, **kwargs):
@@ -134,13 +135,17 @@ class Normal(Dist):
 
         if initial_mean is None:
             initial_mean = tf.fill([nvoxels], self.mean)
+            self.log.info("Parameter %s: Initial posterior mean %f", kwargs.get("name", "unknown"), self.mean)
         else:
             initial_mean = self.transform.int_values(initial_mean)
+            self.log.info("Parameter %s: Voxelwise initial posterior mean", kwargs.get("name", "unknown"))
 
         if initial_var is None:
             initial_var = tf.fill([nvoxels], self.var)
+            self.log.info("Parameter %s: Initial posterior variance %f", kwargs.get("name", "unknown"), self.mean)
         else:
             initial_var = self.transform.int_values(initial_var)
+            self.log.info("Parameter %s: Voxelwise initial posterior variance", kwargs.get("name", "unknown"))
 
         return NormalPosterior(initial_mean, initial_var, **kwargs)
 

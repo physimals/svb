@@ -55,6 +55,7 @@ class FactorisedPrior(Prior):
     """
 
     def __init__(self, priors, **kwargs):
+        Prior.__init__(self)
         self.priors = priors
         self.debug = kwargs.get("debug", False)
         self.name = kwargs.get("name", "FactPrior")
