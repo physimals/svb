@@ -18,12 +18,12 @@ class MultiExpModel(Model):
         for n in range(self.num_exps):
             self.params += [
                 Parameter("amp%i" % (n+1),
-                          prior=dist.LogNormal(1.0, 100.0),
+                          prior=dist.LogNormal(1.0, 1e6),
                           post=dist.LogNormal(1.0, 1.5),
                           initialise=self._init_amp,
                           **options),
                 Parameter("r%i" % (n+1),
-                          prior=dist.LogNormal(1.0, 100.0),
+                          prior=dist.LogNormal(1.0, 1e6),
                           post=dist.LogNormal(1.0, 1.5),
                           **options),
             ]
