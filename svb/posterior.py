@@ -134,6 +134,25 @@ class FactorisedPosterior(Posterior):
             ops += post.set_state(state[idx*2:idx*2+2])
         return ops
 
+    def latent_loss(self, prior):
+        """
+        Analytic expression for latent loss which can be used when posterior and prior are
+        Gaussian
+
+        :param prior: Voxelwise Prior instance which defines the ``mean`` and ``cov`` voxelwise
+                      attributes
+        """
+        prior_cov_inv = tf.matrix_inverse(prior.cov)
+        mean_diff = tf.subtract(self.mean, prior.mean)
+
+        t1 = tf.trace(tf.matmul(prior_cov_inv, self.cov))
+        t2 = tf.matmul(tf.reshape(mean_diff, (self.nvoxels, 1, -1)), prior_cov_inv)
+        t3 = tf.reshape(tf.matmul(t2, tf.reshape(mean_diff, (self.nvoxels, -1, 1))), [self.nvoxels])
+        t4 = tf.log(tf.matrix_determinant(prior.cov, name='%s_log_det_cov' % prior.name))
+        t5 = tf.log(tf.matrix_determinant(self.cov + self.cov_reg, name='%s_log_det_cov' % self.name))
+
+        return self.log_tf(tf.identity(0.5*(t1 + t3 - self.nparams + t4 - t5), name="%s_latent_loss" % self.name))
+
 class MVNPosterior(FactorisedPosterior):
     """
     Multivariate Normal posterior distribution
@@ -162,6 +181,9 @@ class MVNPosterior(FactorisedPosterior):
         self.cov = tf.matmul(tf.transpose(self.cov_chol, perm=(0, 2, 1)), self.cov_chol,
                              name='%s_cov' % self.name)
 
+        # Regularisation to make sure cov is invertible
+        self.cov_reg = 1e-6*tf.eye(self.nparams)
+
         self.cov_chol = self.log_tf(self.cov_chol)
         self.cov = self.log_tf(self.cov)
 
@@ -177,7 +199,7 @@ class MVNPosterior(FactorisedPosterior):
         return self.log_tf(sample)
 
     def entropy(self):
-        det_covar = tf.matrix_determinant(self.cov, name="%s_det" % self.name) # [V]
+        det_covar = tf.matrix_determinant(self.cov + self.cov_reg, name="%s_det" % self.name) # [V]
         entropy = tf.identity(-0.5 * tf.log(det_covar), name="%s_entropy" % self.name)
         return self.log_tf(entropy)
 
