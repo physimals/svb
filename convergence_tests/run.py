@@ -60,7 +60,7 @@ def test_biexp(fname, t0, dt, mask=None, outdir=".", **kwargs):
     t = np.linspace(t0, t0+shape[3]*dt, num=shape[3], endpoint=False)
 
     # Train with no correlation between parameters
-    svb = SvbFit(model, infer_covar=kwargs.get("infer_covar", False), debug=False)
+    svb = SvbFit(model, **kwargs)
     ret = svb.train(t, d_flat, kwargs.pop("batch_size", 10), **kwargs)
     mean_cost_history = ret[0]
 
@@ -144,7 +144,7 @@ def learning_rate():
                                                quench_rate=0.95)
                 print(nt, bs, lr, mean_cost_history[-1])
 
-def priors_posteriors():
+def priors_posteriors(suffix="", **kwargs):
     nt, dt = NT[-1], DT[-1]
     test_data = FNAME_NOISY % nt
     cases = {
@@ -237,6 +237,7 @@ def priors_posteriors():
     bs = 10
     lr = 0.1
     for name, param_overrides in cases.items():
+        name = "%s%s" % (name, suffix)
         print(name)
         mean_cost_history = test_biexp(test_data, t0=0, dt=dt,
                                        outdir=name,
@@ -245,7 +246,7 @@ def priors_posteriors():
                                        learning_rate=lr,
                                        quench_rate=0.95,
                                        param_overrides=param_overrides,
-                                       infer_covar=False)
+                                       **kwargs)
         print(name, mean_cost_history[-1])
 
 if __name__ == "__main__":
@@ -265,5 +266,7 @@ if __name__ == "__main__":
     #    generate_test_data(num_voxels=NV, num_times=nt, dt=dt, m1=M1, m2=M2, l1=L1, l2=L2, noise=NOISE)
         
     #learning_rate()
-    priors_posteriors()
-
+    #priors_posteriors("_num", infer_covar=False, force_num_latent_loss=True)
+    #priors_posteriors("_analytic", infer_covar=False)
+    priors_posteriors("_num_corr", infer_covar=True, force_num_latent_loss=True)
+    priors_posteriors("_analytic_corr", infer_covar=True)
