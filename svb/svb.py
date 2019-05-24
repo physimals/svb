@@ -16,16 +16,17 @@ operations. However it is inconvenient for the model which would like
 to be able to index input by parameter. For this reason we transpose
 when calling the model's ``evaluate`` function.
 """
-import sys
+import os
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.python import debug as tf_debug
+#from tensorflow.python import debug as tf_debug
+import nibabel as nib
 
 import svb.noise as noise
-from svb.prior import FactorisedPrior
-from svb.posterior import MVNPosterior, FactorisedPosterior
-from svb.utils import debug, LogBase
+from svb.prior import NormalPrior, FactorisedPrior
+from svb.posterior import NormalPosterior, FactorisedPosterior, MVNPosterior
+from svb.utils import LogBase
 
 class SvbFit(LogBase):
     """
@@ -39,7 +40,7 @@ class SvbFit(LogBase):
     """
     def __init__(self, model, **kwargs):
         LogBase.__init__(self)
-        
+
         # The model to use for inference
         self.model = model
 
@@ -93,18 +94,27 @@ class SvbFit(LogBase):
             param_posts = [param.voxelwise_posterior(self.t, self.xfull) for param in self.params]
             self.prior = FactorisedPrior(param_priors, name="prior", debug=self.debug)
             if self._infer_covar:
+                self.log.info("Inferring covariances (correlation) between Gaussian parameters")
                 self.post = MVNPosterior(param_posts, name="post", debug=self.debug)
             else:
+                self.log.info("Not inferring covariances between parameters")
                 self.post = FactorisedPosterior(param_posts, name="post", debug=self.debug)
 
+            # If all of our priors and posteriors are Gaussian we can use an analytic expression for
+            # the latent loss - so set this flag to decide if this is possible
+            self.all_gaussian = (np.all([isinstance(prior, NormalPrior) for prior in param_priors]) and
+                                 np.all([isinstance(post, NormalPosterior) for post in param_posts]) and
+                                 not kwargs.get("force_num_latent_loss", False))
+            if self.all_gaussian:
+                self.log.info("Using analytical expression for latent loss since prior and posterior are Gaussian")
+            else:
+                self.log.info("Using numerical calculation of latent loss")
+                
             # Define loss function based variational upper-bound and corresponding optimizer
             self._create_loss_optimizer()
 
             # Variable initializer
             self.init = tf.global_variables_initializer()
-
-            # Variable saver
-            self.saver = tf.train.Saver()
 
             # Tensorflow session for runnning graph
             self.sess = tf.Session()
@@ -177,15 +187,21 @@ class SvbFit(LogBase):
         self._get_current_model_params()
 
         self.reconstr_loss = self.noise.log_likelihood(self.x, model_prediction, noise_samples, self.nt)
-        self.reconstr_loss = self.log_tf(self.reconstr_loss)
+        self.reconstr_loss = self.log_tf(tf.identity(self.reconstr_loss, name="reconstr_loss"))
 
         # Part 2: Latent loss = log (q(mp)/p(mp)) = log(q(mp)) - log(p(mp))
-        latent_loss = self.post.entropy() - self.prior.mean_log_pdf(samples)
-        self.latent_loss = tf.identity(latent_loss, name="latent_loss")
+        if self.all_gaussian:
+            self.latent_loss = tf.identity(self.post.latent_loss(self.prior), name="latent_loss")
+        else:
+            latent_loss = self.post.entropy() - self.prior.mean_log_pdf(samples)
+            self.latent_loss = tf.identity(latent_loss, name="latent_loss")
         self.latent_loss = self.log_tf(self.latent_loss)
 
         # Voxelwise cost
-        self.cost = tf.add(self.reconstr_loss, self.latent_weight * self.latent_loss, name="cost")
+        if self.latent_weight == 0:
+            self.cost = tf.identity(self.reconstr_loss, name="cost")
+        else:
+            self.cost = tf.add(self.reconstr_loss, self.latent_weight * self.latent_loss, name="cost")
 
         # Combine the costs from each voxel and use a single ADAM optimizer to optimize the mean cost
         self.mean_cost = tf.reduce_mean(self.cost, name="mean_cost")
@@ -212,8 +228,8 @@ class SvbFit(LogBase):
         # (self.cost, gives a second return argument)
         # Pass in X using the feed dictionary, as we want to process the batch we have been
         # provided X
-        _, cost = self.sess.run([self.optimize, self.mean_cost], feed_dict=self.feed_dict)
-        return cost
+        _, cost, latent, reconstr = self.sess.run([self.optimize, self.cost, self.latent_loss, self.reconstr_loss], feed_dict=self.feed_dict)
+        return cost, latent, reconstr
 
     def output(self, name):
         """
@@ -223,11 +239,42 @@ class SvbFit(LogBase):
         """
         return self.sess.run((self.sess.graph.get_tensor_by_name("%s:0" % name),), feed_dict=self.feed_dict)[0]
 
-    def train(self, t, data, batch_size, training_epochs=100, display_step=1, output_graph=None,
-              max_trials=50, quench_rate=0.5, fit_only_epochs=0, learning_rate=0.02,
-              min_learning_rate=0.000001, tile_batches=1):
+    def state(self):
+        tensors = self.post.state()
+        return self.sess.run(tensors, feed_dict=self.feed_dict)
+
+    def set_state(self, state):
+        ops = self.post.set_state(state)
+        self.sess.run(ops, feed_dict=self.feed_dict)
+
+    def train(self, t, data, batch_size,
+              sequential_batches=False,
+              training_epochs=100, fit_only_epochs=0, display_step=1,
+              max_trials=50,
+              learning_rate=0.02, min_learning_rate=0.000001, quench_rate=0.5,
+              **kwargs):
         """
         Train the graph to infer the posterior distribution given timeseries data
+
+        :param t: Time series values. Should have shape [T] or [V, T] depending on whether timeseries is
+                  constant or varies voxelwise
+        :param data: Full timeseries data, shape [V, T]
+        :param batch_size: Batch size to use when training model. Need not be a factor of T, however if not
+                           batches will not all be the same size.
+
+        Optional arguments:
+
+        :param training epochs: Number of training epochs
+        :param fit_only_epochs: If specified, this number of epochs will be restricted to fitting only
+                                and ignore prior information. In practice this means only the
+                                reconstruction loss is considered not the latent cost
+        :param display_step: How many steps to execute for each display line
+        :param max_trials: How many epoch to continue for without an improvement in the mean cost before
+                           adjusting the learning rate
+        :param learning_rate: Initial learning rate
+        :param min_learning_rate: Minimum learning rate - if the learning rate is adjusted it will never
+                                  go below this value
+        :param quench_rate: When adjusting the learning rate, the factor to reduce it by
         """
         # Expect t to have a dimension for voxelwise variation even if it is the same for all voxels
         if t.ndim == 1:
@@ -238,12 +285,10 @@ class SvbFit(LogBase):
         n_batches = int(np.ceil(float(n_samples) / batch_size))
 
         # Cost and parameter histories, mean and voxelwise
-        cost_history = np.zeros([training_epochs+1])
-        cost_history_v = np.zeros([n_voxels, training_epochs+1])
-        param_history = np.zeros([training_epochs+1, self._nparams])
-        param_history_v = np.zeros([n_voxels, training_epochs+1, self._nparams])
-        #voxel_mask = np.ones([n_voxels], dtype=np.int)
-        #voxel_mask[:1] = 1
+        mean_cost_history = np.zeros([training_epochs+1])
+        voxel_cost_history = np.zeros([n_voxels, training_epochs+1])
+        mean_param_history = np.zeros([training_epochs+1, self._nparams])
+        voxel_param_history = np.zeros([n_voxels, training_epochs+1, self._nparams])
 
         # Training cycle
         self.feed_dict = {
@@ -251,111 +296,127 @@ class SvbFit(LogBase):
             self.learning_rate: learning_rate
         }
         self.initialize()
-        if output_graph:
-            writer = tf.summary.FileWriter(output_graph, self.sess.graph)
 
-        trials, best_cost = 0, 1e12
+        trials, best_cost, best_state = 0, 1e12, None
         latent_weight = 0
-        saved = False
-        # multiple training epochs of gradient descent, i.e. make multiple 'passes' through the data.
-        for epoch in range(training_epochs):
-            err, avg_cost, avg_latent, avg_latent2, avg_reconstr, avg_zscore, avg_post_pdf, avg_prior_pdf = 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-            index = 0
-            if epoch == fit_only_epochs:
-                # Allow latent cost to have an impact on the fitting
-                latent_weight = 1.0
-                trials, best_cost = 0, 1e12
 
+        # Each epoch passes through the whole data but in 'batches' so there may be multiple training
+        # runs per epoch, one for each batch
+        for epoch in range(training_epochs):
             try:
-                # Loop over all batches
+                total_cost = np.zeros([n_voxels])
+                total_latent = np.zeros([n_voxels])
+                total_reconstr = np.zeros([n_voxels])
+                err, index = False, 0
+
+                if epoch == fit_only_epochs:
+                    # Allow latent cost to have an impact on the fitting and reset the best cost accordingly
+                    latent_weight = 1.0
+                    trials, best_cost = 0, 1e12
+
+                # Train cost function for each batch
                 for i in range(n_batches):
-                    if 0:
+                    if sequential_batches:
                         # Batches are defined by sequential data samples
-                        batch_xs = data[:, index:index+batch_size]
-                        t_xs = t[:, index:index+batch_size]
+                        if i == n_batches - 1:
+                            # Batch size may not be an exact factor of the number of time points
+                            batch_size += n_samples - n_batches * batch_size
+                        batch_data = data[:, index:index+batch_size]
+                        t_data = t[:, index:index+batch_size]
                         index = index + batch_size
                     else:
                         # Batches are defined by constant strides through the data samples
-                        batch_xs = data[:, i::n_batches]
-                        t_xs = t[:, i::n_batches]
-
-                    # If desired, repeat batch data to enable more samples
-                    batch_xs = np.tile(batch_xs, (1, tile_batches))
-                    t_xs = np.tile(t_xs, (1, tile_batches))
+                        # This automatically handles case where number of time point does not
+                        # exactly divide into batches
+                        batch_data = data[:, i::n_batches]
+                        t_data = t[:, i::n_batches]
 
                     # Fit training using batch data
-                    self.feed_dict[self.x] = batch_xs
-                    self.feed_dict[self.t] = t_xs
-                    self.feed_dict[self.latent_weight] = latent_weight
-                    cost = np.mean(self.fit_batch())
+                    self.feed_dict.update({
+                        self.x: batch_data,
+                        self.t : t_data,
+                        self.latent_weight : latent_weight
+                    })
+                    batch_cost, batch_latent, batch_reconstr = self.fit_batch()
 
-                    # Compute costs
-                    avg_cost += cost / n_batches
-                    avg_latent += np.mean(self.output("latent_loss")) / n_batches
-                    #avg_latent2 += np.mean(self.output("latent_loss2")) / n_batches
-                    avg_reconstr += np.mean(self.output("reconstr_loss")) / n_batches
-                    #avg_zscore += np.mean(self.output("square_diff")) / n_batches
-                    #avg_prior_pdf += np.mean(self.output("prior_pdf")) / n_batches
-                    #avg_post_pdf += np.mean(self.output("post_pdf")) / n_batches
+                    # Compute average cost over all batches (i.e. the whole data set)
+                    total_cost += batch_cost / n_batches
+                    total_latent += batch_latent / n_batches
+                    total_reconstr += batch_reconstr / n_batches
 
             except tf.OpError:
-                import traceback
-                traceback.print_exc()
-                err = 1
+                self.log.exception("Numerical error fitting batch")
+                err = True
 
             params = self.output("model_params") # [P, V]
             var = self.output("post_var") # [V, P]
             mean_params = np.mean(params, axis=1)
             mean_var = np.mean(var, axis=0)
-            if err or np.isnan(avg_cost) or np.any(np.isnan(mean_params)) or np.isnan(avg_latent) or np.isnan(avg_reconstr):
+
+            mean_total_cost = np.mean(total_cost)
+            mean_total_latent = np.mean(total_latent)
+            mean_total_reconst = np.mean(total_reconstr)
+
+            mean_cost_history[epoch] = mean_total_cost
+            voxel_cost_history[:, epoch] = total_cost
+            mean_param_history[epoch, :] = mean_params
+            voxel_param_history[:, epoch, :] = params.transpose()
+
+            if err or np.isnan(mean_total_cost) or np.any(np.isnan(mean_params)):
+                # Numerical errors while processing this epoch. We will reduce the learning rate
+                # and revert to best previously saved params
                 self.feed_dict[self.learning_rate] = max(min_learning_rate,
                                                          self.feed_dict[self.learning_rate] * quench_rate)
-                if saved:
-                    self.saver.restore(self.sess, "/tmp/model.ckpt")
-                sys.stdout.write("NaN values - reverting to previous best step with learning rate (%f)\n" % self.feed_dict[self.learning_rate])
+                self.initialize()
+                self.log.warning("Numerical errors - Restarting from initial state")
+
+                outcome = "Numerical errors: Revert with learning rate: %f" % self.feed_dict[self.learning_rate]
+            elif mean_total_cost < best_cost:
+                # Cost improvement - save as best yet
+                outcome = "Saving"
+                best_cost = mean_total_cost
+                best_state = self.state()
+                trials = 0
             else:
-                # Display logs per epoch step
-                cost_history[epoch] = avg_cost
-                cost_history_v[:, epoch] = self.output("cost")
-                max_cost = np.max(cost_history_v[:, epoch])
-                min_cost = np.min(cost_history_v[:, epoch])
-
-                param_history[epoch, :] = mean_params
-                param_history_v[:, epoch, :] = params.transpose()
-
-                if epoch % display_step == 0:
-                    sys.stdout.write("Epoch: %04d, mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s" % ((epoch+1), avg_cost, avg_latent, avg_reconstr, mean_params, mean_var))
-
-                if avg_cost < best_cost:
-                    sys.stdout.write(" - Saving\n")
-                    best_cost = avg_cost
-                    self.saver.save(self.sess, "/tmp/model.ckpt")
-                    saved = True
-                    trials = 0
+                trials += 1
+                if trials < max_trials:
+                    outcome = "trial %i" % trials
                 else:
-                    trials += 1
-                    if trials < max_trials:
-                        sys.stdout.write(" - trial %i\n" % trials)
-                    else:
-                        self.feed_dict[self.learning_rate] = max(min_learning_rate,
-                                                                 self.feed_dict[self.learning_rate] * quench_rate)
-                        self.saver.restore(self.sess, "/tmp/model.ckpt")
-                        trials = 0
-                        sys.stdout.write(" - Reverting with learning rate (%f)\n" % self.feed_dict[self.learning_rate])
+                    self.feed_dict[self.learning_rate] = max(min_learning_rate,
+                                                             self.feed_dict[self.learning_rate] * quench_rate)
+                    self.set_state(best_state)
+                    trials = 0
+                    outcome = "Revert with learning rate: %f" % self.feed_dict[self.learning_rate]
 
-        self.saver.restore(self.sess, "/tmp/model.ckpt")
+            if epoch % display_step == 0:
+                self.log.info("Epoch: %04d, mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s - %s",
+                              (epoch+1), mean_total_cost, mean_total_latent, mean_total_reconst, 
+                              mean_params, mean_var, outcome)
+
+        # Revert to best mean cost and write final history step with these values
+        self.set_state(best_state)
         self.feed_dict[self.x] = data
         self.feed_dict[self.t] = t
-        sys.stdout.write("Best mean cost=%f / %f\n" % (best_cost, np.mean(self.output("cost"))))
-        cost_history[training_epochs] = best_cost
-        cost_history_v[:, training_epochs] = self.output("cost")
-
+        cost = self.output("cost") # [V]
         params = self.output("model_params") # [P, NV]
-        print("Final params: ", params)
-        param_history[training_epochs, :] = np.mean(params, axis=1)
-        param_history_v[:, training_epochs, :] = params.transpose()
+        self.log.info("Best mean cost=%f / %f\n", best_cost, np.mean(cost))
+        self.log.info("Final params: %s", np.mean(params, axis=1))
+
+        cost = self.output("cost") # [V]
+        params = self.output("model_params") # [P, NV]
+        self.log.info("Best mean cost=%f / %f\n", best_cost, np.mean(cost))
+        self.log.info("Final params: %s", np.mean(params, axis=1))
+
+        mean_cost_history[-1] = best_cost
+        mean_param_history[-1, :] = np.mean(params, axis=1)
+        voxel_cost_history[:, -1] = cost
+        voxel_param_history[:, -1, :] = params.transpose()
 
         tiled_params = np.reshape(params, list(params.shape) + [1])
         fit = self.model.ievaluate(tiled_params, t)
-        print(fit)
-        return cost_history, param_history, cost_history_v, param_history_v, fit
+        return mean_cost_history, mean_param_history, voxel_cost_history, voxel_param_history, fit
+
+    def modelfit(self, model_params, t):
+        model_params = self.output("model_params")
+        model_params = np.reshape(model_params, list(model_params.shape) + [1])
+        return self.model.ievaluate(model_params, t)
