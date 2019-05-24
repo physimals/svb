@@ -61,6 +61,16 @@ class FactorisedPrior(Prior):
         self.name = kwargs.get("name", "FactPrior")
         self.nparams = len(priors)
 
+        means = [prior.mean for prior in self.priors]
+        variances = [prior.var for prior in self.priors]
+        self.mean = self.log_tf(tf.stack(means, axis=-1, name="%s_mean" % self.name))
+        self.var = self.log_tf(tf.stack(variances, axis=-1, name="%s_var" % self.name))
+        self.std = tf.sqrt(self.var, name="%s_std" % self.name)
+        self.nvoxels = priors[0].nvoxels
+
+        # Define a diagonal covariance matrix for convenience
+        self.cov = tf.matrix_diag(self.var, name='%s_cov' % self.name)
+
     def mean_log_pdf(self, samples):
         nvoxels = tf.shape(samples)[0]
 
