@@ -262,11 +262,11 @@ if __name__ == "__main__":
     tf.set_random_seed(1)
     np.random.seed(1)
 
-    #for nt, dt in zip(NT, DT):
-    #    generate_test_data(num_voxels=NV, num_times=nt, dt=dt, m1=M1, m2=M2, l1=L1, l2=L2, noise=NOISE)
+    for nt, dt in zip(NT, DT):
+        generate_test_data(num_voxels=NV, num_times=nt, dt=dt, m1=M1, m2=M2, l1=L1, l2=L2, noise=NOISE)
         
-    #learning_rate()
-    #priors_posteriors("_num", infer_covar=False, force_num_latent_loss=True)
-    #priors_posteriors("_analytic", infer_covar=False)
+    learning_rate()
+    priors_posteriors("_num", infer_covar=False, force_num_latent_loss=True)
+    priors_posteriors("_analytic", infer_covar=False)
     priors_posteriors("_num_corr", infer_covar=True, force_num_latent_loss=True)
     priors_posteriors("_analytic_corr", infer_covar=True)

@@ -9,6 +9,7 @@ import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
 
+plt.figure(figsize=(8, 16))
 ordered_labels = None
 for idx, suffix in enumerate(("_analytic", "_num", "_analytic_corr", "_num_corr")):
     subdirs = [d for d in glob.glob("prior*") if os.path.isdir(d) and d.endswith(suffix)]
@@ -24,13 +25,16 @@ for idx, suffix in enumerate(("_analytic", "_num", "_analytic_corr", "_num_corr"
         best_cost.append(np.ravel(cost_history[..., -1]))
         print(subdir, np.mean(best_cost[-1]))
 
-    plt.subplot(2, 2, idx+1)
+    plt.subplot(4, 1, idx+1)
     plt.boxplot(best_cost, labels=ordered_labels, showfliers=False)
     plt.title("Best cost by prior/posterior options: %s" % suffix)
     plt.ylabel("Best cost achieved")
     plt.xlabel("Prior/initial posterior")
-    plt.ylim(40, 400)
+    plt.ylim(40, 150)
     #plt.yscale("symlog")
     plt.legend()
 
+plt.tight_layout()
+plt.subplots_adjust(hspace=0.4)
+plt.savefig("prior_post.png")
 plt.show()

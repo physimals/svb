@@ -13,6 +13,7 @@ LEARNING_RATES = (1.0, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005)
 NT = (10, 20, 50, 100)
 BS = 10
 
+plt.figure(figsize=(10, 10))
 for idx, nt in enumerate(NT):
     plt.subplot(2, 2, idx+1)
     y0 = 1e10
@@ -24,11 +25,13 @@ for idx, nt in enumerate(NT):
         if y0 > np.min(cost_history):
             y0 = np.min(cost_history)
 
-    plt.title("Convergence of average free energy by learning rate (NT=%i)" % nt)
+    plt.title("Convergence by learning rate (NT=%i)" % nt)
     #plt.yscale("symlog")
     plt.ylabel("Cost")
     plt.xlabel("Epochs")
     plt.ylim(y0, y0*10)
     plt.legend()
 
+plt.tight_layout()
+plt.savefig("conv_lr.png")
 plt.show()

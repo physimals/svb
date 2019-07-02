@@ -14,9 +14,11 @@ NT = 20
 
 epochs_converged = []
 labels = []
+plt.figure(figsize=(12, 8))
 for prior in ("i", "ni"):
     for post in ("ni", "ni_init", "i_true", "i_init", "i", "i_wrong"):
-        subdir = "prior_%s_post_%s" % (prior, post)
+        subdir = "prior_%s_post_%s_analytic" % (prior, post)
+        label = "%s_%s" % (prior, post)
         cost_history = nib.load(os.path.join(subdir, "cost_history.nii.gz")).get_data()
         mean_cost_history = np.mean(cost_history, axis=(0, 1, 2))
         if mean_cost_history[-1] > 80:
@@ -29,7 +31,7 @@ for prior in ("i", "ni"):
         slow_converged = np.count_nonzero(epoch_converged > 200)
         print("%s: Non-converged voxels=%i, slow convergers=%i" % (subdir, non_converged, slow_converged))
         epochs_converged.append(epoch_converged[epoch_converged > 0])
-        labels.append(subdir)
+        labels.append(label)
 
 plt.boxplot(epochs_converged, labels=labels)
 plt.title("Epoch converged by prior/posterior options")
@@ -37,4 +39,6 @@ plt.ylabel("Epoch at which convergence achieved")
 plt.xlabel("Prior/initial posterior")
 plt.ylim(0, 400)
 
+plt.tight_layout()
+plt.savefig("prior_post_conv_speed.png")
 plt.show()
