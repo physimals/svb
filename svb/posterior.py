@@ -149,7 +149,7 @@ class FactorisedPosterior(Posterior):
         t2 = tf.matmul(tf.reshape(mean_diff, (self.nvoxels, 1, -1)), prior_cov_inv)
         t3 = tf.reshape(tf.matmul(t2, tf.reshape(mean_diff, (self.nvoxels, -1, 1))), [self.nvoxels])
         t4 = tf.log(tf.matrix_determinant(prior.cov, name='%s_log_det_cov' % prior.name))
-        t5 = tf.log(tf.matrix_determinant(self.cov + self.cov_reg, name='%s_log_det_cov' % self.name))
+        t5 = tf.log(tf.matrix_determinant(self.cov, name='%s_log_det_cov' % self.name))
 
         return self.log_tf(tf.identity(0.5*(t1 + t3 - self.nparams + t4 - t5), name="%s_latent_loss" % self.name))
 
