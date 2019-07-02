@@ -4,7 +4,9 @@ Base class for a forward model whose parameters are to be fitted
 import tensorflow as tf
 import numpy as np
 
-class Model:
+from svb.utils import LogBase
+
+class Model(LogBase):
     """
     A forward model
 
@@ -13,6 +15,7 @@ class Model:
     """
 
     def __init__(self, **options):
+        LogBase.__init__(self)
         self.params = []
         self._t0 = options.get("t0", 0)
         self._dt = options.get("dt", 1)
