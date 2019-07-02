@@ -1,14 +1,11 @@
 """
 Inference forward models for ASL data
 """
-import math
-
 import tensorflow as tf
-import numpy as np
 
-from model import Model
-from parameter import Parameter, RoiParameter
-import dist
+from svb.model import Model
+from svb.parameter import Parameter
+import svb.dist as dist
 
 class AslRestModel(Model):
     """
@@ -22,58 +19,61 @@ class AslRestModel(Model):
         self.tau = options["tau"]
         self.casl = options.get("casl", True)
         self.bat = options.get("bat", 1.3)
-        self.batsd = options.get("batsd", 1.0)
+        self.batsd = options.get("batsd", 0.5)
         self.t1 = options.get("t1", 1.3)
         self.t1b = options.get("t1b", 1.65)
         self.pc = options.get("pc", 0.9)
         self.f_calib = options.get("fcalib", 0.01)
 
-        pvgm = options.get("pvgm", None)
-        pvwm = options.get("pvwm", None)
-        if pvgm is not None and pvwm is not None:
-            pvcsf = np.ones(pvgm.shape, dtype=np.float32) - pvgm - pvwm
-            self.params.append(RoiParameter("ftiss", dist.FoldedNormal(0, 1e12), mean_init=self._init_flow, log_var_init=0.0, rois=[pvgm, pvwm, pvcsf]))
-        else:
-            self.params.append(Parameter("ftiss", dist.FoldedNormal(0, 1e12), mean_init=self._init_flow, log_var_init=0.0))
+        #pvgm = options.get("pvgm", None)
+        #pvwm = options.get("pvwm", None)
+        #if pvgm is not None and pvwm is not None:
+        #    pvcsf = np.ones(pvgm.shape, dtype=np.float32) - pvgm - pvwm
+        #    self.params.append(RoiParameter("ftiss", dist.FoldedNormal(0, 1e12), mean_init=self._init_flow, log_var_init=0.0, rois=[pvgm, pvwm, pvcsf]))
+        #else:
+        self.params = [
+            Parameter("ftiss",
+                      prior=dist.FoldedNormal(0.0, 1e6),
+                      post=dist.FoldedNormal(0.0, 2.0),
+                      initialise=self._init_flow),
+            Parameter("delttiss",
+                      prior=dist.FoldedNormal(self.bat, self.batsd**2)),
+        ]
 
-        self.params.append(Parameter("delttiss", dist.FoldedNormal(self.bat, sd=self.batsd)))
-    
-    def _init_flow(self, t, data, param=None):
+    def _init_flow(self, _param, _t, data):
         """
         Initial value for the flow parameter
         """
         flow = tf.reduce_max(data, axis=1)
-        #init_flow = tf.reduce_mean(tf.reduce_max(data, axis=1))
-        #init_flow = tf.Print(init_flow, [init_flow], "initial flow")
-        #nvoxels = tf.shape(data)[0]
-        #flow = tf.fill([nvoxels], init_flow)
-        return flow
+        return flow, None
 
     def evaluate(self, params, t):
         """
         Basic PASL/pCASL kinetic model
-        """
-        if self.debug:
-            params = tf.Print(params, [params], "\nparams", summarize=100)
 
+        :param t: Sequence of time values of length N
+        :param params Sequence of parameter values arrays, one for each parameter.
+                      Each array is MxN tensor where M is the number of voxels. This
+                      may be supplied as a PxMxN tensor where P is the number of
+                      parameters.
+
+        :return: MxN tensor containing model output at the specified time values
+                 and for each time value using the specified parameter values
+        """
         # Extract parameter tensors
-        ftiss = params[0]
-        delt = params[1]
+        t = self.log_tf(t, name="t", shape=True)
+        ftiss = self.log_tf(params[0], name="ftiss", shape=True)
+        delt = self.log_tf(params[1], name="delt", shape=True)
 
         # Boolean masks indicating which voxel-timepoints are during the
         # bolus arrival and which are after
-        post_bolus = tf.greater(t, tf.add(self.tau, delt))
+        post_bolus = self.log_tf(tf.greater(t, tf.add(self.tau, delt), name="post_bolus"), shape=True)
         during_bolus = tf.logical_and(tf.greater(t, delt), tf.logical_not(post_bolus))
-        if self.debug:
-            post_bolus = tf.Print(post_bolus, [post_bolus], "\npost_bolus", summarize=100)
-            during_bolus = tf.Print(during_bolus, [during_bolus], "\nduring_bolus", summarize=100)
 
         # Rate constants
         t1_app = 1 / (1 / self.t1 + self.f_calib / self.pc)
         r = 1 / t1_app - 1 / self.t1b
         f = 2 * tf.exp(-t / t1_app)
-        if self.debug:
-           t1_app = tf.Print(t1_app, [t1_app], "\nt1_app", summarize=100)
 
         # Calculate signal
         if self.casl:
@@ -82,17 +82,14 @@ class AslRestModel(Model):
         else:
             during_bolus_signal = f / r * ((tf.exp(r * t) - tf.exp(r * delt)))
             post_bolus_signal = f / r * ((tf.exp(r * (delt + self.tau)) - tf.exp(r * delt)))
-        if self.debug:
-            post_bolus_signal = tf.Print(post_bolus_signal, [post_bolus_signal], "\npost_bolus_signal", summarize=100)
-            during_bolus_signal = tf.Print(during_bolus_signal, [during_bolus_signal], "\nduring_bolus_signal", summarize=100)
+
+        post_bolus_signal = self.log_tf(post_bolus_signal, name="post_bolus_signal", shape=True)
+        during_bolus_signal = self.log_tf(during_bolus_signal, name="during_bolus_signal", shape=True)
 
         # Build the signal from the during and post bolus components leaving as zero
         # where neither applies (i.e. pre bolus)
         signal = tf.zeros(tf.shape(during_bolus_signal))
         signal = tf.where(during_bolus, during_bolus_signal, signal)
         signal = tf.where(post_bolus, post_bolus_signal, signal)
-        if self.debug:
-           signal = tf.Print(signal, [signal], "\nsignal", summarize=100)
 
         return ftiss*signal
-
