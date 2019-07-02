@@ -2,3 +2,6 @@
 graphs
 *.nii
 *.nii.gz
+doc/html
+asl_tests/*.png
+biexp_tests/*.png
