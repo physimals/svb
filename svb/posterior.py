@@ -18,14 +18,21 @@ class Posterior(LogBase):
 
     def sample(self, nsamples):
         """
-        :return: A tensor of shape [V, P, N] where V is the number
+        :param nsamples: Number of samples to return per voxel / parameter
+
+        :return: A tensor of shape [V, P, S] where V is the number
                  of voxels, P is the number of parameters in the distribution
-                 (possibly 1) and N is the number of samples
+                 (possibly 1) and S is the number of samples
         """
         raise NotImplementedError()
 
-    def entropy(self):
+    def entropy(self, samples):
         """
+        :param samples: A tensor of shape [V, P, S] where V is the number
+                        of voxels, P is the number of parameters in the prior
+                        (possibly 1) and S is the number of samples.
+                        This parameter may or may not be used in the calculation.
+
         :return Tensor of shape [V] containing voxelwise distribution entropy
         """
         raise NotImplementedError()
@@ -76,7 +83,7 @@ class NormalPosterior(Posterior):
                                     name="%s_sample" % self.name))
         return sample
 
-    def entropy(self):
+    def entropy(self, _samples):
         entropy = tf.identity(-0.5 * tf.log(self.var), name="%s_entropy" % self.name)
         return self.log_tf(entropy)
 
@@ -116,7 +123,7 @@ class FactorisedPosterior(Posterior):
         sample = tf.concat(samples, axis=1, name="%s_sample" % self.name)
         return self.log_tf(sample)
 
-    def entropy(self):
+    def entropy(self, _samples):
         entropy = tf.zeros([self.nvoxels], dtype=tf.float32)
         for post in self.posts:
             entropy = tf.add(entropy, post.entropy(), name="%s_entropy" % self.name)
@@ -198,7 +205,7 @@ class MVNPosterior(FactorisedPosterior):
         sample = tf.add(tiled_mean, tf.matmul(self.cov_chol, eps), name="%s_sample" % self.name)
         return self.log_tf(sample)
 
-    def entropy(self):
+    def entropy(self, _samples):
         det_covar = tf.matrix_determinant(self.cov + self.cov_reg, name="%s_det" % self.name) # [V]
         entropy = tf.identity(-0.5 * tf.log(det_covar), name="%s_entropy" % self.name)
         return self.log_tf(entropy)

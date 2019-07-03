@@ -55,14 +55,17 @@ class Model(LogBase):
         """
         Evaluate the model
 
-        :param t: Sequence of time values of length N
+        :param t: Time values to evaluate the model at, supplied as a tensor of shape 
+                  [1x1xB] (if time values at each voxel are identical) or [Vx1xB]
+                  otherwise.
         :param params Sequence of parameter values arrays, one for each parameter.
-                      Each array is MxN tensor where M is the number of voxels. This
-                      may be supplied as a PxMxN tensor where P is the number of
+                      Each array is VxSx1 tensor where V is the number of voxels and
+                      S is the number of samples per parameter. This
+                      may be supplied as a PxVxSx1 tensor where P is the number of
                       parameters.
 
-        :return: MxN tensor containing model output at the specified time values
-                 and for each time value using the specified parameter values
+        :return: [VxSxB] tensor containing model output at the specified time values
+                 for each voxel, and each sample (set of parameter values).
         """
         raise NotImplementedError("evaluate")
 

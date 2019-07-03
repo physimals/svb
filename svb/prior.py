@@ -12,9 +12,9 @@ class Prior(LogBase):
 
     def mean_log_pdf(self, samples):
         """
-        :param samples: A tensor of shape [V, P, N] where V is the number
+        :param samples: A tensor of shape [V, P, S] where V is the number
                         of voxels, P is the number of parameters in the prior
-                        (possibly 1) and N is the number of samples
+                        (possibly 1) and S is the number of samples
 
         :return: A tensor of shape [V] where V is the number of voxels
                  containing the mean log PDF of the parameter samples

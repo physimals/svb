@@ -21,12 +21,14 @@ class NoiseParameter(Parameter):
         """
         Calculate the log-likelihood of the data
 
+        :param data: Tensor of shape [V, B]
+        :param pred: Model prediction tensor with shape [V, S, B]
+        :param noise: Noise parameter samples tensor with shape [V, S]
+        :return: Tensor of shape [V] containing mean log likelihood of the 
+                 data at each voxel with respect to the noise parameters
+                 
         Note that we are using the log of the noise Gaussian variance as the noise parameter
         here.
-
-        data has shape [NV, B] - needs to be tiled for each sample
-        pred has shape [NV, D, B]
-        noise has shape [NV, D]
         """
         nvoxels = tf.shape(data)[0]
         batch_size = tf.shape(data)[1]
