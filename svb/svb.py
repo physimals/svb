@@ -293,8 +293,8 @@ class SvbFit(LogBase):
 
     def train(self, tpts, data,
               batch_size=None, sequential_batches=False,
-              training_epochs=100, fit_only_epochs=0, display_step=1,
-              learning_rate=0.02, quench_rate=0.5, max_trials=50, min_learning_rate=0.000001,
+              epochs=100, fit_only_epochs=0, display_step=1,
+              learning_rate=0.02, lr_quench=0.5, max_trials=50, lr_min=0.000001,
               **kwargs):
         """
         Train the graph to infer the posterior distribution given timeseries data
@@ -339,10 +339,10 @@ class SvbFit(LogBase):
         num_samples = kwargs.get("sample_size", batch_size)
 
         # Cost and parameter histories, mean and voxelwise
-        mean_cost_history = np.zeros([training_epochs+1])
-        voxel_cost_history = np.zeros([n_voxels, training_epochs+1])
-        mean_param_history = np.zeros([training_epochs+1, self._nparams])
-        voxel_param_history = np.zeros([n_voxels, training_epochs+1, self._nparams])
+        mean_cost_history = np.zeros([epochs+1])
+        voxel_cost_history = np.zeros([n_voxels, epochs+1])
+        mean_param_history = np.zeros([epochs+1, self._nparams])
+        voxel_param_history = np.zeros([n_voxels, epochs+1, self._nparams])
 
         # Training cycle
         self.feed_dict = {
@@ -357,7 +357,7 @@ class SvbFit(LogBase):
 
         # Each epoch passes through the whole data but it may do this in 'batches' so there may be
         # multiple training iterations per epoch, one for each batch
-        for epoch in range(training_epochs):
+        for epoch in range(epochs):
             try:
                 total_cost = np.zeros([n_voxels])
                 total_latent = np.zeros([n_voxels])
@@ -426,8 +426,7 @@ class SvbFit(LogBase):
             if err or np.isnan(mean_total_cost) or np.any(np.isnan(mean_params)):
                 # Numerical errors while processing this epoch. We will reduce the learning rate
                 # and revert to best previously saved params
-                self.feed_dict[self.learning_rate] = max(min_learning_rate,
-                                                         self.feed_dict[self.learning_rate] * quench_rate)
+                self.feed_dict[self.learning_rate] = max(lr_min, self.feed_dict[self.learning_rate] * lr_quench)
                 self.initialize()
                 outcome = "Numerical errors: Restart with learning rate: %f" % self.feed_dict[self.learning_rate]
                 self.log.warning(outcome)
@@ -444,8 +443,7 @@ class SvbFit(LogBase):
                 if trials < max_trials:
                     outcome = "Trial %i" % trials
                 else:
-                    self.feed_dict[self.learning_rate] = max(min_learning_rate,
-                                                             self.feed_dict[self.learning_rate] * quench_rate)
+                    self.feed_dict[self.learning_rate] = max(lr_min, self.feed_dict[self.learning_rate] * lr_quench)
                     self.set_state(best_state)
                     trials = 0
                     outcome = "Revert with learning rate: %f" % self.feed_dict[self.learning_rate]
