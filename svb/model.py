@@ -37,11 +37,12 @@ class Model(LogBase):
                 return idx
         raise ValueError("Parameter not found in model: %s" % name)
 
-    def tpts(self, n_tpts):
+    def tpts(self, n_tpts, shape):
         """
         Get the full set of timeseries time values
 
         :param n_tpts: Number of time points required for the data to be fitted
+        :param shape: Shape of source data which may affect the times assigned
 
         By default this is a linear space using the attributes ``t0`` and ``dt``.
         Some models may have time values fixed by some other configuration. If

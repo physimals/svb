@@ -16,7 +16,7 @@ import numpy as np
 import nibabel as nib
 
 from svb import __version__, SvbFit
-from svb.models import get_model
+from svb.models import get_model_class
 
 USAGE = "svb <options>"
 
@@ -28,27 +28,52 @@ class SvbOptionParser(OptionParser):
         OptionParser.__init__(self, usage=USAGE, version=__version__, **kwargs)
 
         group = OptionGroup(self, "Main Options")
-        group.add_option("--data", help="Timeseries input data")
-        group.add_option("--mask", help="Optional voxel mask")
-        group.add_option("--model", help="Model name")
-        group.add_option("--output", help="Output folder name", default="svb_out")
-        group.add_option("--log-level", help="Logging level - defaults to INFO")
-        group.add_option("--log-config", help="Optional logging configuration file, overrides --log-level")
+        group.add_option("--data",
+                         help="Timeseries input data")
+        group.add_option("--mask",
+                         help="Optional voxel mask")
+        group.add_option("--model",
+                         help="Model name")
+        group.add_option("--output",
+                         help="Output folder name",
+                         default="svb_out")
+        group.add_option("--log-level",
+                         help="Logging level - defaults to INFO")
+        group.add_option("--log-config",
+                         help="Optional logging configuration file, overrides --log-level")
         self.add_option_group(group)
 
         group = OptionGroup(self, "Inference options")
-        group.add_option("--infer-covar", help="Infer a full covariance matrix", action="store_true", default=False)
-        group.add_option("--force-num-latent-loss", help="Force numerical calculation of the latent loss function", action="store_true", default=False)
+        group.add_option("--infer-covar",
+                         help="Infer a full covariance matrix",
+                         action="store_true", default=False)
+        group.add_option("--force-num-latent-loss",
+                         help="Force numerical calculation of the latent loss function",
+                         action="store_true", default=False)
         self.add_option_group(group)
 
         group = OptionGroup(self, "Training options")
-        group.add_option("--epochs", help="Number of training epochs", type="int", default=100)
-        group.add_option("--learning_rate", "--lr", help="Initial learning rate", type="float", default=0.1)
-        group.add_option("--batch_size", "--bs", help="Batch size. If not specified data will not be processed in batches", type="int")
-        group.add_option("--sample-size", "--ss", help="Sample size for drawing samples from posterior", type="int", default=20)
-        group.add_option("--max-trials", help="Number of epochs to tolerate without improvement in the cost before reducing the learning rate", type="int", default=50)
-        group.add_option("--lr-quench", help="Quench factor for learning rate when cost does not improve after <conv-trials> epochs", type="float", default=0.99)
-        group.add_option("--lr-min", help="Minimum learning rate", type="float", default=0.00001)
+        group.add_option("--epochs",
+                         help="Number of training epochs",
+                         type="int", default=100)
+        group.add_option("--learning_rate", "--lr",
+                         help="Initial learning rate",
+                         type="float", default=0.1)
+        group.add_option("--batch_size", "--bs",
+                         help="Batch size. If not specified data will not be processed in batches",
+                         type="int")
+        group.add_option("--sample-size", "--ss",
+                         help="Sample size for drawing samples from posterior",
+                         type="int", default=20)
+        group.add_option("--max-trials",
+                         help="Number of epochs without improvement in the cost before reducing the learning rate",
+                         type="int", default=50)
+        group.add_option("--lr-quench",
+                         help="Quench factor for learning rate when cost does not improve after <conv-trials> epochs",
+                         type="float", default=0.99)
+        group.add_option("--lr-min",
+                         help="Minimum learning rate",
+                         type="float", default=0.00001)
         self.add_option_group(group)
 
 def main():
@@ -80,7 +105,6 @@ def run(data, model, output, mask=None, **kwargs):
     :param model_name: Name of model we are fitting to
     :param output: Output directory, will be created if it does not exist
     :param mask: Optional file name of 3D Nifti data set containing data voxel mask
-    :param log: Output log stream
 
     All keyword arguments are passed to constructor of the model, the ``SvbFit``
     object and the ``SvbFit.train`` method.
@@ -97,21 +121,24 @@ def run(data, model, output, mask=None, **kwargs):
     data_flattened = data_vol.reshape(-1, n_tpts)
     log.info("Loaded data from %s", data)
 
-    if mask:
-        mask_nii = nib.load(mask)
-        mask_vol = mask_nii.get_data()
-        mask_flattened = mask_vol.flatten()
-        data_flattened = data_flattened[mask_flattened > 0]
-        log.info("Loaded mask from %s", data)
-    else:
-        mask_vol = np.ones(shape)
-
     # Create the generative model
     model = get_model_class(model)(**kwargs)
     log.info("Created model: %s", str(model))
 
     # Get the time points from the model
-    tpts = model.tpts(n_tpts=n_tpts)
+    tpts = model.tpts(n_tpts=n_tpts, shape=shape)
+
+    # If there is a mask load it and use it to mask the data
+    if mask:
+        mask_nii = nib.load(mask)
+        mask_vol = mask_nii.get_data()
+        mask_flattened = mask_vol.flatten()
+        data_flattened = data_flattened[mask_flattened > 0]
+        if tpts.ndim > 1 and tpts.shape[0] > 1:
+            tpts = tpts[mask_flattened > 0]
+        log.info("Loaded mask from %s", data)
+    else:
+        mask_vol = np.ones(shape)
 
     # Train model
     svb = SvbFit(model, **kwargs)
@@ -139,21 +166,28 @@ def run(data, model, output, mask=None, **kwargs):
         nii_var.to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
 
     # Write out voxelwise cost history
-    cost_history_v_nii = _nifti_image(cost_history_v, shape, mask_vol, ref_nii=nii, n_tpts=cost_history_v.shape[1])
+    cost_history_v_nii = _nifti_image(cost_history_v, shape, mask_vol,
+                                      ref_nii=nii, n_tpts=cost_history_v.shape[1])
     cost_history_v_nii.to_filename(os.path.join(output, "cost_history.nii.gz"))
 
     # Write out voxelwise parameter history
     for idx, param in enumerate(model.params):
-        nii_mean = _nifti_image(param_history_v[:, :, idx], shape, mask_vol, ref_nii=nii, n_tpts=cost_history_v.shape[1])
+        nii_mean = _nifti_image(param_history_v[:, :, idx], shape, mask_vol,
+                                ref_nii=nii, n_tpts=cost_history_v.shape[1])
         nii_mean.to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
 
     # Noise history
-    nii_mean = _nifti_image(param_history_v[:, :, model.nparams], shape, mask_vol, ref_nii=nii, n_tpts=cost_history_v.shape[1])
+    nii_mean = _nifti_image(param_history_v[:, :, model.nparams], shape, mask_vol,
+                            ref_nii=nii, n_tpts=cost_history_v.shape[1])
     nii_mean.to_filename(os.path.join(output, "mean_noise_history.nii.gz"))
 
     # Write out modelfit
     fit_nii = _nifti_image(modelfit, shape, mask_vol, ref_nii=nii, n_tpts=n_tpts)
     fit_nii.to_filename(os.path.join(output, "modelfit.nii.gz"))
+
+    # Write out runtime
+    with open(os.path.join(output, "runtime"), "w") as runtime_f:
+        runtime_f.write("%f\n" % runtime)
 
     log.info("Output written to: %s", output)
     return runtime, mean_cost_history
@@ -161,7 +195,7 @@ def run(data, model, output, mask=None, **kwargs):
 def _setup_logging(output, **kwargs):
     """
     Set the log level, formatters and output streams for the logging output
-    
+
     By default this goes to <outdir>/logfile at level INFO
     """
     if kwargs.get("log_config", None):
