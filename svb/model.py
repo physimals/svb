@@ -37,25 +37,24 @@ class Model(LogBase):
                 return idx
         raise ValueError("Parameter not found in model: %s" % name)
 
-    @property
-    def t(self, nt):
+    def tpts(self, n_tpts):
         """
         Get the full set of timeseries time values
 
-        :param nt: Number of time points required for the data to be fitted
+        :param n_tpts: Number of time points required for the data to be fitted
 
         By default this is a linear space using the attributes ``t0`` and ``dt``.
         Some models may have time values fixed by some other configuration. If
         the number of time points is fixed by the model it must match the
-        supplied value ``nt``.
+        supplied value ``n_tpts``.
         """
-        return np.linspace(self._t0, self._t0+nt*self._dt, num=nt, endpoint=False)
+        return np.linspace(self._t0, self._t0+n_tpts*self._dt, num=n_tpts, endpoint=False)
 
-    def evaluate(self, params, t):
+    def evaluate(self, params, tpts):
         """
         Evaluate the model
 
-        :param t: Time values to evaluate the model at, supplied as a tensor of shape 
+        :param t: Time values to evaluate the model at, supplied as a tensor of shape
                   [1x1xB] (if time values at each voxel are identical) or [Vx1xB]
                   otherwise.
         :param params Sequence of parameter values arrays, one for each parameter.
@@ -69,7 +68,7 @@ class Model(LogBase):
         """
         raise NotImplementedError("evaluate")
 
-    def ievaluate(self, params, t):
+    def ievaluate(self, params, tpts):
         """
         Evaluate the model outside of a TensorFlow session
 
@@ -77,14 +76,14 @@ class Model(LogBase):
         within a session and return the evaluated output tensor
         """
         with tf.Session():
-            return self.evaluate(tf.constant(params, dtype=tf.float32), tf.constant(t, dtype=tf.float32)).eval()
+            return self.evaluate(tf.constant(params, dtype=tf.float32), tf.constant(tpts, dtype=tf.float32)).eval()
 
-    def test_data(self, t, params_map):
+    def test_data(self, tpts, params_map):
         """
         Generate test data by evaluating the model on known parameter values
         with optional added noise
 
-        :param t: 1xN or MxN tensor of time values (possibly varying by voxel)
+        :param tpts: 1xN or MxN tensor of time values (possibly varying by voxel)
         :param params_map: Mapping from parameter name either a single parameter
                            value or a sequence of M parameter values. The special
                            key ``noise_sd``, if present, should containing the
@@ -106,15 +105,16 @@ class Model(LogBase):
                 value_sequence = np.reshape(params_map[param.name], (-1, 1))
 
             if param_values is None:
-                param_values = np.zeros((len(self.params), len(value_sequence), len(t)))
+                param_values = np.zeros((len(self.params), len(value_sequence), len(tpts)))
 
             if len(value_sequence) != param_values.shape[1]:
-                raise ValueError("Parameter %s has wrong number of values: %i (expected %i)" % (param.name, len(value_sequence), param_values.shape[1]))
+                raise ValueError("Parameter %s has wrong number of values: %i (expected %i)" %
+                                 (param.name, len(value_sequence), param_values.shape[1]))
             else:
                 param_values[idx, :, :] = value_sequence
 
         with tf.Session():
-            clean = self.evaluate(param_values, t).eval()
+            clean = self.evaluate(param_values, tpts).eval()
             if "noise_sd" in params_map:
                 np.random.seed(1)
                 noisy = np.random.normal(clean, params_map["noise_sd"])
