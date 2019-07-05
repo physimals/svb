@@ -3,6 +3,9 @@ Inference forward models for ASL data
 """
 import tensorflow as tf
 
+import numpy as np
+
+from svb import __version__
 from svb.model import Model
 from svb.parameter import Parameter
 import svb.dist as dist
@@ -24,6 +27,12 @@ class AslRestModel(Model):
         self.t1b = options.get("t1b", 1.65)
         self.pc = options.get("pc", 0.9)
         self.f_calib = options.get("fcalib", 0.01)
+        self.slicedt = options.get("slicedt", 0)
+        self.repeats = options.get("repeats", 1)
+        self.plds = options.get("plds", None)
+        self.tis = options.get("tis", None)
+        if self.plds is not None:
+            self.tis = [self.tau + pld for pld in self.plds]
 
         #pvgm = options.get("pvgm", None)
         #pvwm = options.get("pvwm", None)
@@ -40,14 +49,7 @@ class AslRestModel(Model):
                       prior=dist.FoldedNormal(self.bat, self.batsd**2)),
         ]
 
-    def _init_flow(self, _param, _t, data):
-        """
-        Initial value for the flow parameter
-        """
-        flow = tf.reduce_max(data, axis=1)
-        return flow, None
-
-    def evaluate(self, params, t):
+    def evaluate(self, params, tpts):
         """
         Basic PASL/pCASL kinetic model
 
@@ -61,7 +63,7 @@ class AslRestModel(Model):
                  and for each time value using the specified parameter values
         """
         # Extract parameter tensors
-        t = self.log_tf(t, name="t", shape=True)
+        t = self.log_tf(tpts, name="tpts", shape=True)
         ftiss = self.log_tf(params[0], name="ftiss", shape=True)
         delt = self.log_tf(params[1], name="delt", shape=True)
 
@@ -93,3 +95,29 @@ class AslRestModel(Model):
         signal = tf.where(post_bolus, post_bolus_signal, signal)
 
         return ftiss*signal
+
+    def tpts(self, n_tpts, shape):
+        if n_tpts != len(self.tis):
+            raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis), n_tpts))
+
+        # FIXME assuming grouped by TIs/PLDs
+        if self.slicedt > 0:
+            # Generate voxelwise timings array using the slicedt value
+            t = np.zeros(shape)
+            for z in range(shape[2]):
+                t[:, :, z, :] = np.array(sum([[ti + z*self.slicedt] * self.repeats for ti in self.tis], []))
+            t = t.reshape(-1, n_tpts)
+        else:
+            # Timings are the same for all voxels
+            t = np.array(sum([[ti] * self.repeats for ti in self.tis], []))
+        return t
+
+    def __str__(self):
+        return "ASL resting state model: %s" % __version__
+
+    def _init_flow(self, _param, _t, data):
+        """
+        Initial value for the flow parameter
+        """
+        flow = tf.reduce_max(data, axis=1)
+        return flow, None
