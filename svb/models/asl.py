@@ -103,14 +103,13 @@ class AslRestModel(Model):
         # FIXME assuming grouped by TIs/PLDs
         if self.slicedt > 0:
             # Generate voxelwise timings array using the slicedt value
-            t = np.zeros(shape)
+            t = np.zeros(list(shape) + [n_tpts])
             for z in range(shape[2]):
                 t[:, :, z, :] = np.array(sum([[ti + z*self.slicedt] * self.repeats for ti in self.tis], []))
-            t = t.reshape(-1, n_tpts)
         else:
             # Timings are the same for all voxels
             t = np.array(sum([[ti] * self.repeats for ti in self.tis], []))
-        return t
+        return t.reshape(-1, n_tpts)
 
     def __str__(self):
         return "ASL resting state model: %s" % __version__
