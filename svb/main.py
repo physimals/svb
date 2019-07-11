@@ -109,6 +109,9 @@ def run(data, model, output, mask=None, **kwargs):
     All keyword arguments are passed to constructor of the model, the ``SvbFit``
     object and the ``SvbFit.train`` method.
     """
+    # Create output directory
+    _makedirs(output, exist_ok=True)
+    
     _setup_logging(output, **kwargs)
     log = logging.getLogger(__name__)
     log.info("SVB %s", __version__)
@@ -154,9 +157,6 @@ def run(data, model, output, mask=None, **kwargs):
     means = svb.output("model_params")
     variances = np.transpose(np.diagonal(svb.output("post_cov"), axis1=1, axis2=2))
 
-    # Create output directory
-    _makedirs(output, exist_ok=True)
-
     # Write out parameter mean and variance images
     _makedirs(output, exist_ok=True)
     for idx, param in enumerate(model.params):
@@ -198,6 +198,11 @@ def _setup_logging(output, **kwargs):
 
     By default this goes to <outdir>/logfile at level INFO
     """
+    # First we clear all loggers from previous runs
+    for logger_name in list(logging.Logger.manager.loggerDict.keys()) + ['']:
+        logger = logging.getLogger(logger_name)
+        logger.handlers = []
+
     if kwargs.get("log_config", None):
         # User can supply a logging config file which overrides everything else
         logging.config.fileConfig(kwargs["log_config"])
