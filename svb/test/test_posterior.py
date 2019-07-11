@@ -30,8 +30,8 @@ def test_normal_onevox():
 def test_normal_onevox_sample():
     """ sample() method returns correct shape of data and is consistent with input mean/var """
     with tf.Session() as session:
-        means = np.array([3.0])
-        variances = np.array([2.0])
+        means = np.array([3.0], dtype=np.float32)
+        variances = np.array([2.0], dtype=np.float32)
 
         post = NormalPosterior(means, variances)
 
@@ -179,9 +179,9 @@ def test_fac_multivox_entropy():
         assert list(out_entropy.shape) == [nvoxels_in]
 
         in_entropy = np.zeros([nvoxels_in])
-        for p in posts:
-            in_entropy += session.run(p.entropy())
-        assert np.allclose(out_entropy, in_entropy)
+        for post in posts:
+            in_entropy += session.run(post.entropy())
+        assert np.allclose(out_entropy, in_entropy, atol=0.01)
 
 def test_mvn_multivox():
     """ Test constructor of MVN posterior """
@@ -298,7 +298,7 @@ def test_mvn_entropy():
 
         cov = session.run(post.cov)
         in_entropy = -0.5*np.log(np.linalg.det(cov))
-        assert np.allclose(out_entropy, in_entropy)
+        assert np.allclose(out_entropy, in_entropy, atol=0.01)
 
 def test_mvn_entropy_covar():
     """ Test entropy from MVN posterior matches standard result with nonzero covariance"""
@@ -324,4 +324,95 @@ def test_mvn_entropy_covar():
 
         cov = session.run(post.cov)
         in_entropy = -0.5*np.log(np.linalg.det(cov))
-        assert np.allclose(out_entropy, in_entropy, atol=1e-3)
+        assert np.allclose(out_entropy, in_entropy, atol=0.01)
+
+def test_fac_init_fac():
+    """ Test factorized posterior initialized from a factorized posterior"""
+    with tf.Session() as session:
+        nparams_in = 4
+        nvoxels_in = 34
+        posts = []
+        means = np.random.normal(5.0, 3.0, [nvoxels_in, nparams_in])
+        variances = np.square(np.random.normal(2.5, 1.6, [nvoxels_in, nparams_in]))
+        name = "TestFactorisedPosterior"
+        for param in range(nparams_in):
+            posts.append(NormalPosterior(means[:, param], variances[:, param]))
+
+        fac_post = FactorisedPosterior(posts, name=name)
+
+        session.run(tf.global_variables_initializer())
+        init=(session.run(fac_post.mean), session.run(fac_post.cov))
+        fac_post2 = FactorisedPosterior(posts, init=init)
+
+        session.run(tf.global_variables_initializer())
+        assert np.allclose(session.run(fac_post2.mean), session.run(fac_post.mean))
+        assert np.allclose(session.run(fac_post2.cov), session.run(fac_post.cov))
+
+def test_mvn_init_fac():
+    """ Test MVN posterior initialized from a factorized posterior"""
+    with tf.Session() as session:
+        nparams_in = 4
+        nvoxels_in = 34
+        posts = []
+        means = np.random.normal(5.0, 3.0, [nvoxels_in, nparams_in])
+        variances = np.square(np.random.normal(2.5, 1.6, [nvoxels_in, nparams_in]))
+        name = "TestFactorisedPosterior"
+        for param in range(nparams_in):
+            posts.append(NormalPosterior(means[:, param], variances[:, param]))
+
+        fac_post = FactorisedPosterior(posts, name=name)
+
+        session.run(tf.global_variables_initializer())
+        init=(session.run(fac_post.mean), session.run(fac_post.cov))
+        mvn_post = MVNPosterior(posts, init=init)
+
+        session.run(tf.global_variables_initializer())
+        assert np.allclose(session.run(mvn_post.mean), session.run(fac_post.mean))
+        assert np.allclose(session.run(mvn_post.cov), session.run(fac_post.cov))
+
+def test_mvn_init_mvn():
+    """ Test MVN posterior initialized from a full MVN"""
+    with tf.Session() as session:
+        nparams_in = 4
+        nvoxels_in = 34
+        posts = []
+        means = np.random.normal(5.0, 3.0, [nvoxels_in, nparams_in])
+        variances = np.square(np.random.normal(2.5, 1.6, [nvoxels_in, nparams_in]))
+        name = "TestFactorisedPosterior"
+        for param in range(nparams_in):
+            posts.append(NormalPosterior(means[:, param], variances[:, param]))
+
+        mvn_post = MVNPosterior(posts, name=name)
+
+        session.run(tf.global_variables_initializer())
+        init=(session.run(mvn_post.mean), session.run(mvn_post.cov))
+        mvn_post2 = MVNPosterior(posts, init=init)
+
+        session.run(tf.global_variables_initializer())
+        assert np.allclose(session.run(mvn_post2.mean), session.run(mvn_post.mean))
+        assert np.allclose(session.run(mvn_post2.cov), session.run(mvn_post.cov))
+
+def test_fac_init_mvn():
+    """ Test factorised posterior initialized from a full MVN"""
+    with tf.Session() as session:
+        nparams_in = 4
+        nvoxels_in = 34
+        posts = []
+        means = np.random.normal(5.0, 3.0, [nvoxels_in, nparams_in])
+        variances = np.square(np.random.normal(2.5, 1.6, [nvoxels_in, nparams_in]))
+        name = "TestFactorisedPosterior"
+        for param in range(nparams_in):
+            posts.append(NormalPosterior(means[:, param], variances[:, param]))
+
+        mvn_post = MVNPosterior(posts, name=name)
+
+        session.run(tf.global_variables_initializer())
+        init=(session.run(mvn_post.mean), session.run(mvn_post.cov))
+        fac_post = FactorisedPosterior(posts, init=init)
+
+        session.run(tf.global_variables_initializer())
+        assert np.allclose(session.run(fac_post.mean), session.run(mvn_post.mean))
+
+        # Expect the covariance to just contain the diagonal elements
+        diag_cov = tf.matrix_diag(tf.matrix_diag_part(mvn_post.cov))
+        assert np.allclose(session.run(fac_post.cov), session.run(diag_cov))

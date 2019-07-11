@@ -38,7 +38,7 @@ def test_normal_prior_mean_log_pdf():
         logpdf = np.reshape(-0.5*zval, [nvoxels_in, -1])
         assert np.allclose(mean_log_pdf, np.mean(logpdf, axis=-1), atol=1e-4)
 
-def test_fac_mean_ctor():
+def test_fac_ctor():
     """ Test factorised prior constructor """
     with tf.Session() as session:
         nparams_in = 4
