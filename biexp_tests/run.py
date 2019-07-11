@@ -1,16 +1,15 @@
+"""
+Run tests on biexponential model
+"""
 import os
-import sys
 import math
-import logging, logging.config
 
 import nibabel as nib
 import numpy as np
 import tensorflow as tf
 
-sys.path.append("..")
-from svb.models.exp_models import BiExpModel
-from svb.svb import SvbFit
-import svb.dist as dist
+from svb import dist
+import svb.main
 
 # Properties of the ground truth data
 M1 = 10
@@ -26,96 +25,64 @@ DT = (0.5, 0.25, 0.1, 0.05)
 NT = (10, 20, 50, 100)
 NOISE = 1.0
 
-def test_biexp(fname, t0, dt, mask=None, outdir=".", **kwargs):
+# Output options
+BASEDIR = "/mnt/hgfs/win/data/svb"
+
+def test_biexp(fname, outdir=".", **kwargs):
     """
-    Fit to a 4D Nifti image
+    Fit a 4D Nifti image to a biexponential model
 
     :param fname: File name of Nifti image
-    :param mode: Model to fit to
-    :param t0: Timeseries first value
-    :param dt: Time step
+    :param outdir: Output directory relative to BASEDIR
     """
-    nii = nib.load(fname)
-    d = nii.get_data()
-    shape = list(d.shape)
-    d_flat = d.reshape(-1, shape[-1])
-
-    if mask is not None:
-        mask_nii = nib.load(mask)
-        mask_d = mask_nii.get_data()
-        mask_flat = mask_d.flatten()
-        d_flat = d_flat[mask_flat > 0]
+    if os.path.exists("logging.conf"):
+        kwargs["log_config"] = "logging.conf"
 
     param_overrides = kwargs.get("param_overrides", None)
     if param_overrides is None:
-        param_overrides = {
+        kwargs["param_overrides"] = {
             "amp1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e1), "initialise" : None},
             "r1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e1)},
             "amp2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e1), "initialise" : None},
             "r2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e1)},
         }
-    model = BiExpModel(param_overrides=param_overrides)
+    kwargs["output"] = os.path.join(BASEDIR, outdir)
+    _runtime, mean_cost_history = svb.main.run(data=fname, model="biexp", **kwargs)
 
-    # Generate timeseries FIXME should be derivable from the model
-    t = np.linspace(t0, t0+shape[3]*dt, num=shape[3], endpoint=False)
-
-    # Train with no correlation between parameters
-    svb = SvbFit(model, **kwargs)
-    ret = svb.train(t, d_flat, kwargs.pop("batch_size", 10), **kwargs)
-    mean_cost_history = ret[0]
-
-    # Transpose output so the first index is by parameter
-    means = svb.output("model_params")
-    variances = np.transpose(np.diagonal(svb.output("post_cov"), axis1=1, axis2=2))
-
-    # Write out parameter mean and variance images
-    makedirs(outdir, exist_ok=True)
-    for idx, param in enumerate(model.params):
-        nii_mean = nib.Nifti1Image(means[idx].reshape(shape[:3]), None, header=nii.get_header())
-        nii_mean.to_filename(os.path.join(outdir, "mean_%s.nii.gz" % param.name))
-        nii_var = nib.Nifti1Image(variances[idx].reshape(shape[:3]), None, header=nii.get_header())
-        nii_var.to_filename(os.path.join(outdir, "var_%s.nii.gz" % param.name))
-
-    # Write out voxelwise cost history
-    cost_history_v = ret[2]
-    cost_history_v_nii = nib.Nifti1Image(cost_history_v.reshape(shape[:3] + [cost_history_v.shape[1]]),
-                                         None, header=nii.get_header())
-    cost_history_v_nii.to_filename(os.path.join(outdir, "cost_history.nii.gz"))
-
-    # Write out voxelwise parameter history
-    param_history_v = ret[3]
-    for idx, param in enumerate(model.params):
-        nii_mean = nib.Nifti1Image(param_history_v[:, :, idx].reshape(list(shape[:3]) + [cost_history_v.shape[1]]),
-                                   None, header=nii.get_header())
-        nii_mean.to_filename(os.path.join(outdir, "mean_%s_history.nii.gz" % param.name))
-
-    nii_mean = nib.Nifti1Image(param_history_v[:, :, model.nparams].reshape(list(shape[:3]) + [cost_history_v.shape[1]]),
-                               None, header=nii.get_header())
-    nii_mean.to_filename(os.path.join(outdir, "mean_noise_history.nii.gz"))
-
-    # Write out modelfit
-    fit = ret[4]
-    fit_nii = nib.Nifti1Image(fit.reshape(shape), None, header=nii.get_header())
-    fit_nii.to_filename(os.path.join(outdir, "modelfit.nii.gz"))
-
+    normalize_exps(kwargs["output"])
     return mean_cost_history
 
-def runtime(runnable, *args, **kwargs):
-    import time
-    t0 = time.time()
-    ret = runnable(*args, **kwargs)
-    t1 = time.time()
-    return (t1-t0), ret
+def normalize_exps(outdir):
+    """
+    'Normalize' the output of 4-parameter fitting with non-informative priors
 
-def makedirs(d, exist_ok=False):
-    try:
-        os.makedirs(d)
-    except OSError as exc:
-        import errno
-        if not exist_ok or exc.errno != errno.EEXIST:
-            raise
+    Basically with a biexponential the two exponentials can 'swap'. This
+    function simply normalizes so that amp1, r1 is the exponential with
+    the lower decay rate at every voxel
+    """
+    r1 = nib.load(os.path.join(outdir, "mean_r1.nii.gz")).get_data()
+    r2 = nib.load(os.path.join(outdir, "mean_r2.nii.gz")).get_data()
+    wrong_way_round = r1 > r2
+    for param in ["amp", "r"]:
+        for output in ["mean", "std"]:
+            fname1 = "%s_%s1.nii.gz" % (output, param)
+            fname2 = "%s_%s2.nii.gz" % (output, param)
+            if os.path.exists(os.path.join(outdir, fname1)):
+                print("Found ", fname1)
+                out1 = nib.load(os.path.join(outdir, fname1)).get_data()
+                out2 = nib.load(os.path.join(outdir, fname2)).get_data()
+                out1_save = np.copy(out1)
+                out1[wrong_way_round] = out2[wrong_way_round]
+                out2[wrong_way_round] = out1_save[wrong_way_round]
+                print("Saving new ", os.path.join(outdir, fname1))
+                nib.Nifti1Image(out1, np.identity(4)).to_filename(os.path.join(outdir, fname1))
+                nib.Nifti1Image(out2, np.identity(4)).to_filename(os.path.join(outdir, fname2))
 
 def generate_test_data(num_voxels, num_times, dt, m1, m2, l1, l2, noise):
+    """
+    Create Nifti files containing instances of biexponential data
+    with and without noise
+    """
     sq_len = int(math.sqrt(num_voxels))
     shape = (sq_len, sq_len, 1, num_times)
     data = np.zeros(shape)
@@ -128,23 +95,52 @@ def generate_test_data(num_voxels, num_times, dt, m1, m2, l1, l2, noise):
     nii_noisy = nib.Nifti1Image(data_noisy, np.identity(4))
     nii_noisy.to_filename(FNAME_NOISY % num_times)
 
-def learning_rate():
-    learning_rates = (1.0, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005)
-    batch_sizes = (5, 10, 15, 25, 50)
+def run_combinations(**kwargs):
+    """
+    Run combinations of all test variables
 
-    for nt, dt in zip(NT, DT):
-        for bs in batch_sizes:
-            if bs > nt: continue
-            for lr in learning_rates:
-                mean_cost_history = test_biexp(FNAME_NOISY % nt, t0=0, dt=dt,
-                                               outdir="nt_%i_lr_%.3f_bs_%i" % (nt, lr, bs),
-                                               training_epochs=500,
-                                               batch_size=bs,
-                                               learning_rate=lr,
-                                               quench_rate=0.95)
-                print(nt, bs, lr, mean_cost_history[-1])
+    (excluding prior/posterior tests)
+    """
+    learning_rates = (1.0, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005)
+    batch_sizes = (5, 10, 20, 50, 100)
+    sample_sizes = (2, 5, 10, 20, 50, 100, 200)
+
+    for infer_covar in (True, False):
+        if infer_covar:
+            cov = "cov"
+        else:
+            cov = "nocov"
+        for num_ll in (False, True):
+            if num_ll:
+                num = "num"
+            else:
+                num = "analytic"
+            for nt, dt in zip(NT, DT):
+                for bs in batch_sizes:
+                    if bs > nt:
+                        continue
+                    for lr in learning_rates:
+                        for ss in sample_sizes:
+                            outdir="nt_%i_lr_%.3f_bs_%i_ss_%i_%s_%s" % (nt, lr, bs, ss, num, cov)
+                            if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
+                                print("Skipping %s" % outdir)
+                                continue
+                            mean_cost_history = test_biexp(FNAME_NOISY % nt, t0=0, dt=dt,
+                                                           outdir=outdir,
+                                                           epochs=500,
+                                                           batch_size=bs,
+                                                           learning_rate=lr,
+                                                           sample_size=ss,
+                                                           lr_quench=0.95,
+                                                           force_num_latent_loss=num_ll,
+                                                           infer_covar=infer_covar,
+                                                           **kwargs)
+                            print(nt, lr, bs, ss, num, cov, mean_cost_history[-1])
 
 def priors_posteriors(suffix="", **kwargs):
+    """
+    Run tests on various combinations of prior and posterior
+    """
     nt, dt = NT[-1], DT[-1]
     test_data = FNAME_NOISY % nt
     cases = {
@@ -204,7 +200,7 @@ def priors_posteriors(suffix="", **kwargs):
             "amp2" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 1e6)},
             "r2" : {"prior" : dist.LogNormal(1.0, 2.0), "post" : dist.LogNormal(1.0, 1e6)},
         },
-        # Informative prior, informative posterior 
+        # Informative prior, informative posterior
         "prior_i_post_i" : {
             "amp1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0), "initialise" : None},
             "r1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
@@ -217,14 +213,14 @@ def priors_posteriors(suffix="", **kwargs):
             "r1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
             "amp2" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
             "r2" : {"prior" : dist.LogNormal(1.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
-        }, 
+        },
         # Informative prior, informative posterior set close to true solution
         "prior_i_post_i_true" : {
             "amp1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(10.0, 2.0)},
             "r1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(10.0, 2.0)},
             "amp2" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(10.0, 2.0)},
             "r2" : {"prior" : dist.LogNormal(1.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
-        }, 
+        },
         # Informative prior, informative posterior set far from true solution
         "prior_i_post_i_wrong" : {
             "amp1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(100.0, 2.0)},
@@ -241,10 +237,10 @@ def priors_posteriors(suffix="", **kwargs):
         print(name)
         mean_cost_history = test_biexp(test_data, t0=0, dt=dt,
                                        outdir=name,
-                                       training_epochs=1000,
+                                       epochs=1000,
                                        batch_size=bs,
                                        learning_rate=lr,
-                                       quench_rate=0.95,
+                                       lr_quench=0.95,
                                        param_overrides=param_overrides,
                                        **kwargs)
         print(name, mean_cost_history[-1])
@@ -253,20 +249,15 @@ if __name__ == "__main__":
     # MC needs this it would appear!
     os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
-    # Logging configuration
-    logging.getLogger().setLevel(logging.WARNING)
-    if os.path.exists("logging.conf"):
-        logging.config.fileConfig("logging.conf")
-
     # To make tests repeatable
     tf.set_random_seed(1)
     np.random.seed(1)
 
-    for nt, dt in zip(NT, DT):
-        generate_test_data(num_voxels=NV, num_times=nt, dt=dt, m1=M1, m2=M2, l1=L1, l2=L2, noise=NOISE)
-        
-    learning_rate()
-    priors_posteriors("_num", infer_covar=False, force_num_latent_loss=True)
-    priors_posteriors("_analytic", infer_covar=False)
-    priors_posteriors("_num_corr", infer_covar=True, force_num_latent_loss=True)
-    priors_posteriors("_analytic_corr", infer_covar=True)
+    #for nt, dt in zip(NT, DT):
+    #    generate_test_data(num_voxels=NV, num_times=nt, dt=dt, m1=M1, m2=M2, l1=L1, l2=L2, noise=NOISE)
+
+    run_combinations()
+    #priors_posteriors("_num", infer_covar=False, force_num_latent_loss=True)
+    #priors_posteriors("_analytic", infer_covar=False)
+    #priors_posteriors("_num_corr", infer_covar=True, force_num_latent_loss=True)
+    #priors_posteriors("_analytic_corr", infer_covar=True)
