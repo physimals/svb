@@ -31,16 +31,15 @@ class Parameter(LogBase):
 
         self.name = name
         self.desc = kwargs.get("desc", "No description given")
-        self.debug = kwargs.get("debug", False)
         self.prior = kwargs.get("prior")
         self.post = kwargs.get("post", self.prior)
         self._initialise = kwargs.get("initialise", None)
 
     def voxelwise_prior(self, nvoxels):
-        return self.prior.voxelwise_prior(nvoxels, debug=self.debug, name=self.name)
+        return self.prior.voxelwise_prior(nvoxels, name=self.name)
 
     def voxelwise_posterior(self, t, data):
-        return self.post.voxelwise_posterior(self, t, data, self._initialise, debug=self.debug, name=self.name)
+        return self.post.voxelwise_posterior(self, t, data, self._initialise, name=self.name)
 
 class GlobalParameter(Parameter):
     """

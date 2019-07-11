@@ -33,7 +33,6 @@ class NormalPrior(Prior):
         :param var: Tensor of shape [V] containing the prior variance at each voxel
         """
         Prior.__init__(self)
-        self.debug = kwargs.get("debug", False)
         self.name = kwargs.get("name", "NormalPrior")
         self.nvoxels = tf.shape(mean)[0]
         self.mean = tf.identity(mean, name="%s_mean" % self.name)
@@ -57,7 +56,6 @@ class FactorisedPrior(Prior):
     def __init__(self, priors, **kwargs):
         Prior.__init__(self)
         self.priors = priors
-        self.debug = kwargs.get("debug", False)
         self.name = kwargs.get("name", "FactPrior")
         self.nparams = len(priors)
 
@@ -77,9 +75,7 @@ class FactorisedPrior(Prior):
         mean_log_pdf = tf.zeros([nvoxels], dtype=tf.float32)
         for idx, prior in enumerate(self.priors):
             param_samples = tf.slice(samples, [0, idx, 0], [-1, 1, -1])
-            #param_samples = tf.Print(param_samples, [tf.shape(param_samples), param_samples], "param_samples")
             param_logpdf = prior.mean_log_pdf(param_samples)
-            #param_logpdf = tf.Print(param_logpdf, [param_logpdf], "param_logpdf")
             mean_log_pdf = tf.add(mean_log_pdf, param_logpdf)
         return mean_log_pdf
     

@@ -22,7 +22,6 @@ first.
 """
 import numpy as np
 import tensorflow as tf
-#from tensorflow.python import debug as tf_debug
 
 import svb.noise as noise
 from svb.prior import NormalPrior, FactorisedPrior
@@ -45,13 +44,9 @@ class SvbFit(LogBase):
         # The model to use for inference
         self.model = model
 
-        # Debug mode
-        self.debug = kwargs.get("debug", False)
-        self.log.debug("Debug mode enabled")
-
         # All the parameters to infer - model parameters plus noise parameters
         self.params = list(model.params)
-        self.noise = noise.NoiseParameter(debug=self.debug)
+        self.noise = noise.NoiseParameter()
         self.params.append(self.noise)
         self._nparams = len(self.params)
         self._infer_covar = kwargs.get("infer_covar", False)
@@ -104,13 +99,13 @@ class SvbFit(LogBase):
             # Create prior and posterior distributions
             param_priors = [param.voxelwise_prior(self.nvoxels) for param in self.params]
             param_posts = [param.voxelwise_posterior(self.tpts_train, self.data_full) for param in self.params]
-            self.prior = FactorisedPrior(param_priors, name="prior", debug=self.debug)
+            self.prior = FactorisedPrior(param_priors, name="prior", **kwargs)
             if self._infer_covar:
                 self.log.info("Inferring covariances (correlation) between Gaussian parameters")
-                self.post = MVNPosterior(param_posts, name="post", debug=self.debug)
+                self.post = MVNPosterior(param_posts, name="post", **kwargs)
             else:
                 self.log.info("Not inferring covariances between parameters")
-                self.post = FactorisedPosterior(param_posts, name="post", debug=self.debug)
+                self.post = FactorisedPosterior(param_posts, name="post", **kwargs)
 
             # If all of our priors and posteriors are Gaussian we can use an analytic expression for
             # the latent loss - so set this flag to decide if this is possible
@@ -130,8 +125,6 @@ class SvbFit(LogBase):
 
             # Tensorflow session for runnning graph
             self.sess = tf.Session()
-            #if self.debug:
-            #    self.sess = tf_debug.LocalCLIDebugWrapperSession(self.sess)
 
     def _get_model_prediction(self, samples):
         """
