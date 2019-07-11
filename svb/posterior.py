@@ -26,12 +26,14 @@ class Posterior(LogBase):
         """
         raise NotImplementedError()
 
-    def entropy(self, samples):
+    def entropy(self, samples=None):
         """
         :param samples: A tensor of shape [V, P, S] where V is the number
                         of voxels, P is the number of parameters in the prior
                         (possibly 1) and S is the number of samples.
                         This parameter may or may not be used in the calculation.
+                        If it is required, the implementation class must check
+                        that it is provided
 
         :return Tensor of shape [V] containing voxelwise distribution entropy
         """
@@ -67,11 +69,10 @@ class NormalPosterior(Posterior):
         """
         Posterior.__init__(self, **kwargs)
         self.nvoxels = tf.shape(mean)[0]
-        self.debug = kwargs.get("debug", False)
         self.name = kwargs.get("name", "NormPost")
         self.mean = self.log_tf(tf.Variable(mean, dtype=tf.float32, validate_shape=False,
                                             name="%s_mean" % self.name))
-        self.log_var = tf.Variable(tf.log(var), dtype=tf.float32, validate_shape=False,
+        self.log_var = tf.Variable(tf.log(tf.cast(var, dtype=tf.float32)), validate_shape=False,
                                    name="%s_log_var" % self.name)
         self.var = self.log_tf(tf.exp(self.log_var, name="%s_var" % self.name))
         self.std = self.log_tf(tf.sqrt(self.var, name="%s_std" % self.name))
@@ -83,7 +84,7 @@ class NormalPosterior(Posterior):
                                     name="%s_sample" % self.name))
         return sample
 
-    def entropy(self, _samples):
+    def entropy(self, _samples=None):
         entropy = tf.identity(-0.5 * tf.log(self.var), name="%s_entropy" % self.name)
         return self.log_tf(entropy)
 
@@ -105,25 +106,44 @@ class FactorisedPosterior(Posterior):
         Posterior.__init__(self, **kwargs)
         self.posts = posts
         self.nparams = len(self.posts)
-        self.debug = kwargs.get("debug", False)
         self.name = kwargs.get("name", "FactPost")
 
-        means = [post.mean for post in self.posts]
-        variances = [post.var for post in self.posts]
-        self.mean = self.log_tf(tf.stack(means, axis=-1, name="%s_mean" % self.name))
-        self.var = self.log_tf(tf.stack(variances, axis=-1, name="%s_var" % self.name))
+        if "init" in kwargs:
+            # We have been provided with an initialization posterior. Extract the mean and diagonal of the
+            # covariance and use that as the initial values of the mean and variance variable tensors
+            mean, cov = kwargs["init"]
+            # Check initialisation posterior has correct number of parameters and voxels
+            if mean.shape[1] != len(self.posts):
+                raise ValueError("Initializing posterior with %i parameters using posterior with %i parameters" % (mean.shape[1], len(self.posts)))
+            #if mean.shape[0] != posts[0].nvoxels:
+            #    raise ValueError("Initializing posterior with %i voxels using posterior with %i voxels" % (mean.shape[0], posts[0].nvoxels))
+            mean = tf.Variable(mean, dtype=tf.float32, validate_shape=False)
+            var = tf.Variable(tf.matrix_diag_part(cov), dtype=tf.float32, validate_shape=False)
+        else:
+            means = [post.mean for post in self.posts]
+            variances = [post.var for post in self.posts]
+            mean = tf.stack(means, axis=-1, name="%s_mean" % self.name)
+            var = tf.stack(variances, axis=-1, name="%s_var" % self.name)
+
+        self.mean = self.log_tf(tf.identity(mean, name="%s_mean" % self.name))
+        self.var = self.log_tf(tf.identity(var, name="%s_var" % self.name))
         self.std = tf.sqrt(self.var, name="%s_std" % self.name)
         self.nvoxels = posts[0].nvoxels
 
         # Covariance matrix is diagonal
         self.cov = tf.matrix_diag(self.var, name='%s_cov' % self.name)
 
+        # Regularisation to make sure cov is invertible. Note that we do not
+        # need this for a diagonal covariance matrix but it is useful for
+        # the full MVN covariance which shares some of the calculations
+        self.cov_reg = 1e-6*tf.eye(self.nparams)
+
     def sample(self, nsamples):
         samples = [post.sample(nsamples) for post in self.posts]
         sample = tf.concat(samples, axis=1, name="%s_sample" % self.name)
         return self.log_tf(sample)
 
-    def entropy(self, _samples):
+    def entropy(self, _samples=None):
         entropy = tf.zeros([self.nvoxels], dtype=tf.float32)
         for post in self.posts:
             entropy = tf.add(entropy, post.entropy(), name="%s_entropy" % self.name)
@@ -152,13 +172,13 @@ class FactorisedPosterior(Posterior):
         prior_cov_inv = tf.matrix_inverse(prior.cov)
         mean_diff = tf.subtract(self.mean, prior.mean)
 
-        t1 = tf.trace(tf.matmul(prior_cov_inv, self.cov))
-        t2 = tf.matmul(tf.reshape(mean_diff, (self.nvoxels, 1, -1)), prior_cov_inv)
-        t3 = tf.reshape(tf.matmul(t2, tf.reshape(mean_diff, (self.nvoxels, -1, 1))), [self.nvoxels])
-        t4 = tf.log(tf.matrix_determinant(prior.cov, name='%s_log_det_cov' % prior.name))
-        t5 = tf.log(tf.matrix_determinant(self.cov, name='%s_log_det_cov' % self.name))
+        term1 = tf.trace(tf.matmul(prior_cov_inv, self.cov))
+        term2 = tf.matmul(tf.reshape(mean_diff, (self.nvoxels, 1, -1)), prior_cov_inv)
+        term3 = tf.reshape(tf.matmul(term2, tf.reshape(mean_diff, (self.nvoxels, -1, 1))), [self.nvoxels])
+        term4 = tf.log(tf.matrix_determinant(prior.cov, name='%s_log_det_cov' % prior.name))
+        term5 = tf.log(tf.matrix_determinant(self.cov + self.cov_reg, name='%s_log_det_cov' % self.name))
 
-        return self.log_tf(tf.identity(0.5*(t1 + t3 - self.nparams + t4 - t5), name="%s_latent_loss" % self.name))
+        return self.log_tf(tf.identity(0.5*(term1 + term3 - self.nparams + term4 - term5), name="%s_latent_loss" % self.name))
 
 class MVNPosterior(FactorisedPosterior):
     """
@@ -168,12 +188,23 @@ class MVNPosterior(FactorisedPosterior):
     def __init__(self, posts, **kwargs):
         FactorisedPosterior.__init__(self, posts, **kwargs)
 
-        # Covariance matrix is formed from the Cholesky decomposition
-        # NB we have to create PxP variables but since we extract only the
-        # off diagonal elements below we are only training on the lower
-        # diagonal (excluding the diagonal itself which is comes from
-        # the parameter variances provided)
-        covar_init = tf.zeros([self.nvoxels, self.nparams, self.nparams], dtype=tf.float32)
+        # The full covariance matrix is formed from the Cholesky decomposition
+        # to ensure that it remains positive definite.
+        #
+        # To achieve this, we have to create PxP tensor variables for
+        # each voxel, but we then extract only the lower triangular
+        # elements and train only on these. The diagonal elements
+        # are constructed by the FactorisedPosterior
+        if "init" in kwargs:
+            # We are initializing from an existing posterior.
+            # The FactorizedPosterior will already have extracted the mean and
+            # diagonal of the covariance matrix - we need the Cholesky decomposition
+            # of the covariance to initialize the off-diagonal terms
+            _mean, cov = kwargs["init"]
+            covar_init = tf.cholesky(cov, dtype=tf.float32)
+        else:
+            covar_init = tf.zeros([self.nvoxels, self.nparams, self.nparams], dtype=tf.float32)
+
         self.off_diag_vars = self.log_tf(tf.Variable(covar_init, validate_shape=False,
                                                      name='%s_off_diag_vars' % self.name))
         self.off_diag_cov_chol = tf.matrix_set_diag(tf.matrix_band_part(self.off_diag_vars, -1, 0),
@@ -187,9 +218,6 @@ class MVNPosterior(FactorisedPosterior):
         # Form the covariance matrix from the chol decomposition
         self.cov = tf.matmul(tf.transpose(self.cov_chol, perm=(0, 2, 1)), self.cov_chol,
                              name='%s_cov' % self.name)
-
-        # Regularisation to make sure cov is invertible
-        self.cov_reg = 1e-6*tf.eye(self.nparams)
 
         self.cov_chol = self.log_tf(self.cov_chol)
         self.cov = self.log_tf(self.cov)
@@ -205,7 +233,7 @@ class MVNPosterior(FactorisedPosterior):
         sample = tf.add(tiled_mean, tf.matmul(self.cov_chol, eps), name="%s_sample" % self.name)
         return self.log_tf(sample)
 
-    def entropy(self, _samples):
+    def entropy(self, _samples=None):
         det_covar = tf.matrix_determinant(self.cov + self.cov_reg, name="%s_det" % self.name) # [V]
         entropy = tf.identity(-0.5 * tf.log(det_covar), name="%s_entropy" % self.name)
         return self.log_tf(entropy)
