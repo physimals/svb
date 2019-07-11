@@ -19,7 +19,6 @@ class Model(LogBase):
         self.params = []
         self._t0 = options.get("t0", 0)
         self._dt = options.get("dt", 1)
-        self.debug = options.get("debug", False)
 
     @property
     def nparams(self):
@@ -48,6 +47,9 @@ class Model(LogBase):
         Some models may have time values fixed by some other configuration. If
         the number of time points is fixed by the model it must match the
         supplied value ``n_tpts``.
+
+        :return: Either a Numpy array of shape [n_tpts] or a Numpy array of shape
+                 shape + [n_tpts] for voxelwise timepoints
         """
         return np.linspace(self._t0, self._t0+n_tpts*self._dt, num=n_tpts, endpoint=False)
 
