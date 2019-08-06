@@ -75,6 +75,7 @@ class NormalPosterior(Posterior):
         self.log_var = tf.Variable(tf.log(tf.cast(var, dtype=tf.float32)), validate_shape=False,
                                    name="%s_log_var" % self.name)
         self.var = self.log_tf(tf.exp(self.log_var, name="%s_var" % self.name))
+        self.var = tf.where(tf.is_nan(self.var), tf.ones_like(self.var), self.var)
         self.std = self.log_tf(tf.sqrt(self.var, name="%s_std" % self.name))
 
     def sample(self, nsamples):
@@ -136,7 +137,7 @@ class FactorisedPosterior(Posterior):
         # Regularisation to make sure cov is invertible. Note that we do not
         # need this for a diagonal covariance matrix but it is useful for
         # the full MVN covariance which shares some of the calculations
-        self.cov_reg = 1e-6*tf.eye(self.nparams)
+        self.cov_reg = 1e-5*tf.eye(self.nparams)
 
     def sample(self, nsamples):
         samples = [post.sample(nsamples) for post in self.posts]
@@ -161,6 +162,9 @@ class FactorisedPosterior(Posterior):
             ops += post.set_state(state[idx*2:idx*2+2])
         return ops
 
+    def log_det_cov(self):
+        return tf.log(tf.matrix_determinant(self.cov), name='%s_log_det_cov' % self.name)
+
     def latent_loss(self, prior):
         """
         Analytic expression for latent loss which can be used when posterior and prior are
@@ -176,7 +180,7 @@ class FactorisedPosterior(Posterior):
         term2 = tf.matmul(tf.reshape(mean_diff, (self.nvoxels, 1, -1)), prior_cov_inv)
         term3 = tf.reshape(tf.matmul(term2, tf.reshape(mean_diff, (self.nvoxels, -1, 1))), [self.nvoxels])
         term4 = tf.log(tf.matrix_determinant(prior.cov, name='%s_log_det_cov' % prior.name))
-        term5 = tf.log(tf.matrix_determinant(self.cov + self.cov_reg, name='%s_log_det_cov' % self.name))
+        term5 = self.log_det_cov()
 
         return self.log_tf(tf.identity(0.5*(term1 + term3 - self.nparams + term4 - term5), name="%s_latent_loss" % self.name))
 
@@ -222,9 +226,12 @@ class MVNPosterior(FactorisedPosterior):
         self.cov_chol = self.log_tf(self.cov_chol)
         self.cov = self.log_tf(self.cov)
 
+    def log_det_cov(self):
+        return self.log_tf(tf.multiply(2.0, tf.reduce_sum(tf.log(tf.matrix_diag_part(self.cov_chol)), axis=1), name="%s_det_cov" % self.name), force=False)
+
     def sample(self, nsamples):
         # Use the 'reparameterization trick' to return the samples
-        eps = tf.random_normal((self.nvoxels, self.nparams, nsamples), 0, 1, dtype=tf.float32)
+        eps = tf.random_normal((self.nvoxels, self.nparams, nsamples), 0, 1, dtype=tf.float32, name="eps")
 
         # NB self.cov_chol is the Cholesky decomposition of the covariance matrix
         # so plays the role of the std.dev.
@@ -234,8 +241,7 @@ class MVNPosterior(FactorisedPosterior):
         return self.log_tf(sample)
 
     def entropy(self, _samples=None):
-        det_covar = tf.matrix_determinant(self.cov + self.cov_reg, name="%s_det" % self.name) # [V]
-        entropy = tf.identity(-0.5 * tf.log(det_covar), name="%s_entropy" % self.name)
+        entropy = tf.identity(-0.5 * self.log_det_cov(), name="%s_entropy" % self.name)
         return self.log_tf(entropy)
 
     def state(self):
