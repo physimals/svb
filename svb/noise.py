@@ -13,9 +13,14 @@ class NoiseParameter(Parameter):
 
     def __init__(self, **kwargs):
         Parameter.__init__(self, "noise",
-                           prior=dist.Normal(0.0, 1.0e4),
-                           post=dist.Normal(2.6, 0.02),
+                           prior=dist.Normal(0.0, 10.0),
+                           post=dist.Normal(0.0, 0.02),
+                           initialise=self._init_noise,
                            **kwargs)
+
+    def _init_noise(self, _param, _t, data):
+        data_mean, data_var = tf.nn.moments(data, axes=1)
+        return tf.log(data_var), None
 
     def log_likelihood(self, data, pred, noise, nt):
         """
