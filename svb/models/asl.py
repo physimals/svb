@@ -97,7 +97,7 @@ class AslRestModel(Model):
         return ftiss*signal
 
     def tpts(self, n_tpts, shape):
-        if n_tpts != len(self.tis):
+        if n_tpts != len(self.tis) * self.repeats:
             raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis), n_tpts))
 
         # FIXME assuming grouped by TIs/PLDs
