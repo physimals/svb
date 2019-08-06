@@ -202,8 +202,8 @@ class SvbFit(LogBase):
 
         # Note that we pass the total number of time points as we need to scale this term correctly
         # when the batch size is not the full data size
-        self.reconstr_loss = self.noise.log_likelihood(self.data_train, model_prediction, noise_samples, self.nt_full)
-        self.reconstr_loss = self.log_tf(tf.identity(self.reconstr_loss, name="reconstr_loss"))
+        reconstr_loss = self.noise.log_likelihood(self.data_train, model_prediction, noise_samples, self.nt_full)
+        self.reconstr_loss = self.log_tf(tf.identity(reconstr_loss, name="reconstr_loss"))
 
         # Part 2: Latent loss
         #
@@ -365,6 +365,7 @@ class SvbFit(LogBase):
 
                 # Iterate over training batches - note that there may be only one
                 for i in range(n_batches):
+                    #print(i)
                     if sequential_batches:
                         # Batches are defined by sequential data time points
                         if i == n_batches - 1:
@@ -418,11 +419,17 @@ class SvbFit(LogBase):
 
             if err or np.isnan(mean_total_cost) or np.any(np.isnan(mean_params)):
                 # Numerical errors while processing this epoch. We will reduce the learning rate
-                # and revert to best previously saved params
+                # if possible and revert to best previously saved params
                 self.feed_dict[self.learning_rate] = max(lr_min, self.feed_dict[self.learning_rate] * lr_quench)
                 self.initialize()
-                outcome = "Numerical errors: Restart with learning rate: %f" % self.feed_dict[self.learning_rate]
-                self.log.warning(outcome)
+                if best_state is not None:
+                    self.set_state(best_state)
+                    params = self.output("model_params") # [P, V]
+                    var = self.output("post_var") # [V, P]
+                    mean_params = np.mean(params, axis=1)
+                    mean_var = np.mean(var, axis=0)
+                outcome = "Revert -> LR=%f" % self.feed_dict[self.learning_rate]
+                self.log.warning("Numerical errors: Revert with learning rate: %f" % self.feed_dict[self.learning_rate])
             elif mean_total_cost < best_cost:
                 # There was an improvement in the mean cost - save the current state of the posterior
                 outcome = "Saving"
@@ -439,13 +446,13 @@ class SvbFit(LogBase):
                     self.feed_dict[self.learning_rate] = max(lr_min, self.feed_dict[self.learning_rate] * lr_quench)
                     self.set_state(best_state)
                     trials = 0
-                    outcome = "Revert with learning rate: %f" % self.feed_dict[self.learning_rate]
+                    outcome = "Revert -> LR=%f" % self.feed_dict[self.learning_rate]
 
             if epoch % display_step == 0:
-                self.log.info("Epoch %04d: mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s - %s",
-                              (epoch+1), mean_total_cost, mean_total_latent, mean_total_reconst,
-                              mean_params, mean_var, outcome)
-
+                state_str = "mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s" % (
+                    mean_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var)
+                self.log.info("Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
+                
         # At the end of training we revert to the state with best mean cost and write a final history step
         # with these values. Note that the cost may not be as reported earlier as this was based on a
         # mean over the training batches whereas here we recalculate the cost for the whole data set.
