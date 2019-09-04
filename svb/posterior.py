@@ -170,6 +170,8 @@ class FactorisedPosterior(Posterior):
         Analytic expression for latent loss which can be used when posterior and prior are
         Gaussian
 
+        https://en.wikipedia.org/wiki/Multivariate_normal_distribution#Kullback%E2%80%93Leibler_divergence
+
         :param prior: Voxelwise Prior instance which defines the ``mean`` and ``cov`` voxelwise
                       attributes
         """
@@ -179,7 +181,7 @@ class FactorisedPosterior(Posterior):
         term1 = tf.trace(tf.matmul(prior_cov_inv, self.cov))
         term2 = tf.matmul(tf.reshape(mean_diff, (self.nvoxels, 1, -1)), prior_cov_inv)
         term3 = tf.reshape(tf.matmul(term2, tf.reshape(mean_diff, (self.nvoxels, -1, 1))), [self.nvoxels])
-        term4 = tf.log(tf.matrix_determinant(prior.cov, name='%s_log_det_cov' % prior.name))
+        term4 = prior.log_det_cov()
         term5 = self.log_det_cov()
 
         return self.log_tf(tf.identity(0.5*(term1 + term3 - self.nparams + term4 - term5), name="%s_latent_loss" % self.name))
