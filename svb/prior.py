@@ -45,6 +45,65 @@ class NormalPrior(Prior):
         mean_log_pdf = tf.reshape(tf.reduce_mean(log_pdf, axis=-1), [self.nvoxels]) # [V]
         return mean_log_pdf
 
+class SpatialPriorMRF(NormalPrior):
+    """
+    Prior which performs adaptive spatial regularization based on the 
+    contents of neighbouring voxels using the Markov Random Field method
+
+    This is equivalent to the Fabber 'M' type spatial prior
+    """
+
+    def __init__(self, mean, var, idx, post, nn, nn2, **kwargs):
+        """
+        :param mean: Tensor of shape [V] containing the prior mean at each voxel
+        :param var: Tensor of shape [V] containing the prior variance at each voxel
+        :param post: Posterior instance
+        :param nn: Sparse tensor of shape [V, V] containing nearest neighbour lists
+        :param nn2: Sparse tensor of shape [V, V] containing second nearest neighbour lists
+        """
+        NormalPrior.__init__(self)
+        self.idx = idx
+
+        # Save the original voxelwise mean and variance - the actual prior mean/var
+        # will be calculated from these and also the spatial variation in neighbour
+        # voxels
+        self.fixed_mean = self.mean
+        self.fixed_var = self.var
+
+        # nn and nn2 are sparse tensors of shape [V, V]. If nn[V, W] = 1 then W is
+        # a nearest neighbour of W, and similarly for nn2 and second nearest neighbours
+        self.nn = nn
+        self.nn2 = nn2
+
+        # Set up spatial smoothing parameter calculation from posterior and neighbour
+        # lists
+        self._setup_ak(post, nn, nn2)
+
+        # Set up prior mean/variance
+        self._setup_mean_var(post, nn, nn2)
+
+    def _setup_ak(self, post, nn, nn2):
+        sigmaK = tf.matrix_diag(post.cov)[:, self.idx] # [V]
+        wK = post.mean[:, self.idx] # [V]
+        num_nn = tf.reduce_sum(self.nn, axis=1) # [V]
+
+        # Sum over voxels of parameter variance multiplied by number of 
+        # nearest neighbours for each voxel
+        trace_term = tf.reduce_sum(param_var * self.num_nn) # [1]
+
+        # Sum of nearest neighbour mean values
+        nn_means = tf.matrix_mul(self.nn, wK) # [V]
+        
+        # Sum over voxels 
+        mean_diff 
+
+        swk = tf.reduce_sum(wK - [:, self.idx])
+
+        term2 = tf.reduce_sum(swk * post_mean)
+
+    def _setup_mean_var(self, post, nn, nn2):
+        pass 
+
 class FactorisedPrior(Prior):
     """
     Prior for a collection of parameters where there is no prior covariance

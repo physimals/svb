@@ -97,6 +97,49 @@ def main():
     except (RuntimeError, ValueError) as exc:
         sys.stderr.write("ERROR: %s\n" % str(exc))
 
+def calc_neighbours(mask_vol):
+    """
+    Generate nearest neighbour and second nearest neighbour lists
+    """
+    # First nearest neighbour lists.
+    # Note that Numpy uses (by default) C-style row-major ordering
+    # for voxel indices so the index is z + y*nz + x*ny*nz
+    # Also we need to check that potential neighbours are not masked
+    def add_if_unmasked(x, y, z, mask_vol, nns):
+        if mask_vol[x, y, z] > 0:
+            nns.append(z + y*nz + x*ny*nz)
+
+    shape = mask_vol.shape
+    voxel_nns = []
+    indices_nn = []
+    for x in range(shape[0]):
+        for y in range(shape[1]):
+            for z in range(shape[2]):
+                if mask_vol[x, y, z] > 0:
+                    nns = []
+                    if x > 0: add_if_unmasked(x-1, y, z, mask_vol, nns)
+                    if x < shape[0]-1: add_if_unmasked(x+1, y, z, mask_vol, nns)
+                    if y > 0: add_if_unmasked(x, y-1, z, mask_vol, nns)
+                    if y < shape[1]-1: add_if_unmasked(x, y+1, z, mask_vol, nns)
+                    if z > 0: add_if_unmasked(x, y, z-1, mask_vol, nns)
+                    if z < shape[2]-1: add_if_unmasked(x, y, z+1, mask_vol, nns)
+                    voxel_nns.append(nns)
+                    # For TensorFlow sparse tensor
+                    voxel_idx = z + y*nz + x*ny*nz
+                    for nn in nns:
+                        indices_nn.append([voxel_idx, nn])
+
+    # Second nearest neighbour lists exclude self but include duplicates
+    voxel_n2s = [[] for voxel in voxel_nns]
+    indices_n2 = []
+    for voxel_idx, nns in enumerate(voxel_nns):
+        for nn in nns:
+            voxel_n2s[voxel_idx].extend(voxel_nns[nn])
+        voxel_n2s[voxel_idx] = [v for v in voxel_n2s[voxel_idx] if v != voxel_idx]
+        for n2 in voxel_n2s[voxel]:
+            indices_n2.append([voxel_idx, n2])
+    return indices_nn, indices_nn2
+
 def run(data, model, output, mask=None, **kwargs):
     """
     Run model fitting on a data set
