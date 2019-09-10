@@ -83,25 +83,35 @@ class SpatialPriorMRF(NormalPrior):
         self._setup_mean_var(post, nn, nn2)
 
     def _setup_ak(self, post, nn, nn2):
+        # This is the equivalent of CalculateAk in Fabber
+        #
+        # Some of this could probably be better done using linalg
+        # operations but bear in mind this is one parameter only
+
         sigmaK = tf.matrix_diag(post.cov)[:, self.idx] # [V]
         wK = post.mean[:, self.idx] # [V]
         num_nn = tf.reduce_sum(self.nn, axis=1) # [V]
 
         # Sum over voxels of parameter variance multiplied by number of 
         # nearest neighbours for each voxel
-        trace_term = tf.reduce_sum(param_var * self.num_nn) # [1]
+        trace_term = tf.reduce_sum(sigmaK * num_nn) # [1]
 
         # Sum of nearest neighbour mean values
-        nn_means = tf.matrix_mul(self.nn, wK) # [V]
+        sum_means_nn = tf.matrix_mul(self.nn, wK) # [V]
         
-        # Sum over voxels 
-        mean_diff 
+        # Voxel parameter mean multipled by number of nearest neighbours
+        wknn = wK * num_nn # [V]
 
-        swk = tf.reduce_sum(wK - [:, self.idx])
+        swk = wknn - sum_means_nn # [V]
 
-        term2 = tf.reduce_sum(swk * post_mean)
+        term2 = tf.reduce_sum(swk * wk) # [1]
+
+        gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1)
+        hk = self.nvoxels * 0.5 + 1.0
+        self.ak = gk * hk
 
     def _setup_mean_var(self, post, nn, nn2):
+        # This is the equivalent of ApplyToMVN in Fabber
         pass 
 
 class FactorisedPrior(Prior):

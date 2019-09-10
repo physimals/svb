@@ -1,7 +1,7 @@
 """
 Implementation of command line tool for SVB
 
-Examples:
+Examples::
 
     svb --data=asldata.nii.gz --mask=bet_mask.nii.gz
         --model=aslrest --epochs=200 --output=svb_out
