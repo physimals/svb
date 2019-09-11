@@ -5,9 +5,9 @@ import math
 
 import tensorflow as tf
 
-from svb.prior import NormalPrior
-from svb.posterior import NormalPosterior
-from svb.utils import LogBase
+from .prior import NormalPrior, SpatialPriorMRF
+from .posterior import NormalPosterior
+from .utils import LogBase
 
 class Identity:
     """
