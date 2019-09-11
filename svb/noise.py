@@ -3,8 +3,8 @@ Noise model
 """
 import tensorflow as tf
 
-from svb.parameter import Parameter
-import svb.dist as dist
+from .parameter import Parameter
+from . import dist
 
 class NoiseParameter(Parameter):
     """

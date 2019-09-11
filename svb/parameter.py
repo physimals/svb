@@ -3,7 +3,7 @@ Posterior distribution for stochastic VB inference
 """
 import tensorflow as tf
 
-from svb.utils import LogBase
+from .utils import LogBase
 
 class Parameter(LogBase):
     """
@@ -35,11 +35,11 @@ class Parameter(LogBase):
         self.post = kwargs.get("post", self.prior)
         self._initialise = kwargs.get("initialise", None)
 
-    def voxelwise_prior(self, nvoxels):
-        return self.prior.voxelwise_prior(nvoxels, name=self.name)
+    def voxelwise_prior(self, nvoxels, **kwargs):
+        return self.prior.voxelwise_prior(nvoxels, name=self.name, **kwargs)
 
-    def voxelwise_posterior(self, t, data):
-        return self.post.voxelwise_posterior(self, t, data, self._initialise, name=self.name)
+    def voxelwise_posterior(self, t, data, **kwargs):
+        return self.post.voxelwise_posterior(self, t, data, self._initialise, name=self.name, **kwargs)
 
 class GlobalParameter(Parameter):
     """

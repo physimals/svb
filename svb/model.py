@@ -4,7 +4,7 @@ Base class for a forward model whose parameters are to be fitted
 import tensorflow as tf
 import numpy as np
 
-from svb.utils import LogBase
+from .utils import LogBase
 
 class Model(LogBase):
     """
