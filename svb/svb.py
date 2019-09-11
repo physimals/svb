@@ -23,10 +23,10 @@ first.
 import numpy as np
 import tensorflow as tf
 
-import svb.noise as noise
-from svb.prior import NormalPrior, FactorisedPrior
-from svb.posterior import NormalPosterior, FactorisedPosterior, MVNPosterior
-from svb.utils import LogBase
+from .noise import NoiseParameter
+from .prior import NormalPrior, FactorisedPrior
+from .posterior import NormalPosterior, FactorisedPosterior, MVNPosterior
+from .utils import LogBase
 
 class SvbFit(LogBase):
     """
@@ -46,7 +46,7 @@ class SvbFit(LogBase):
 
         # All the parameters to infer - model parameters plus noise parameters
         self.params = list(model.params)
-        self.noise = noise.NoiseParameter()
+        self.noise = NoiseParameter()
         self.params.append(self.noise)
         self._nparams = len(self.params)
         self._infer_covar = kwargs.get("infer_covar", False)
@@ -94,18 +94,33 @@ class SvbFit(LogBase):
             # Number of time points in full data - known at runtime
             self.nt_full = tf.shape(self.data_full)[1]
 
+            # Neighbour lists as sparse tensors
+            indices_nn = kwargs.get("indices_nn", None)
+            indices_n2 = kwargs.get("indices_n2", None)
+            if indices_nn is not None and indices_n2 is not None:
+                values = np.ones((len(indices_nn),), dtype=np.float32)
+                self.nn = tf.SparseTensor(indices=indices_nn, values=values, dense_shape=[8, 8])
+                values = np.ones((len(indices_n2),), dtype=np.float32)
+                self.n2 = tf.SparseTensor(indices=indices_n2, values=values, dense_shape=[8, 8])
+            else:
+                self.nn, self.n2 = None, None
+                            
             self.feed_dict = {}
 
             # Create prior and posterior distributions
-            param_priors = [param.voxelwise_prior(self.nvoxels) for param in self.params]
             param_posts = [param.voxelwise_posterior(self.tpts_train, self.data_full) for param in self.params]
-            self.prior = FactorisedPrior(param_priors, name="prior", **kwargs)
             if self._infer_covar:
                 self.log.info("Inferring covariances (correlation) between Gaussian parameters")
                 self.post = MVNPosterior(param_posts, name="post", **kwargs)
             else:
                 self.log.info("Not inferring covariances between parameters")
                 self.post = FactorisedPosterior(param_posts, name="post", **kwargs)
+
+            param_priors = [
+                param.voxelwise_prior(self.nvoxels, idx=idx, post=self.post, nn=self.nn, n2=self.n2)
+                for idx, param in enumerate(self.params)
+            ]
+            self.prior = FactorisedPrior(param_priors, name="prior", **kwargs)
 
             # If all of our priors and posteriors are Gaussian we can use an analytic expression for
             # the latent loss - so set this flag to decide if this is possible
