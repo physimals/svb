@@ -3,7 +3,7 @@ Definition of the voxelwise posterior distribution
 """
 import tensorflow as tf
 
-from svb.utils import LogBase
+from .utils import LogBase
 
 class Posterior(LogBase):
     """
