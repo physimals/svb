@@ -15,8 +15,8 @@ from optparse import OptionGroup, OptionParser
 import numpy as np
 import nibabel as nib
 
-from svb import __version__, SvbFit
-from svb.models import get_model_class
+from . import __version__, SvbFit
+from .models import get_model_class
 
 USAGE = "svb <options>"
 
@@ -96,6 +96,8 @@ def main():
         print("FINISHED - runtime %.3fs" % runtime)
     except (RuntimeError, ValueError) as exc:
         sys.stderr.write("ERROR: %s\n" % str(exc))
+        import traceback
+        traceback.print_exc()
 
 def calc_neighbours(mask_vol):
     """
@@ -110,19 +112,20 @@ def calc_neighbours(mask_vol):
             nns.append(z + y*nz + x*ny*nz)
 
     shape = mask_vol.shape
+    nx, ny, nz = tuple(shape)
     voxel_nns = []
     indices_nn = []
-    for x in range(shape[0]):
-        for y in range(shape[1]):
-            for z in range(shape[2]):
+    for x in range(nx):
+        for y in range(ny):
+            for z in range(nz):
                 if mask_vol[x, y, z] > 0:
                     nns = []
                     if x > 0: add_if_unmasked(x-1, y, z, mask_vol, nns)
-                    if x < shape[0]-1: add_if_unmasked(x+1, y, z, mask_vol, nns)
+                    if x < nx-1: add_if_unmasked(x+1, y, z, mask_vol, nns)
                     if y > 0: add_if_unmasked(x, y-1, z, mask_vol, nns)
-                    if y < shape[1]-1: add_if_unmasked(x, y+1, z, mask_vol, nns)
+                    if y < ny-1: add_if_unmasked(x, y+1, z, mask_vol, nns)
                     if z > 0: add_if_unmasked(x, y, z-1, mask_vol, nns)
-                    if z < shape[2]-1: add_if_unmasked(x, y, z+1, mask_vol, nns)
+                    if z < nz-1: add_if_unmasked(x, y, z+1, mask_vol, nns)
                     voxel_nns.append(nns)
                     # For TensorFlow sparse tensor
                     voxel_idx = z + y*nz + x*ny*nz
@@ -136,9 +139,10 @@ def calc_neighbours(mask_vol):
         for nn in nns:
             voxel_n2s[voxel_idx].extend(voxel_nns[nn])
         voxel_n2s[voxel_idx] = [v for v in voxel_n2s[voxel_idx] if v != voxel_idx]
-        for n2 in voxel_n2s[voxel]:
+        for n2 in voxel_n2s[voxel_idx]:
             indices_n2.append([voxel_idx, n2])
-    return indices_nn, indices_nn2
+    
+    return indices_nn, indices_n2
 
 def run(data, model, output, mask=None, **kwargs):
     """
@@ -186,8 +190,10 @@ def run(data, model, output, mask=None, **kwargs):
     else:
         mask_vol = np.ones(shape)
 
+    indices_nn, indices_n2 = calc_neighbours(mask_vol)
+
     # Train model
-    svb = SvbFit(model, **kwargs)
+    svb = SvbFit(model, indices_nn=indices_nn, indices_n2=indices_n2, **kwargs)
     log.info("Training model...")
     runtime, ret = _runtime(svb.train, tpts, data_flattened, **kwargs)
     log.info("DONE: %.3fs", runtime)
