@@ -3,7 +3,7 @@ Definition of prior distribution
 """
 import tensorflow as tf
 
-from svb.utils import LogBase
+from .utils import LogBase
 
 class Prior(LogBase):
     """
@@ -53,15 +53,15 @@ class SpatialPriorMRF(NormalPrior):
     This is equivalent to the Fabber 'M' type spatial prior
     """
 
-    def __init__(self, mean, var, idx, post, nn, nn2, **kwargs):
+    def __init__(self, mean, var, idx=None, post=None, nn=None, n2=None, **kwargs):
         """
         :param mean: Tensor of shape [V] containing the prior mean at each voxel
         :param var: Tensor of shape [V] containing the prior variance at each voxel
         :param post: Posterior instance
         :param nn: Sparse tensor of shape [V, V] containing nearest neighbour lists
-        :param nn2: Sparse tensor of shape [V, V] containing second nearest neighbour lists
+        :param n2: Sparse tensor of shape [V, V] containing second nearest neighbour lists
         """
-        NormalPrior.__init__(self)
+        NormalPrior.__init__(self, mean, var, name="SpatialPriorMRF")
         self.idx = idx
 
         # Save the original voxelwise mean and variance - the actual prior mean/var
@@ -70,49 +70,56 @@ class SpatialPriorMRF(NormalPrior):
         self.fixed_mean = self.mean
         self.fixed_var = self.var
 
-        # nn and nn2 are sparse tensors of shape [V, V]. If nn[V, W] = 1 then W is
-        # a nearest neighbour of W, and similarly for nn2 and second nearest neighbours
+        # nn and n2 are sparse tensors of shape [V, V]. If nn[V, W] = 1 then W is
+        # a nearest neighbour of W, and similarly for n2 and second nearest neighbours
         self.nn = nn
-        self.nn2 = nn2
+        self.n2 = n2
 
-        # Set up spatial smoothing parameter calculation from posterior and neighbour
-        # lists
-        self._setup_ak(post, nn, nn2)
+        # Set up spatial smoothing parameter calculation from posterior and neighbour lists
+        self._setup_ak(post, nn, n2)
 
         # Set up prior mean/variance
-        self._setup_mean_var(post, nn, nn2)
+        self._setup_mean_var(post, nn, n2)
 
-    def _setup_ak(self, post, nn, nn2):
+    def _setup_ak(self, post, nn, n2):
         # This is the equivalent of CalculateAk in Fabber
         #
         # Some of this could probably be better done using linalg
         # operations but bear in mind this is one parameter only
 
-        sigmaK = tf.matrix_diag(post.cov)[:, self.idx] # [V]
-        wK = post.mean[:, self.idx] # [V]
-        num_nn = tf.reduce_sum(self.nn, axis=1) # [V]
+        self.sigmaK = self.log_tf(tf.matrix_diag_part(post.cov)[:, self.idx], name="sigmak") # [V]
+        self.wK = self.log_tf(post.mean[:, self.idx], name="wk") # [V]
+        self.num_nn = self.log_tf(tf.sparse_reduce_sum(self.nn, axis=1), name="num_nn") # [V]
 
         # Sum over voxels of parameter variance multiplied by number of 
         # nearest neighbours for each voxel
-        trace_term = tf.reduce_sum(sigmaK * num_nn) # [1]
+        trace_term = self.log_tf(tf.reduce_sum(self.sigmaK * self.num_nn), name="trace") # [1]
 
-        # Sum of nearest neighbour mean values
-        sum_means_nn = tf.matrix_mul(self.nn, wK) # [V]
+        # Sum of nearest and next-nearest neighbour mean values
+        self.sum_means_nn = self.log_tf(tf.reshape(tf.sparse_tensor_dense_matmul(self.nn, tf.reshape(self.wK, (-1, 1))), (-1,)), name="wksum") # [V]
+        self.sum_means_n2 = self.log_tf(tf.reshape(tf.sparse_tensor_dense_matmul(self.n2, tf.reshape(self.wK, (-1, 1))), (-1,)), name="contrib8") # [V]
         
         # Voxel parameter mean multipled by number of nearest neighbours
-        wknn = wK * num_nn # [V]
+        wknn = self.log_tf(self.wK * self.num_nn, name="wknn") # [V]
 
-        swk = wknn - sum_means_nn # [V]
+        swk = self.log_tf(wknn - self.sum_means_nn, name="swk") # [V]
 
-        term2 = tf.reduce_sum(swk * wk) # [1]
+        term2 = self.log_tf(tf.reduce_sum(swk * self.wK), name="term2") # [1]
 
         gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1)
-        hk = self.nvoxels * 0.5 + 1.0
+        hk = tf.multiply(tf.to_float(self.nvoxels), 0.5) + 1.0
         self.ak = gk * hk
 
-    def _setup_mean_var(self, post, nn, nn2):
+    def _setup_mean_var(self, post, nn, n2):
         # This is the equivalent of ApplyToMVN in Fabber
-        pass 
+        contrib_nn = self.log_tf(8*self.sum_means_nn, name="contrib_nn") # [V]
+        contrib_n2 = self.log_tf(-self.sum_means_n2, name="contrib_n2") # [V]
+        
+        spatial_mean = self.log_tf(contrib_nn / (8*self.num_nn), name="spatial_mean")
+        spatial_prec = self.log_tf(self.num_nn * self.ak, name="spatial_prec")
+
+        self.var = self.log_tf(1 / (1/self.fixed_var + spatial_prec), name="%s_var" % self.name)
+        self.mean = self.log_tf(self.var * spatial_prec * spatial_mean, name="%s_mean" % self.name)
 
 class FactorisedPrior(Prior):
     """
@@ -148,3 +155,5 @@ class FactorisedPrior(Prior):
             mean_log_pdf = tf.add(mean_log_pdf, param_logpdf)
         return mean_log_pdf
     
+    def log_det_cov(self):
+        return tf.log(tf.matrix_determinant(self.cov), name='%s_log_det_cov' % self.name)
