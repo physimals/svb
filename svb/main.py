@@ -125,6 +125,7 @@ def calc_neighbours(mask_vol):
 
     voxel_nns = []
     indices_nn = []
+    voxel_idx = 0
     for x in range(nx):
         for y in range(ny):
             for z in range(nz):
@@ -138,9 +139,9 @@ def calc_neighbours(mask_vol):
                     if z < nz-1: add_if_unmasked(x, y, z+1, masked_indices, nns)
                     voxel_nns.append(nns)
                     # For TensorFlow sparse tensor
-                    voxel_idx = z + y*nz + x*ny*nz
                     for nn in nns:
                         indices_nn.append([voxel_idx, nn])
+                    voxel_idx += 1
 
     # Second nearest neighbour lists exclude self but include duplicates
     voxel_n2s = [[] for voxel in voxel_nns]
