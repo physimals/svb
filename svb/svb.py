@@ -97,11 +97,12 @@ class SvbFit(LogBase):
             # Neighbour lists as sparse tensors
             indices_nn = kwargs.get("indices_nn", None)
             indices_n2 = kwargs.get("indices_n2", None)
+            n_unmasked_voxels = kwargs.get("n_unmasked_voxels", 0)
             if indices_nn is not None and indices_n2 is not None:
                 values = np.ones((len(indices_nn),), dtype=np.float32)
-                self.nn = tf.SparseTensor(indices=indices_nn, values=values, dense_shape=[8, 8])
+                self.nn = tf.SparseTensor(indices=indices_nn, values=values, dense_shape=[n_unmasked_voxels, n_unmasked_voxels])
                 values = np.ones((len(indices_n2),), dtype=np.float32)
-                self.n2 = tf.SparseTensor(indices=indices_n2, values=values, dense_shape=[8, 8])
+                self.n2 = tf.SparseTensor(indices=indices_n2, values=values, dense_shape=[n_unmasked_voxels, n_unmasked_voxels])
             else:
                 self.nn, self.n2 = None, None
                             
