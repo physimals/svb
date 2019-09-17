@@ -103,7 +103,7 @@ def boxplot(subplots, boxes, param, **kwargs):
             data.append(nib.load(os.path.join(subdir(params), "mean_%s.nii.gz" % param)).get_data()[MASKDATA != 0])
             labels.append(label)
 
-        plt.boxplot(data, labels=labels, showfliers=False)
+        plt.boxplot(data, labels=labels, showfliers=kwargs.get("showfliers", False))
         title = kwargs.get("title", "") % params
         plt.title(title)
         #plt.yscale("symlog")
@@ -168,6 +168,7 @@ def line(subplots, lines, **kwargs):
             else:
                 xscale = 1.0
                 plt.xlabel(kwargs.get("xlabel", ""))
+            
             plt.plot([float(v) / xscale for v in range(len(points))], points, label=label)
 
         title = kwargs.get("title", "") % params
@@ -175,7 +176,14 @@ def line(subplots, lines, **kwargs):
         #plt.yscale("symlog")
         plt.ylabel(kwargs.get("ylabel", ""))
         if "ylim" in kwargs:
-            plt.ylim(kwargs["ylim"])
+            try:
+                # Single set of ylimits for each subplot
+                y0 = float(kwargs["ylim"][0])
+                plt.ylim(kwargs["ylim"])
+            except:
+                # Variable ylimits for each subplot
+                plt.ylim(kwargs["ylim"][idx])
+
         if len(lines[1]) > 1:
             plt.legend()
 
@@ -187,7 +195,7 @@ def line(subplots, lines, **kwargs):
 line(
     title="Convergence of cost (with covariance): RPTS=%(rpts)i",
     ylabel="Cost",
-    #ylim=(0, 100),
+    ylim=[(10, 20), (75, 95)],
     subplots={"param" : ("rpts", RPTS),},
     lines=("lr", LEARNING_RATES),
     points4d="cost_history",
@@ -199,7 +207,7 @@ line(
 line(
     title="Convergence of cost (no covariance): RPTS=%(rpts)i",
     ylabel="Cost",
-    #ylim=(0, 100),
+    ylim=[(10, 20), (75, 95)],
     subplots={"param" : ("rpts", RPTS),},
     lines=("lr", LEARNING_RATES),
     points4d="cost_history",
@@ -225,8 +233,8 @@ line(
 
 line(
     title="Best cost by learning rate (no covariance): RPTS=%(rpts)i",
-    xlabel="Cost",
-    ylabel="Learning rate",
+    ylabel="Cost",
+    xlabel="Learning rate",
     #ylim=(20, 100),
     subplots={"param" : ("rpts", RPTS),},
     lines=("ss", SAMPLE_SIZES),
@@ -241,7 +249,7 @@ line(
 line(
     title="Convergence of cost by batch size (with covariance): RPTS=%(rpts)i",
     ylabel="Cost",
-    #ylim=(0, 100),
+    ylim=[(10, 20), (75, 95)],
     subplots={"param" : ("rpts", RPTS),},
     lines=("bs", BATCH_SIZES),
     points4d="cost_history",
@@ -254,7 +262,7 @@ line(
 line(
     title="Convergence of cost by batch size (no covariance): RPTS=%(rpts)i",
     ylabel="Cost",
-    #ylim=(0, 100),
+    ylim=[(10, 20), (75, 95)],
     subplots={"param" : ("rpts", RPTS),},
     lines=("bs", BATCH_SIZES),
     points4d="cost_history",
@@ -296,7 +304,7 @@ line(
 line(
     title="Convergence by sample size (with covariance): RPTS=%(rpts)i",
     ylabel="Cost",
-    #ylim=(20, 100),
+    ylim=[(10, 20), (75, 95)],
     subplots={"param" : ("rpts", RPTS),},
     lines=("ss", SAMPLE_SIZES),
     points4d="cost_history",
@@ -309,7 +317,7 @@ line(
 line(
     title="Convergence by sample size (no covariance): RPTS=%(rpts)i",
     ylabel="Cost",
-    #ylim=(20, 100),
+    ylim=[(10, 20), (75, 95)],
     subplots={"param" : ("rpts", RPTS),},
     lines=("ss", SAMPLE_SIZES),
     points4d="cost_history",
@@ -322,7 +330,7 @@ line(
 line(
     title="Mini-batch convergence by sample size (with covariance): RPTS=%(rpts)i",
     ylabel="Cost",
-    #ylim=(20, 100),
+    ylim=[(10, 20), (75, 95)],
     subplots={"param" : ("rpts", RPTS),},
     lines=("ss", SAMPLE_SIZES),
     points4d="cost_history",
@@ -336,8 +344,7 @@ line(
 line(
     title="Mini-batch convergence by sample size (no covariance): RPTS=%(rpts)i",
     ylabel="Cost",
-    xlabel="Sample size",
-    #ylim=(20, 100),
+    ylim=[(10, 20), (75, 95)],
     subplots={"param" : ("rpts", RPTS),},
     lines=("ss", SAMPLE_SIZES),
     points4d="cost_history",
@@ -359,7 +366,7 @@ boxplot(
     lr=0.1,
     bs=6,
     cov="cov",
-    savename="conv_ss_amp1_cov",
+    savename="conv_ss_ftiss_cov",
 )
 
 boxplot(
@@ -372,33 +379,33 @@ boxplot(
     lr=0.1,
     bs=6,
     cov="nocov",
-    savename="conv_ss_amp1_nocov",
+    savename="conv_ss_ftiss_nocov",
 )
 
 boxplot(
     title="delttiss by sample size (with covariance): RPTS=%(rpts)i",
     ylabel="Sample size",
-    ylim=(-4, 5),
+    ylim=(-1, 4),
     subplots={"param" : ("rpts", RPTS),},
     boxes=("ss", SAMPLE_SIZES),
     param="delttiss",
     lr=0.1,
     bs=6,
     cov="cov",
-    savename="conv_ss_amp2_cov",
+    savename="conv_ss_delttiss_cov",
 )
 
 boxplot(
     title="delttiss by sample size (no covariance): RPTS=%(rpts)i",
     ylabel="Sample size",
-    ylim=(-4, 5),
+    ylim=(-1, 4),
     subplots={"param" : ("rpts", RPTS),},
     boxes=("ss", SAMPLE_SIZES),
     param="delttiss",
     lr=0.1,
     bs=6,
     cov="nocov",
-    savename="conv_ss_amp2_nocov",
+    savename="conv_ss_delttiss_nocov",
 )
 
 """
