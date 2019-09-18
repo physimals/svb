@@ -17,6 +17,7 @@ import nibabel as nib
 
 from . import __version__, SvbFit
 from .models import get_model_class
+from .data import DataModel
 
 USAGE = "svb <options>"
 
@@ -28,11 +29,11 @@ class SvbOptionParser(OptionParser):
         OptionParser.__init__(self, usage=USAGE, version=__version__, **kwargs)
 
         group = OptionGroup(self, "Main Options")
-        group.add_option("--data",
+        group.add_option("--data", dest="data_fname",
                          help="Timeseries input data")
-        group.add_option("--mask",
+        group.add_option("--mask", dest="mask_fname",
                          help="Optional voxel mask")
-        group.add_option("--model",
+        group.add_option("--model", dest="model_name",
                          help="Model name")
         group.add_option("--output",
                          help="Output folder name",
@@ -99,63 +100,7 @@ def main():
         import traceback
         traceback.print_exc()
 
-def calc_neighbours(mask_vol):
-    """
-    Generate nearest neighbour and second nearest neighbour lists
-    """
-    # First nearest neighbour lists.
-    # Note that Numpy uses (by default) C-style row-major ordering
-    # for voxel indices so the index is z + y*nz + x*ny*nz
-    # Also we need to check that potential neighbours are not masked
-    def add_if_unmasked(x, y, z, masked_indices, nns):
-        idx  = masked_indices[x, y, z]
-        if idx >= 0:
-            nns.append(idx)
-
-    shape = mask_vol.shape
-    masked_indices = np.full(shape, -1, dtype=np.int)
-    nx, ny, nz = tuple(shape)
-    voxel_idx = 0
-    for x in range(nx):
-        for y in range(ny):
-            for z in range(nz):
-                if mask_vol[x, y, z] > 0:
-                    masked_indices[x, y, z] = voxel_idx
-                    voxel_idx += 1
-
-    voxel_nns = []
-    indices_nn = []
-    voxel_idx = 0
-    for x in range(nx):
-        for y in range(ny):
-            for z in range(nz):
-                if mask_vol[x, y, z] > 0:
-                    nns = []
-                    if x > 0: add_if_unmasked(x-1, y, z, masked_indices, nns)
-                    if x < nx-1: add_if_unmasked(x+1, y, z, masked_indices, nns)
-                    if y > 0: add_if_unmasked(x, y-1, z, masked_indices, nns)
-                    if y < ny-1: add_if_unmasked(x, y+1, z, masked_indices, nns)
-                    if z > 0: add_if_unmasked(x, y, z-1, masked_indices, nns)
-                    if z < nz-1: add_if_unmasked(x, y, z+1, masked_indices, nns)
-                    voxel_nns.append(nns)
-                    # For TensorFlow sparse tensor
-                    for nn in nns:
-                        indices_nn.append([voxel_idx, nn])
-                    voxel_idx += 1
-
-    # Second nearest neighbour lists exclude self but include duplicates
-    voxel_n2s = [[] for voxel in voxel_nns]
-    indices_n2 = []
-    for voxel_idx, nns in enumerate(voxel_nns):
-        for nn in nns:
-            voxel_n2s[voxel_idx].extend(voxel_nns[nn])
-        voxel_n2s[voxel_idx] = [v for v in voxel_n2s[voxel_idx] if v != voxel_idx]
-        for n2 in voxel_n2s[voxel_idx]:
-            indices_n2.append([voxel_idx, n2])
-    
-    return indices_nn, indices_n2
-
-def run(data, model, output, mask=None, **kwargs):
+def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     """
     Run model fitting on a data set
 
@@ -174,39 +119,23 @@ def run(data, model, output, mask=None, **kwargs):
     log = logging.getLogger(__name__)
     log.info("SVB %s", __version__)
 
-    # Load the input data
-    nii = nib.load(data)
-    data_vol = nii.get_data()
-    shape = list(data_vol.shape)[:3]
-    n_tpts = data_vol.shape[3]
-    data_flattened = data_vol.reshape(-1, n_tpts)
-    log.info("Loaded data from %s", data)
-
+    # Initialize the data model which contains data dimensions, list of unmasked
+    # voxels, etc
+    data_model = DataModel(data_fname, mask_fname)
+    
     # Create the generative model
-    model = get_model_class(model)(**kwargs)
-    log.info("Created model: %s", str(model))
+    fwd_model = get_model_class(model_name)(**kwargs)
+    log.info("Created model: %s", str(fwd_model))
 
     # Get the time points from the model
-    tpts = model.tpts(n_tpts=n_tpts, shape=shape)
-
-    # If there is a mask load it and use it to mask the data
-    if mask:
-        mask_nii = nib.load(mask)
-        mask_vol = mask_nii.get_data()
-        mask_flattened = mask_vol.flatten()
-        data_flattened = data_flattened[mask_flattened > 0]
-        if tpts.ndim > 1 and tpts.shape[0] > 1:
-            tpts = tpts[mask_flattened > 0]
-        log.info("Loaded mask from %s", data)
-    else:
-        mask_vol = np.ones(shape)
-
-    indices_nn, indices_n2 = calc_neighbours(mask_vol)
+    tpts = fwd_model.tpts(n_tpts=data_model.n_tpts, shape=data_model.shape)
+    if tpts.ndim > 1 and tpts.shape[0] > 1:
+        tpts = tpts[data_model.mask_flattened > 0]
 
     # Train model
-    svb = SvbFit(model, indices_nn=indices_nn, indices_n2=indices_n2, n_unmasked_voxels=data_flattened.shape[0], **kwargs)
+    svb = SvbFit(data_model, fwd_model, **kwargs)
     log.info("Training model...")
-    runtime, ret = _runtime(svb.train, tpts, data_flattened, **kwargs)
+    runtime, ret = _runtime(svb.train, tpts, data_model.data_flattened, **kwargs)
     log.info("DONE: %.3fs", runtime)
 
     # Get output, transposing as required so first index is by parameter
@@ -219,31 +148,22 @@ def run(data, model, output, mask=None, **kwargs):
 
     # Write out parameter mean and variance images
     _makedirs(output, exist_ok=True)
-    for idx, param in enumerate(model.params):
-        nii_mean = _nifti_image(means[idx], shape, mask_vol, ref_nii=nii)
-        nii_mean.to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
-        nii_var = _nifti_image(variances[idx], shape, mask_vol, ref_nii=nii)
-        nii_var.to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
+    for idx, param in enumerate(fwd_model.params):
+        data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
+        data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
 
     # Write out voxelwise cost history
-    cost_history_v_nii = _nifti_image(cost_history_v, shape, mask_vol,
-                                      ref_nii=nii, n_tpts=cost_history_v.shape[1])
-    cost_history_v_nii.to_filename(os.path.join(output, "cost_history.nii.gz"))
+    data_model.nifti_image(cost_history_v).to_filename(os.path.join(output, "cost_history.nii.gz"))
 
     # Write out voxelwise parameter history
-    for idx, param in enumerate(model.params):
-        nii_mean = _nifti_image(param_history_v[:, :, idx], shape, mask_vol,
-                                ref_nii=nii, n_tpts=cost_history_v.shape[1])
-        nii_mean.to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
+    for idx, param in enumerate(fwd_model.params):
+        data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
 
     # Noise history
-    nii_mean = _nifti_image(param_history_v[:, :, model.nparams], shape, mask_vol,
-                            ref_nii=nii, n_tpts=cost_history_v.shape[1])
-    nii_mean.to_filename(os.path.join(output, "mean_noise_history.nii.gz"))
+    data_model.nifti_image(param_history_v[:, :, fwd_model.nparams]).to_filename("mean_noise_history.nii.gz")
 
     # Write out modelfit
-    fit_nii = _nifti_image(modelfit, shape, mask_vol, ref_nii=nii, n_tpts=n_tpts)
-    fit_nii.to_filename(os.path.join(output, "modelfit.nii.gz"))
+    data_model.nifti_image(modelfit).to_filename("modelfit.nii.gz")
 
     # Write out runtime
     with open(os.path.join(output, "runtime"), "w") as runtime_f:
@@ -281,16 +201,6 @@ def _setup_logging(output, **kwargs):
             extra_handler.setLevel(level)
             extra_handler.setFormatter(logging.Formatter('%(levelname)s : %(message)s'))
             logging.getLogger('').addHandler(extra_handler)
-
-def _nifti_image(data, shape, mask, ref_nii, n_tpts=1):
-    """
-    :return: A nibabel.Nifti1Image for some, potentially masked, output data
-    """
-    if n_tpts > 1:
-        shape = list(shape) + [n_tpts]
-    ndata = np.zeros(shape, dtype=np.float)
-    ndata[mask > 0] = data
-    return nib.Nifti1Image(ndata, None, header=ref_nii.header)
 
 def _runtime(runnable, *args, **kwargs):
     """
