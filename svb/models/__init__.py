@@ -12,8 +12,9 @@ def get_model_class(model_name):
     """
     if model_name == "aslrest":
         return AslRestModel
+    elif model_name == "exp":
+        return ExpModel
     elif model_name == "biexp":
         return BiExpModel
     else:
         raise ValueError("No such model: %s" % model_name)
-        
