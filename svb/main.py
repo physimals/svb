@@ -119,8 +119,8 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     log = logging.getLogger(__name__)
     log.info("SVB %s", __version__)
 
-    # Initialize the data model which contains data dimensions, list of unmasked
-    # voxels, etc
+    # Initialize the data model which contains data dimensions, number of time
+    # points, list of unmasked voxels, etc
     data_model = DataModel(data_fname, mask_fname)
     
     # Create the generative model
@@ -128,7 +128,7 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     log.info("Created model: %s", str(fwd_model))
 
     # Get the time points from the model
-    tpts = fwd_model.tpts(n_tpts=data_model.n_tpts, shape=data_model.shape)
+    tpts = fwd_model.tpts(data_model)
     if tpts.ndim > 1 and tpts.shape[0] > 1:
         tpts = tpts[data_model.mask_flattened > 0]
 

@@ -36,7 +36,7 @@ class Model(LogBase):
                 return idx
         raise ValueError("Parameter not found in model: %s" % name)
 
-    def tpts(self, n_tpts, shape):
+    def tpts(self, data_model):
         """
         Get the full set of timeseries time values
 
@@ -51,7 +51,7 @@ class Model(LogBase):
         :return: Either a Numpy array of shape [n_tpts] or a Numpy array of shape
                  shape + [n_tpts] for voxelwise timepoints
         """
-        return np.linspace(self._t0, self._t0+n_tpts*self._dt, num=n_tpts, endpoint=False)
+        return np.linspace(self._t0, self._t0+data_model.n_tpts*self._dt, num=data_model.n_tpts, endpoint=False)
 
     def evaluate(self, params, tpts):
         """

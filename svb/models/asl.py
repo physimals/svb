@@ -99,20 +99,20 @@ class AslRestModel(Model):
 
         return ftiss*signal
 
-    def tpts(self, n_tpts, shape):
-        if n_tpts != len(self.tis) * self.repeats:
-            raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis), n_tpts))
+    def tpts(self, data_model):
+        if data_model.n_tpts != len(self.tis) * self.repeats:
+            raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis), data_model.n_tpts))
 
         # FIXME assuming grouped by TIs/PLDs
         if self.slicedt > 0:
             # Generate voxelwise timings array using the slicedt value
-            t = np.zeros(list(shape) + [n_tpts])
-            for z in range(shape[2]):
+            t = np.zeros(list(data_model.shape) + [data_model.n_tpts])
+            for z in range(data_model.shape[2]):
                 t[:, :, z, :] = np.array(sum([[ti + z*self.slicedt] * self.repeats for ti in self.tis], []))
         else:
             # Timings are the same for all voxels
             t = np.array(sum([[ti] * self.repeats for ti in self.tis], []))
-        return t.reshape(-1, n_tpts)
+        return t.reshape(-1, data_model.n_tpts)
 
     def __str__(self):
         return "ASL resting state model: %s" % __version__
