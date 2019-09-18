@@ -24,8 +24,8 @@ import numpy as np
 import tensorflow as tf
 
 from .noise import NoiseParameter
-from .prior import NormalPrior, FactorisedPrior
-from .posterior import NormalPosterior, FactorisedPosterior, MVNPosterior
+from .prior import NormalPrior, FactorisedPrior, get_voxelwise_prior
+from .posterior import NormalPosterior, FactorisedPosterior, MVNPosterior, get_voxelwise_posterior
 from .utils import LogBase
 
 class SvbFit(LogBase):
@@ -38,14 +38,17 @@ class SvbFit(LogBase):
     :ivar params: Sequence of Parameter instances of parameters to infer. This includes the model
                   parameters and the noise parameter(s)
     """
-    def __init__(self, model, **kwargs):
+    def __init__(self, data_model, fwd_model, **kwargs):
         LogBase.__init__(self)
 
+        # The data model
+        self.data_model = data_model
+
         # The model to use for inference
-        self.model = model
+        self.model = fwd_model
 
         # All the parameters to infer - model parameters plus noise parameters
-        self.params = list(model.params)
+        self.params = list(fwd_model.params)
         self.noise = NoiseParameter()
         self.params.append(self.noise)
         self._nparams = len(self.params)
@@ -55,83 +58,11 @@ class SvbFit(LogBase):
         # Set up the tensorflow graph which will be trained to do the inference
         self._graph = tf.Graph()
         with self._graph.as_default():
-            # Tensorflow input required for training
-            #
-            # x will have shape VxB where B is the batch size and V the number of voxels
-            # xfull is the full data so will have shape VxT where N is the full time size
-            # tpts_train will have shape 1xB or VxB depending on whether the timeseries is voxel
-            # dependent (e.g. in 2D multi-slice readout)
-            #
-            # NB we don't know V, B and T at this stage so we set placeholder variables
-            # self.nvoxels and self.nt_full and use validate_shape=False when creating
-            # tensorflow Variables
+            # Create placeholder tensors to store the input data
+            self._create_input_tensors()
 
-            # Training data - may be mini-batch of full data
-            self.data_train = tf.placeholder(tf.float32, [None, None], name="data_train")
-
-            # Full data - we need this during training to correctly scale contributions
-            # to the cost
-            self.data_full = tf.placeholder(tf.float32, [None, None], name="data_full")
-
-            # Time points in training data (not necessarily the full data)
-            self.tpts_train = tf.placeholder(tf.float32, [None, None])
-
-            # Learning rate - may be modified during training so must be a placeholder
-            self.learning_rate = tf.placeholder(tf.float32, shape=[])
-
-            # Amount of weight given to latent loss in cost function (0-1)
-            self.latent_weight = tf.placeholder(tf.float32, shape=[])
-
-            # Number of samples per parameter for the sampling of the posterior distribution
-            self.num_samples = tf.placeholder(tf.int32, shape=[])
-
-            # Number of voxels in full data - known at runtime
-            self.nvoxels = tf.shape(self.data_full)[0]
-
-            # Number of time points in each training batch - known at runtime
-            self.batch_size = tf.shape(self.data_train)[1]
-
-            # Number of time points in full data - known at runtime
-            self.nt_full = tf.shape(self.data_full)[1]
-
-            # Neighbour lists as sparse tensors
-            indices_nn = kwargs.get("indices_nn", None)
-            indices_n2 = kwargs.get("indices_n2", None)
-            n_unmasked_voxels = kwargs.get("n_unmasked_voxels", 0)
-            if indices_nn is not None and indices_n2 is not None:
-                values = np.ones((len(indices_nn),), dtype=np.float32)
-                self.nn = tf.SparseTensor(indices=indices_nn, values=values, dense_shape=[n_unmasked_voxels, n_unmasked_voxels])
-                values = np.ones((len(indices_n2),), dtype=np.float32)
-                self.n2 = tf.SparseTensor(indices=indices_n2, values=values, dense_shape=[n_unmasked_voxels, n_unmasked_voxels])
-            else:
-                self.nn, self.n2 = None, None
-                            
-            self.feed_dict = {}
-
-            # Create prior and posterior distributions
-            param_posts = [param.voxelwise_posterior(self.tpts_train, self.data_full) for param in self.params]
-            if self._infer_covar:
-                self.log.info("Inferring covariances (correlation) between Gaussian parameters")
-                self.post = MVNPosterior(param_posts, name="post", **kwargs)
-            else:
-                self.log.info("Not inferring covariances between parameters")
-                self.post = FactorisedPosterior(param_posts, name="post", **kwargs)
-
-            param_priors = [
-                param.voxelwise_prior(self.nvoxels, idx=idx, post=self.post, nn=self.nn, n2=self.n2)
-                for idx, param in enumerate(self.params)
-            ]
-            self.prior = FactorisedPrior(param_priors, name="prior", **kwargs)
-
-            # If all of our priors and posteriors are Gaussian we can use an analytic expression for
-            # the latent loss - so set this flag to decide if this is possible
-            self.all_gaussian = (np.all([isinstance(prior, NormalPrior) for prior in param_priors]) and
-                                 np.all([isinstance(post, NormalPosterior) for post in param_posts]) and
-                                 not kwargs.get("force_num_latent_loss", False))
-            if self.all_gaussian:
-                self.log.info("Using analytical expression for latent loss since prior and posterior are Gaussian")
-            else:
-                self.log.info("Using numerical calculation of latent loss")
+            # Create voxelwise prior and posterior distribution tensors
+            self._create_prior_post(**kwargs)
 
             # Define loss function based variational upper-bound and corresponding optimizer
             self._create_loss_optimizer()
@@ -141,6 +72,98 @@ class SvbFit(LogBase):
 
             # Tensorflow session for runnning graph
             self.sess = tf.Session()
+    
+    def _create_input_tensors(self):
+        """
+        Tensorflow input required for training
+        
+        x will have shape VxB where B is the batch size and V the number of voxels
+        xfull is the full data so will have shape VxT where N is the full time size
+        tpts_train will have shape 1xB or VxB depending on whether the timeseries is voxel
+        dependent (e.g. in 2D multi-slice readout)
+        
+        NB we don't know V, B and T at this stage so we set placeholder variables
+        self.nvoxels and self.nt_full and use validate_shape=False when creating
+        tensorflow Variables
+        """
+        self.feed_dict = {}
+
+        # Training data - may be mini-batch of full data
+        self.data_train = tf.placeholder(tf.float32, [None, None], name="data_train")
+
+        # Full data - we need this during training to correctly scale contributions
+        # to the cost
+        self.data_full = tf.placeholder(tf.float32, [None, None], name="data_full")
+
+        # Time points in training data (not necessarily the full data)
+        self.tpts_train = tf.placeholder(tf.float32, [None, None])
+
+        # Learning rate - may be modified during training so must be a placeholder
+        self.learning_rate = tf.placeholder(tf.float32, shape=[])
+
+        # Amount of weight given to latent loss in cost function (0-1)
+        self.latent_weight = tf.placeholder(tf.float32, shape=[])
+
+        # Number of samples per parameter for the sampling of the posterior distribution
+        self.num_samples = tf.placeholder(tf.int32, shape=[])
+
+        # Number of voxels in full data - known at runtime
+        self.nvoxels = tf.shape(self.data_full)[0]
+
+        # Number of time points in each training batch - known at runtime
+        self.batch_size = tf.shape(self.data_train)[1]
+
+        # Number of time points in full data - known at runtime
+        self.nt_full = tf.shape(self.data_full)[1]
+
+        # Represent neighbour lists as sparse tensors
+        self.nn = tf.SparseTensor(
+            indices=self.data_model.indices_nn,
+            values=np.ones((len(self.data_model.indices_nn),), dtype=np.float32),
+            dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
+        )
+        self.n2 = tf.SparseTensor(
+            indices=self.data_model.indices_n2,
+            values=np.ones((len(self.data_model.indices_n2),), dtype=np.float32),
+            dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
+        )
+
+    def _create_prior_post(self, **kwargs):
+        """
+        Create voxelwise prior and posterior distribution tensors
+        """
+        # Create posterior distribution - note this can be initialized using the actual data
+        param_posts = []
+        for idx, param in enumerate(self.params):        
+            param_posts.append(get_voxelwise_posterior(param, self.tpts_train, self.data_full))
+
+        if self._infer_covar:
+            self.log.info("Inferring covariances (correlation) between Gaussian parameters")
+            self.post = MVNPosterior(param_posts, name="post", **kwargs)
+        else:
+            self.log.info("Not inferring covariances between parameters")
+            self.post = FactorisedPosterior(param_posts, name="post", **kwargs)
+
+        # Create prior distribution - note this can make use of the posterior e.g.
+        # for spatial regularization
+        param_priors = []
+        for idx, param in enumerate(self.params):            
+            param_priors.append(get_voxelwise_prior(param, self.nvoxels, idx=idx, post=self.post, nn=self.nn, n2=self.n2))
+        self.prior = FactorisedPrior(param_priors, name="prior", **kwargs)
+
+        # If all of our priors and posteriors are Gaussian we can use an analytic expression for
+        # the latent loss - so set this flag to decide if this is possible
+        self.all_gaussian = (np.all([isinstance(prior, NormalPrior) for prior in param_priors]) and
+                                np.all([isinstance(post, NormalPosterior) for post in param_posts]) and
+                                not kwargs.get("force_num_latent_loss", False))
+        if self.all_gaussian:
+            self.log.info("Using analytical expression for latent loss since prior and posterior are Gaussian")
+        else:
+            self.log.info("Using numerical calculation of latent loss")
+
+        # Report summary of parameters
+        for idx, param in enumerate(self.params):
+            self.log.info("%s: %s: %s" % (param, param_priors[idx], param_posts[idx]))
 
     def _get_model_prediction(self, samples):
         """
@@ -164,8 +187,8 @@ class SvbFit(LogBase):
             # The sample parameter values tensor also needs to be reshaped to [P x V x S x 1] so
             # the time values from the data batch will be broadcasted and a full prediction
             # returned for every sample
-            sample_params.append(tf.expand_dims(param.post.transform.ext_values(int_sample_params), -1))
-            mean_params.append(param.post.transform.ext_values(int_mean_params))
+            sample_params.append(tf.expand_dims(param.post_dist.transform.ext_values(int_sample_params), -1))
+            mean_params.append(param.post_dist.transform.ext_values(int_mean_params))
 
         sample_params = self.log_tf(tf.identity(sample_params, name="sample_params"), shape=True)
         mean_params = self.log_tf(tf.identity(mean_params, name="model_params"), shape=True)
@@ -303,7 +326,7 @@ class SvbFit(LogBase):
     def train(self, tpts, data,
               batch_size=None, sequential_batches=False,
               epochs=100, fit_only_epochs=0, display_step=1,
-              learning_rate=0.02, lr_quench=0.5, max_trials=50, lr_min=0.000001,
+              learning_rate=0.02, lr_quench=0.5, max_trials=50, lr_min=0.000001, revert_post=True,
               **kwargs):
         """
         Train the graph to infer the posterior distribution given timeseries data
@@ -460,9 +483,12 @@ class SvbFit(LogBase):
                     outcome = "Trial %i" % trials
                 else:
                     self.feed_dict[self.learning_rate] = max(lr_min, self.feed_dict[self.learning_rate] * lr_quench)
-                    self.set_state(best_state)
+                    if revert_post:
+                        self.set_state(best_state)
+                        outcome = "Revert -> LR=%f" % self.feed_dict[self.learning_rate]
+                    else:
+                        outcome = "Continue -> LR=%f" % self.feed_dict[self.learning_rate]
                     trials = 0
-                    outcome = "Revert -> LR=%f" % self.feed_dict[self.learning_rate]
 
             if epoch % display_step == 0:
                 state_str = "mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s" % (

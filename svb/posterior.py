@@ -4,7 +4,39 @@ Definition of the voxelwise posterior distribution
 import tensorflow as tf
 
 from .utils import LogBase
+from . import dist
 
+def get_voxelwise_posterior(param, t, data, **kwargs):
+    """
+    Factory method to return a voxelwise posterior
+
+    :param param: svb.parameter.Parameter instance
+    :
+    """
+    nvoxels = tf.shape(data)[0]
+    initial_mean, initial_var = None, None
+    if param.post_initialise is not None:
+        initial_mean, initial_var = param.post_initialise(param, t, data)
+
+    if initial_mean is None:
+        initial_mean = tf.fill([nvoxels], param.post_dist.mean)
+        #self.log.info("Parameter %s: Initial posterior mean %f", param.name, param.post_dist.mean)
+    else:
+        initial_mean = param.post_dist.transform.int_values(initial_mean)
+        #self.log.info("Parameter %s: Voxelwise initial posterior mean", param.name)
+
+    if initial_var is None:
+        initial_var = tf.fill([nvoxels], param.post_dist.var)
+        #self.log.info("Parameter %s: Initial posterior variance %f", param.name, param.post_dist.mean)
+    else:
+        initial_var = param.post_dist.transform.int_values(initial_var)
+        #self.log.info("Parameter %s: Voxelwise initial posterior variance", param.name)
+
+    if isinstance(param.post_dist, dist.Normal):
+        return NormalPosterior(initial_mean, initial_var, name=param.name, **kwargs)
+    else:
+        raise ValueError("Can't create posterior for distribution: %s" % param.post_dist)
+        
 class Posterior(LogBase):
     """
     Posterior distribution

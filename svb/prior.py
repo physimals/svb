@@ -4,6 +4,26 @@ Definition of prior distribution
 import tensorflow as tf
 
 from .utils import LogBase
+from .dist import Normal
+
+PRIOR_TYPE_NONSPATIAL = "N"
+PRIOR_TYPE_SPATIAL_MRF = "M"
+
+def get_voxelwise_prior(param, nvoxels, **kwargs):
+    """
+    Factory method to return a voxelwise prior
+    """
+    prior = None
+    if isinstance(param.prior_dist, Normal):
+        if param.prior_type == "N":
+            prior = NormalPrior(nvoxels, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+        elif param.prior_type == "M":
+            prior = MRFSpatialPrior(nvoxels, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+
+    if prior is not None:
+        return prior
+    else:
+        raise ValueError("Can't create prior type %s for distribution %s - unrecognized combination" % (param.prior_type, param.prior_dist))
 
 class Prior(LogBase):
     """
@@ -27,16 +47,18 @@ class NormalPrior(Prior):
     Prior based on a voxelwise univariate normal distribution
     """
 
-    def __init__(self, mean, var, **kwargs):
+    def __init__(self, nvoxels, mean, var, **kwargs):
         """
-        :param mean: Tensor of shape [V] containing the prior mean at each voxel
-        :param var: Tensor of shape [V] containing the prior variance at each voxel
+        :param mean: Prior mean value
+        :param var: Prior variance
         """
         Prior.__init__(self)
         self.name = kwargs.get("name", "NormalPrior")
-        self.nvoxels = tf.shape(mean)[0]
-        self.mean = tf.identity(mean, name="%s_mean" % self.name)
-        self.var = tf.identity(var, name="%s_var" % self.name)
+        self.nvoxels = nvoxels
+        self.scalar_mean = mean
+        self.scalar_var = var
+        self.mean = tf.fill([nvoxels], mean, name="%s_mean" % self.name)
+        self.var = tf.fill([nvoxels], var, name="%s_var" % self.name)
 
     def mean_log_pdf(self, samples):
         dx = tf.subtract(samples, tf.reshape(self.mean, [self.nvoxels, 1, 1])) # [V, 1, N]
@@ -45,7 +67,10 @@ class NormalPrior(Prior):
         mean_log_pdf = tf.reshape(tf.reduce_mean(log_pdf, axis=-1), [self.nvoxels]) # [V]
         return mean_log_pdf
 
-class SpatialPriorMRF(NormalPrior):
+    def __str__(self):
+        return "Normal prior (%f, %f)" % (self.scalar_mean, self.scalar_var)
+
+class MRFSpatialPrior(NormalPrior):
     """
     Prior which performs adaptive spatial regularization based on the 
     contents of neighbouring voxels using the Markov Random Field method
@@ -53,7 +78,7 @@ class SpatialPriorMRF(NormalPrior):
     This is equivalent to the Fabber 'M' type spatial prior
     """
 
-    def __init__(self, mean, var, idx=None, post=None, nn=None, n2=None, **kwargs):
+    def __init__(self, nvoxels, mean, var, idx=None, post=None, nn=None, n2=None, **kwargs):
         """
         :param mean: Tensor of shape [V] containing the prior mean at each voxel
         :param var: Tensor of shape [V] containing the prior variance at each voxel
@@ -61,12 +86,11 @@ class SpatialPriorMRF(NormalPrior):
         :param nn: Sparse tensor of shape [V, V] containing nearest neighbour lists
         :param n2: Sparse tensor of shape [V, V] containing second nearest neighbour lists
         """
-        NormalPrior.__init__(self, mean, var, name="SpatialPriorMRF")
+        NormalPrior.__init__(self, nvoxels, mean, var, name="MRFSpatialPrior")
         self.idx = idx
 
         # Save the original voxelwise mean and variance - the actual prior mean/var
-        # will be calculated from these and also the spatial variation in neighbour
-        # voxels
+        # will be calculated from these and also the spatial variation in neighbour voxels
         self.fixed_mean = self.mean
         self.fixed_var = self.var
 
@@ -80,6 +104,9 @@ class SpatialPriorMRF(NormalPrior):
 
         # Set up prior mean/variance
         self._setup_mean_var(post, nn, n2)
+
+    def __str__(self):
+        return "Spatial MRF prior (%f, %f)" % (self.scalar_mean, self.scalar_var)
 
     def _setup_ak(self, post, nn, n2):
         # This is the equivalent of CalculateAk in Fabber
@@ -108,7 +135,7 @@ class SpatialPriorMRF(NormalPrior):
 
         gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1)
         hk = tf.multiply(tf.to_float(self.nvoxels), 0.5) + 1.0
-        self.ak = gk * hk
+        self.ak = self.log_tf(gk * hk, name="%s_ak" % self.name, force=True)
 
     def _setup_mean_var(self, post, nn, n2):
         # This is the equivalent of ApplyToMVN in Fabber
@@ -119,7 +146,9 @@ class SpatialPriorMRF(NormalPrior):
         spatial_prec = self.log_tf(self.num_nn * self.ak, name="spatial_prec")
 
         self.var = self.log_tf(1 / (1/self.fixed_var + spatial_prec), name="%s_var" % self.name)
+        #self.var = self.fixed_var
         self.mean = self.log_tf(self.var * spatial_prec * spatial_mean, name="%s_mean" % self.name)
+        #self.mean = self.fixed_mean + self.ak
 
 class FactorisedPrior(Prior):
     """
