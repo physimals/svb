@@ -9,6 +9,7 @@ from svb import __version__
 from svb.model import Model
 from svb.parameter import Parameter
 import svb.dist as dist
+import svb.prior as prior
 
 class AslRestModel(Model):
     """
@@ -22,7 +23,7 @@ class AslRestModel(Model):
         self.tau = options["tau"]
         self.casl = options.get("casl", True)
         self.bat = options.get("bat", 1.3)
-        self.batsd = options.get("batsd", 0.5)
+        self.batsd = options.get("batsd", 1.0)
         self.t1 = options.get("t1", 1.3)
         self.t1b = options.get("t1b", 1.65)
         self.pc = options.get("pc", 0.9)
@@ -42,11 +43,13 @@ class AslRestModel(Model):
         #else:
         self.params = [
             Parameter("ftiss",
-                      prior=dist.FoldedNormal(0.0, 1e6),
-                      post=dist.FoldedNormal(0.0, 2.0),
-                      initialise=self._init_flow),
+                      prior=dist.FoldedNormal(mean=0.0, var=1e12),
+                      post=dist.FoldedNormal(mean=10.0, var=1.0),
+                      initialise=self._init_flow,
+                      **options),
             Parameter("delttiss",
-                      prior=dist.FoldedNormal(self.bat, self.batsd**2)),
+                      prior=dist.FoldedNormal(mean=self.bat, var=self.batsd**2),
+                      **options),
         ]
 
     def evaluate(self, params, tpts):
