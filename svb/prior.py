@@ -15,15 +15,15 @@ def get_voxelwise_prior(param, nvoxels, **kwargs):
     """
     prior = None
     if isinstance(param.prior_dist, Normal):
-        if param.prior_type == "N":
+        if param.priortype == "N":
             prior = NormalPrior(nvoxels, param.prior_dist.mean, param.prior_dist.var, **kwargs)
-        elif param.prior_type == "M":
+        elif param.priortype == "M":
             prior = MRFSpatialPrior(nvoxels, param.prior_dist.mean, param.prior_dist.var, **kwargs)
 
     if prior is not None:
         return prior
     else:
-        raise ValueError("Can't create prior type %s for distribution %s - unrecognized combination" % (param.prior_type, param.prior_dist))
+        raise ValueError("Can't create prior type %s for distribution %s - unrecognized combination" % (param.priortype, param.prior_dist))
 
 class Prior(LogBase):
     """

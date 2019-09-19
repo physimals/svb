@@ -45,7 +45,7 @@ class Parameter(LogBase):
         self.prior_dist = kwargs.get("prior")
         self.post_dist = kwargs.get("post", self.prior_dist)
         self.post_initialise = kwargs.get("initialise", None)
-        self.prior_type = kwargs.get("prior_type", "N")
+        self.priortype = kwargs.get("priortype", "N")
 
     def __str__(self):
         return "Parameter: %s" % self.name

@@ -10,7 +10,8 @@ import os
 import sys
 import logging
 import logging.config
-from optparse import OptionGroup, OptionParser
+import argparse
+import re
 
 import numpy as np
 import nibabel as nib
@@ -21,73 +22,114 @@ from .data import DataModel
 
 USAGE = "svb <options>"
 
-class SvbOptionParser(OptionParser):
+class SvbArgumentParser(argparse.ArgumentParser):
     """
-    OptionParser for SVB options
+    ArgumentParser for SVB options
     """
-    def __init__(self, **kwargs):
-        OptionParser.__init__(self, usage=USAGE, version=__version__, **kwargs)
 
-        group = OptionGroup(self, "Main Options")
-        group.add_option("--data", dest="data_fname",
+    PARAM_OPTIONS = {
+        "mean" : float,
+        "var" : float,
+        "priortype" : str,
+    }
+
+    def __init__(self, **kwargs):
+        argparse.ArgumentParser.__init__(self, prog="svb", usage=USAGE, **kwargs)
+
+        group = self.add_argument_group("Main Options")
+        group.add_argument("--data", dest="data_fname",
                          help="Timeseries input data")
-        group.add_option("--mask", dest="mask_fname",
+        group.add_argument("--mask", dest="mask_fname",
                          help="Optional voxel mask")
-        group.add_option("--model", dest="model_name",
+        group.add_argument("--model", dest="model_name",
                          help="Model name")
-        group.add_option("--output",
+        group.add_argument("--output",
                          help="Output folder name",
                          default="svb_out")
-        group.add_option("--log-level",
+        group.add_argument("--log-level",
                          help="Logging level - defaults to INFO")
-        group.add_option("--log-config",
+        group.add_argument("--log-config",
                          help="Optional logging configuration file, overrides --log-level")
-        self.add_option_group(group)
 
-        group = OptionGroup(self, "Inference options")
-        group.add_option("--infer-covar",
+        group = self.add_argument_group("Inference options")
+        group.add_argument("--infer-covar",
                          help="Infer a full covariance matrix",
                          action="store_true", default=False)
-        group.add_option("--force-num-latent-loss",
+        group.add_argument("--force-num-latent-loss",
                          help="Force numerical calculation of the latent loss function",
                          action="store_true", default=False)
-        self.add_option_group(group)
 
-        group = OptionGroup(self, "Training options")
-        group.add_option("--epochs",
+        group = self.add_argument_group("Training options")
+        group.add_argument("--epochs",
                          help="Number of training epochs",
-                         type="int", default=100)
-        group.add_option("--learning_rate", "--lr",
+                         type=int, default=100)
+        group.add_argument("--learning_rate", "--lr",
                          help="Initial learning rate",
-                         type="float", default=0.1)
-        group.add_option("--batch_size", "--bs",
+                         type=float, default=0.1)
+        group.add_argument("--batch_size", "--bs",
                          help="Batch size. If not specified data will not be processed in batches",
-                         type="int")
-        group.add_option("--sample-size", "--ss",
+                         type=int)
+        group.add_argument("--sample-size", "--ss",
                          help="Sample size for drawing samples from posterior",
-                         type="int", default=20)
-        group.add_option("--max-trials",
+                         type=int, default=20)
+        group.add_argument("--max-trials",
                          help="Number of epochs without improvement in the cost before reducing the learning rate",
-                         type="int", default=50)
-        group.add_option("--lr-quench",
+                         type=int, default=50)
+        group.add_argument("--lr-quench",
                          help="Quench factor for learning rate when cost does not improve after <conv-trials> epochs",
-                         type="float", default=0.99)
-        group.add_option("--lr-min",
+                         type=float, default=0.99)
+        group.add_argument("--lr-min",
                          help="Minimum learning rate",
-                         type="float", default=0.00001)
-        self.add_option_group(group)
+                         type=float, default=0.00001)
+
+    def parse_args(self, argv=None, namespace=None):
+        # Parse built-in fixed options but skip unrecognized options as they may be
+        # parameter-specific options.
+        options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
+
+        # Support arguments of the form --param-<param name>-<param option>
+        # (e.g. --param-ftiss-mean=4.4 --param-delttiss-priortype M)
+        param_arg = re.compile("--param-(\w+)-(\w+)")
+        options.param_overrides = {}
+        consume_next_arg = None
+        for arg in extras:
+            if consume_next_arg:
+                if arg.startswith("-"):
+                    raise ValueError("Value for parameter option cannot start with - : %s" % arg)
+                param, thing = consume_next_arg
+                options.param_overrides[param][thing] = self.PARAM_OPTIONS[thing](arg)
+                consume_next_arg = None
+            else:
+                kv = arg.split("=", 1)
+                key = kv[0]
+                match = param_arg.match(key)
+                if match:
+                    param, thing = match.group(1), match.group(2)
+                    if thing not in self.PARAM_OPTIONS:
+                        raise ValueError("Unrecognized parameter option: %s" % thing)
+
+                    if param not in options.param_overrides:
+                        options.param_overrides[param] = {}
+                    if len(kv) == 2:
+                        options.param_overrides[param][thing] = self.PARAM_OPTIONS[thing](kv[1])
+                    else:
+                        consume_next_arg = (param, thing)
+                else:
+                    raise ValueError("Unrecognized argument: %s" % arg)
+
+        return options
 
 def main():
     """
     Command line tool entry point
     """
     try:
-        opt_parser = SvbOptionParser()
-        options, _ = opt_parser.parse_args()
+        arg_parser = SvbArgumentParser()
+        options = arg_parser.parse_args()
 
-        if not options.data:
+        if not options.data_fname:
             raise ValueError("Input data not specified")
-        if not options.model:
+        if not options.model_name:
             raise ValueError("Model name not specified")
 
         welcome = "Welcome to SVB %s" % __version__

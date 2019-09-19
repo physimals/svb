@@ -154,8 +154,8 @@ class SvbFit(LogBase):
         # If all of our priors and posteriors are Gaussian we can use an analytic expression for
         # the latent loss - so set this flag to decide if this is possible
         self.all_gaussian = (np.all([isinstance(prior, NormalPrior) for prior in param_priors]) and
-                                np.all([isinstance(post, NormalPosterior) for post in param_posts]) and
-                                not kwargs.get("force_num_latent_loss", False))
+                             np.all([isinstance(post, NormalPosterior) for post in param_posts]) and
+                             not kwargs.get("force_num_latent_loss", False))
         if self.all_gaussian:
             self.log.info("Using analytical expression for latent loss since prior and posterior are Gaussian")
         else:
