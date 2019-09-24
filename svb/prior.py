@@ -42,6 +42,9 @@ class Prior(LogBase):
         """
         raise NotImplementedError()
 
+    def log_det_cov(self):
+        raise NotImplementedError()
+
 class NormalPrior(Prior):
     """
     Prior based on a voxelwise univariate normal distribution
@@ -59,6 +62,7 @@ class NormalPrior(Prior):
         self.scalar_var = var
         self.mean = tf.fill([nvoxels], mean, name="%s_mean" % self.name)
         self.var = tf.fill([nvoxels], var, name="%s_var" % self.name)
+        self.std = tf.sqrt(self.var, name="%s_std" % self.name)
 
     def mean_log_pdf(self, samples):
         dx = tf.subtract(samples, tf.reshape(self.mean, [self.nvoxels, 1, 1])) # [V, 1, N]
@@ -185,4 +189,5 @@ class FactorisedPrior(Prior):
         return mean_log_pdf
     
     def log_det_cov(self):
-        return tf.log(tf.matrix_determinant(self.cov), name='%s_log_det_cov' % self.name)
+        return tf.reduce_sum(tf.log(self.var), axis=1, name='%s_log_det_cov' % self.name)
+        #return tf.log(tf.matrix_determinant(self.cov), name='%s_log_det_cov' % self.name)

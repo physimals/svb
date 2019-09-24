@@ -41,12 +41,6 @@ class Posterior(LogBase):
     """
     Posterior distribution
     """
-    def __init__(self, **kwargs):
-        """
-        :param mean: Tensor of shape [V] containing the mean at each voxel
-        :param var: Tensor of shape [V] containing the variance at each voxel
-        """
-        LogBase.__init__(self, **kwargs)
 
     def sample(self, nsamples):
         """
@@ -88,6 +82,9 @@ class Posterior(LogBase):
         """
         raise NotImplementedError()
 
+    def log_det_cov(self):
+        raise NotImplementedError()
+
 class NormalPosterior(Posterior):
     """
     Posterior distribution for a single voxelwise parameter with a normal
@@ -104,10 +101,11 @@ class NormalPosterior(Posterior):
         self.name = kwargs.get("name", "NormPost")
         self.mean = self.log_tf(tf.Variable(mean, dtype=tf.float32, validate_shape=False,
                                             name="%s_mean" % self.name))
+        #self.mean = tf.where(tf.is_nan(self.mean), tf.ones_like(self.mean), self.mean)
         self.log_var = tf.Variable(tf.log(tf.cast(var, dtype=tf.float32)), validate_shape=False,
                                    name="%s_log_var" % self.name)
         self.var = self.log_tf(tf.exp(self.log_var, name="%s_var" % self.name))
-        self.var = tf.where(tf.is_nan(self.var), tf.ones_like(self.var), self.var)
+        #self.var = tf.where(tf.is_nan(self.var), tf.ones_like(self.var), self.var)
         self.std = self.log_tf(tf.sqrt(self.var, name="%s_std" % self.name))
 
     def sample(self, nsamples):
@@ -195,7 +193,11 @@ class FactorisedPosterior(Posterior):
         return ops
 
     def log_det_cov(self):
-        return tf.log(tf.matrix_determinant(self.cov), name='%s_log_det_cov' % self.name)
+        """
+        Determinant of diagonal matrix is product of diagonal entries
+        """
+        return tf.reduce_sum(tf.log(self.var), axis=1, name='%s_log_det_cov' % self.name)
+        #return tf.log(tf.matrix_determinant(self.cov), name='%s_log_det_cov' % self.name)
 
     def latent_loss(self, prior):
         """

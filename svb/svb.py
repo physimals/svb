@@ -463,10 +463,10 @@ class SvbFit(LogBase):
                 self.initialize()
                 if best_state is not None:
                     self.set_state(best_state)
-                    params = self.output("model_params") # [P, V]
-                    var = self.output("post_var") # [V, P]
-                    mean_params = np.mean(params, axis=1)
-                    mean_var = np.mean(var, axis=0)
+                    #params = self.output("model_params") # [P, V]
+                    #var = self.output("post_var") # [V, P]
+                    #mean_params = np.mean(params, axis=1)
+                    #mean_var = np.mean(var, axis=0)
                 outcome = "Revert -> LR=%f" % self.feed_dict[self.learning_rate]
                 self.log.warning("Numerical errors: Revert with learning rate: %f" % self.feed_dict[self.learning_rate])
             elif mean_total_cost < best_cost:
