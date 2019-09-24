@@ -189,5 +189,7 @@ class FactorisedPrior(Prior):
         return mean_log_pdf
     
     def log_det_cov(self):
+        """
+        Determinant of diagonal matrix is product of diagonal entries
+        """
         return tf.reduce_sum(tf.log(self.var), axis=1, name='%s_log_det_cov' % self.name)
-        #return tf.log(tf.matrix_determinant(self.cov), name='%s_log_det_cov' % self.name)
