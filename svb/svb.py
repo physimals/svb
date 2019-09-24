@@ -348,7 +348,7 @@ class SvbFit(LogBase):
         :param max_trials: How many epoch to continue for without an improvement in the mean cost before
                            adjusting the learning rate
         :param learning_rate: Initial learning rate
-        :param min_learning_rate: Minimum learning rate - if the learning rate is adjusted it will never
+        :param lr_min: Minimum learning rate - if the learning rate is adjusted it will never
                                   go below this value
         :param quench_rate: When adjusting the learning rate, the factor to reduce it by
         :param sample_size: Number of samples to use when estimating expectations over the posterior
