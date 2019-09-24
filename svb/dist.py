@@ -107,6 +107,7 @@ class Normal(Dist):
         """
         Dist.__init__(self)
         self.transform = transform
+        self.ext_mean, self.ext_var = ext_mean, ext_var
         self.mean, self.var = self.transform.int_moments(ext_mean, ext_var)
         self.sd = math.sqrt(self.var)
 
