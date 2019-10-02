@@ -10,8 +10,26 @@ type of voxelwise prior/posterior
 import tensorflow as tf
 
 from .utils import LogBase
-from . import prior
-from . import posterior
+from . import dist
+
+def get_parameter(name, **kwargs):
+    """
+    Factory method to create an instance of a parameter
+    """
+    custom_kwargs = kwargs.pop("param_overrides", {}).get(name, {})
+    kwargs.update(custom_kwargs)
+
+    desc = kwargs.get("desc", "No description given")
+    param_type = kwargs.get("type", "voxelwise")
+    prior_dist = dist.get_dist(prefix="prior", **kwargs)
+    prior_type = kwargs.get("prior_type", "N")
+    post_dist = dist.get_dist(prefix="post", **kwargs)
+    post_init = kwargs.get("post_init", None)
+
+    if param_type == "voxelwise":
+        return Parameter(name, desc=desc, prior=prior_dist, priortype=prior_type, post=post_dist, initialise=post_init)
+    else:
+        raise ValueError("Unrecognized parameter type: %s" % param_type)
 
 class Parameter(LogBase):
     """
