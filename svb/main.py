@@ -28,9 +28,10 @@ class SvbArgumentParser(argparse.ArgumentParser):
     """
 
     PARAM_OPTIONS = {
-        "mean" : float,
-        "var" : float,
-        "priortype" : str,
+        "prior_mean" : float,
+        "prior_var" : float,
+        "prior_dist" : str,
+        "prior_type" : str,
     }
 
     def __init__(self, **kwargs):
@@ -58,6 +59,10 @@ class SvbArgumentParser(argparse.ArgumentParser):
         group.add_argument("--force-num-latent-loss",
                          help="Force numerical calculation of the latent loss function",
                          action="store_true", default=False)
+        group.add_argument("--allow-nan",
+                         dest="suppress_nan",
+                         help="Do not suppress NaN values in posterior",
+                         action="store_false", default=True)
 
         group = self.add_argument_group("Training options")
         group.add_argument("--epochs",
@@ -88,8 +93,8 @@ class SvbArgumentParser(argparse.ArgumentParser):
         options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
 
         # Support arguments of the form --param-<param name>-<param option>
-        # (e.g. --param-ftiss-mean=4.4 --param-delttiss-priortype M)
-        param_arg = re.compile("--param-(\w+)-(\w+)")
+        # (e.g. --param-ftiss-mean=4.4 --param-delttiss-prior-type M)
+        param_arg = re.compile("--param-(\w+)-([\w-]+)")
         options.param_overrides = {}
         consume_next_arg = None
         for arg in extras:
@@ -105,6 +110,9 @@ class SvbArgumentParser(argparse.ArgumentParser):
                 match = param_arg.match(key)
                 if match:
                     param, thing = match.group(1), match.group(2)
+
+                    # Use underscore for compatibility with kwargs
+                    thing = thing.replace("-", "_")
                     if thing not in self.PARAM_OPTIONS:
                         raise ValueError("Unrecognized parameter option: %s" % thing)
 
@@ -176,7 +184,6 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
 
     # Train model
     svb = SvbFit(data_model, fwd_model, **kwargs)
-    log.info("Training model...")
     runtime, ret = _runtime(svb.train, tpts, data_model.data_flattened, **kwargs)
     log.info("DONE: %.3fs", runtime)
 
@@ -190,7 +197,7 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
 
     # Write out parameter mean and variance images
     _makedirs(output, exist_ok=True)
-    for idx, param in enumerate(fwd_model.params):
+    for idx, param in enumerate(svb.params):
         data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
         data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
 
@@ -198,14 +205,11 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     data_model.nifti_image(cost_history_v).to_filename(os.path.join(output, "cost_history.nii.gz"))
 
     # Write out voxelwise parameter history
-    for idx, param in enumerate(fwd_model.params):
+    for idx, param in enumerate(svb.params):
         data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
 
-    # Noise history
-    data_model.nifti_image(param_history_v[:, :, fwd_model.nparams]).to_filename("mean_noise_history.nii.gz")
-
     # Write out modelfit
-    data_model.nifti_image(modelfit).to_filename("modelfit.nii.gz")
+    data_model.nifti_image(modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
 
     # Write out runtime
     with open(os.path.join(output, "runtime"), "w") as runtime_f:
