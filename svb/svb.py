@@ -98,14 +98,39 @@ class SvbFit(LogBase):
         # Time points in training data (not necessarily the full data)
         self.tpts_train = tf.placeholder(tf.float32, [None, None])
 
-        # Learning rate - may be modified during training so must be a placeholder
-        self.learning_rate = tf.placeholder(tf.float32, shape=[])
+        # Initial learning rate
+        self.initial_lr = tf.placeholder(tf.float32, shape=[])
+
+        # Counters to keep track of how far through the full set of optimization steps
+        # we have reached
+        self.global_step = tf.train.create_global_step()
+        self.num_steps = tf.placeholder(tf.float32, shape=[])
+
+        # Optional learning rate decay - to disable simply set decay rate to 1.0
+        self.lr_decay_rate = tf.placeholder(tf.float32, shape=[])
+        self.learning_rate = tf.train.exponential_decay(
+            self.initial_lr,
+            self.global_step,
+            self.num_steps,
+            self.lr_decay_rate,
+            staircase=False,
+        )
 
         # Amount of weight given to latent loss in cost function (0-1)
         self.latent_weight = tf.placeholder(tf.float32, shape=[])
 
-        # Number of samples per parameter for the sampling of the posterior distribution
-        self.num_samples = tf.placeholder(tf.int32, shape=[])
+        # Initial number of samples per parameter for the sampling of the posterior distribution
+        self.initial_ss = tf.placeholder(tf.int32, shape=[])
+
+        # Optional increase in the sample size - to disable set factor to 1.0
+        self.ss_increase_factor = tf.placeholder(tf.float32, shape=[])
+        self.num_samples = tf.cast(tf.round(tf.train.exponential_decay(
+            tf.to_float(self.initial_ss),
+            self.global_step,
+            self.num_steps,
+            self.ss_increase_factor,
+            staircase=False,
+        )), tf.int32)
 
         # Number of voxels in full data - known at runtime
         self.nvoxels = tf.shape(self.data_full)[0]
@@ -132,17 +157,25 @@ class SvbFit(LogBase):
         """
         Create voxelwise prior and posterior distribution tensors
         """
+        self.log.info("Setting up prior and posterior")
         # Create posterior distribution - note this can be initialized using the actual data
-        param_posts = []
-        for idx, param in enumerate(self.params):        
-            param_posts.append(get_voxelwise_posterior(param, self.tpts_train, self.data_full))
+        gaussian_posts, nongaussian_posts = []
+        for idx, param in enumerate(self.params):    
+            post = get_voxelwise_posterior(param, self.tpts_train, self.data_full)
+            if isinstance(post, NormalPosterior):
+                gaussian_posts.append(post)
+            else:
+                nongaussian_posts.append(post)
 
         if self._infer_covar:
-            self.log.info("Inferring covariances (correlation) between Gaussian parameters")
-            self.post = MVNPosterior(param_posts, name="post", **kwargs)
+            self.log.info(" - Inferring covariances (correlation) between %i Gaussian parameters" % len(gaussian_posts))
+            self.post = MVNPosterior(gaussian_posts, name="post", **kwargs)
+            if nongaussian_posts:
+                self.log.info(" - Adding %i non-Gaussian parameters" % len(nongaussian_posts))
+                self.post = FactorisedPosterior([self.post,] + nongaussian_posts, name="post", **kwargs)
         else:
-            self.log.info("Not inferring covariances between parameters")
-            self.post = FactorisedPosterior(param_posts, name="post", **kwargs)
+            self.log.info(" - Not inferring covariances between parameters")
+            self.post = FactorisedPosterior(gaussian_posts + nongaussian_posts, name="post", **kwargs)
 
         # Create prior distribution - note this can make use of the posterior e.g.
         # for spatial regularization
@@ -153,17 +186,16 @@ class SvbFit(LogBase):
 
         # If all of our priors and posteriors are Gaussian we can use an analytic expression for
         # the latent loss - so set this flag to decide if this is possible
-        self.all_gaussian = (np.all([isinstance(prior, NormalPrior) for prior in param_priors]) and
-                             np.all([isinstance(post, NormalPosterior) for post in param_posts]) and
-                             not kwargs.get("force_num_latent_loss", False))
-        if self.all_gaussian:
-            self.log.info("Using analytical expression for latent loss since prior and posterior are Gaussian")
+        self.analytic_latent_loss = (np.all([isinstance(prior, NormalPrior) for prior in param_priors]) and
+                             not nogaussian_posts and not kwargs.get("force_num_latent_loss", False))
+        if self.analytic_latent_loss:
+            self.log.info(" - Using analytical expression for latent loss since prior and posterior are Gaussian")
         else:
-            self.log.info("Using numerical calculation of latent loss")
+            self.log.info(" - Using numerical calculation of latent loss")
 
         # Report summary of parameters
         for idx, param in enumerate(self.params):
-            self.log.info("%s: %s: %s" % (param, param_priors[idx], param_posts[idx]))
+            self.log.info(" - %s: %s: %s" % (param, param_priors[idx], param_posts[idx]))
 
     def _get_model_prediction(self, samples):
         """
@@ -252,7 +284,7 @@ class SvbFit(LogBase):
         # sample obtained earlier. Note that the mean log pdf of the posterior based on sampling
         # from itself is just the distribution entropy so we allow it to be calculated without
         # sampling.
-        if self.all_gaussian:
+        if self.analytic_latent_loss:
             latent_loss = tf.identity(self.post.latent_loss(self.prior), name="latent_loss")
         else:
             latent_loss = tf.subtract(self.post.entropy(samples), self.prior.mean_log_pdf(samples), name="latent_loss")
@@ -273,7 +305,7 @@ class SvbFit(LogBase):
         # variable numbers of voxels
         self.mean_cost = tf.reduce_mean(self.cost, name="mean_cost")
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
-        self.optimize = self.optimizer.minimize(self.mean_cost)
+        self.optimize = self.optimizer.minimize(self.mean_cost, global_step=self.global_step)
 
     def initialize(self):
         """
@@ -326,7 +358,9 @@ class SvbFit(LogBase):
     def train(self, tpts, data,
               batch_size=None, sequential_batches=False,
               epochs=100, fit_only_epochs=0, display_step=1,
-              learning_rate=0.02, lr_quench=0.5, max_trials=50, lr_min=0.000001, revert_post=True,
+              learning_rate=0.1, lr_decay_rate=1.0,
+              sample_size=None, ss_increase_factor=1.0,
+              revert_post_trials=50,
               **kwargs):
         """
         Train the graph to infer the posterior distribution given timeseries data
@@ -340,17 +374,16 @@ class SvbFit(LogBase):
         :param batch_size: Batch size to use when training model. Need not be a factor of T, however if not
                            batches will not all be the same size. If not specified, data size is used (i.e.
                            no mini-batch optimization)
-        :param training epochs: Number of training epochs
+        :param sequential_batches: If True, form batches from consecutive time points rather than strides
+        :param epochs: Number of training epochs
         :param fit_only_epochs: If specified, this number of epochs will be restricted to fitting only
                                 and ignore prior information. In practice this means only the
                                 reconstruction loss is considered not the latent cost
         :param display_step: How many steps to execute for each display line
-        :param max_trials: How many epoch to continue for without an improvement in the mean cost before
-                           adjusting the learning rate
         :param learning_rate: Initial learning rate
-        :param lr_min: Minimum learning rate - if the learning rate is adjusted it will never
-                                  go below this value
-        :param quench_rate: When adjusting the learning rate, the factor to reduce it by
+        :param lr_decay_rate: When adjusting the learning rate, the factor to reduce it by
+        :param revert_post_trials: How many epoch to continue for without an improvement in the mean cost before
+                                   reverting the posterior to the previous best parameters
         :param sample_size: Number of samples to use when estimating expectations over the posterior
         """
         # Expect tpts to have a dimension for voxelwise variation even if it is the same for all voxels
@@ -368,7 +401,8 @@ class SvbFit(LogBase):
         if batch_size is None:
             batch_size = n_timepoints
         n_batches = int(np.ceil(float(n_timepoints) / batch_size))
-        num_samples = kwargs.get("sample_size", batch_size)
+        if sample_size is None:
+            sample_size = batch_size
 
         # Cost and parameter histories, mean and voxelwise
         mean_cost_history = np.zeros([epochs+1])
@@ -379,8 +413,11 @@ class SvbFit(LogBase):
         # Training cycle
         self.feed_dict = {
             self.data_full : data,
-            self.learning_rate: learning_rate,
-            self.num_samples: num_samples,
+            self.num_steps : epochs*n_batches,
+            self.initial_lr : learning_rate,
+            self.lr_decay_rate : lr_decay_rate,
+            self.initial_ss : sample_size,
+            self.ss_increase_factor : ss_increase_factor,
         }
         self.initialize()
 
@@ -389,6 +426,14 @@ class SvbFit(LogBase):
 
         # Each epoch passes through the whole data but it may do this in 'batches' so there may be
         # multiple training iterations per epoch, one for each batch
+        self.log.info("Training model...")
+        self.log.info(" - Number of training epochs: %i", epochs)
+        self.log.info(" - %i voxels of %i time points (processed in %i batches of target size %i)" , n_voxels, n_timepoints, n_batches, batch_size)
+        self.log.info(" - Initial learning rate: %.5f (decay rate %.3f)", learning_rate, lr_decay_rate)
+        self.log.info(" - Initial sample size: %i (increase factor %.3f)", sample_size, ss_increase_factor)
+        if revert_post_trials > 0:
+            self.log.info(" - Posterior reversion after %i trials", revert_post_trials)
+            
         for epoch in range(epochs):
             try:
                 total_cost = np.zeros([n_voxels])
@@ -425,7 +470,7 @@ class SvbFit(LogBase):
                     self.feed_dict.update({
                         self.data_train: batch_data,
                         self.tpts_train : batch_tpts,
-                        self.latent_weight : latent_weight
+                        self.latent_weight : latent_weight,
                     })
                     batch_cost, batch_latent, batch_reconstr = self.fit_batch()
 
@@ -444,6 +489,7 @@ class SvbFit(LogBase):
             # this voxelwise and the mean over voxels
             params = self.output("model_params") # [P, V]
             var = self.output("post_var") # [V, P]
+            current_lr, global_step = self.sess.run((self.learning_rate, self.global_step), feed_dict=self.feed_dict)
             mean_params = np.mean(params, axis=1)
             mean_var = np.mean(var, axis=0)
 
@@ -457,18 +503,10 @@ class SvbFit(LogBase):
             voxel_param_history[:, epoch, :] = params.transpose()
 
             if err or np.isnan(mean_total_cost) or np.any(np.isnan(mean_params)):
-                # Numerical errors while processing this epoch. We will reduce the learning rate
-                # if possible and revert to best previously saved params
-                self.feed_dict[self.learning_rate] = max(lr_min, self.feed_dict[self.learning_rate] * lr_quench)
-                self.initialize()
+                # Numerical errors while processing this epoch. Revert to best saved params if possible
                 if best_state is not None:
                     self.set_state(best_state)
-                    #params = self.output("model_params") # [P, V]
-                    #var = self.output("post_var") # [V, P]
-                    #mean_params = np.mean(params, axis=1)
-                    #mean_var = np.mean(var, axis=0)
-                outcome = "Revert -> LR=%f" % self.feed_dict[self.learning_rate]
-                self.log.warning("Numerical errors: Revert with learning rate: %f" % self.feed_dict[self.learning_rate])
+                outcome = "Revert - Numerical errors"
             elif mean_total_cost < best_cost:
                 # There was an improvement in the mean cost - save the current state of the posterior
                 outcome = "Saving"
@@ -476,23 +514,25 @@ class SvbFit(LogBase):
                 best_state = self.state()
                 trials = 0
             else:
-                # The mean cost did not improve. We will continue until it has not improved for max_trials
-                # epochs and then revert with lower learning rate
-                trials += 1
-                if trials < max_trials:
-                    outcome = "Trial %i" % trials
-                else:
-                    self.feed_dict[self.learning_rate] = max(lr_min, self.feed_dict[self.learning_rate] * lr_quench)
-                    if revert_post:
+                # The mean cost did not improve. 
+                if revert_post_trials > 0:
+                    # Continue until it has not improved for revert_post_trials epochs and then revert 
+                    trials += 1
+                    if trials < revert_post_trials:
+                        outcome = "Trial %i" % trials
+                    elif best_state is not None:
                         self.set_state(best_state)
-                        outcome = "Revert -> LR=%f" % self.feed_dict[self.learning_rate]
+                        outcome = "Revert"
+                        trials = 0
                     else:
-                        outcome = "Continue -> LR=%f" % self.feed_dict[self.learning_rate]
-                    trials = 0
+                        outcome = "Continue - No best state"
+                        trials = 0
+                else:
+                    outcome = "Not saving"
 
             if epoch % display_step == 0:
-                state_str = "mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s" % (
-                    mean_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var)
+                state_str = "mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s lr=%f, step=%i" % (
+                    mean_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var, current_lr, global_step)
                 self.log.info("Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
                 
         # At the end of training we revert to the state with best mean cost and write a final history step
