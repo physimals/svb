@@ -159,13 +159,14 @@ class SvbFit(LogBase):
         """
         self.log.info("Setting up prior and posterior")
         # Create posterior distribution - note this can be initialized using the actual data
-        gaussian_posts, nongaussian_posts = []
+        gaussian_posts, nongaussian_posts, all_posts = [], [], []
         for idx, param in enumerate(self.params):    
-            post = get_voxelwise_posterior(param, self.tpts_train, self.data_full)
+            post = get_voxelwise_posterior(param, self.tpts_train, self.data_full, **kwargs)
             if isinstance(post, NormalPosterior):
                 gaussian_posts.append(post)
             else:
                 nongaussian_posts.append(post)
+            all_posts.append(post)
 
         if self._infer_covar:
             self.log.info(" - Inferring covariances (correlation) between %i Gaussian parameters" % len(gaussian_posts))
@@ -179,15 +180,15 @@ class SvbFit(LogBase):
 
         # Create prior distribution - note this can make use of the posterior e.g.
         # for spatial regularization
-        param_priors = []
+        all_priors = []
         for idx, param in enumerate(self.params):            
-            param_priors.append(get_voxelwise_prior(param, self.nvoxels, idx=idx, post=self.post, nn=self.nn, n2=self.n2))
-        self.prior = FactorisedPrior(param_priors, name="prior", **kwargs)
+            all_priors.append(get_voxelwise_prior(param, self.nvoxels, idx=idx, post=self.post, nn=self.nn, n2=self.n2))
+        self.prior = FactorisedPrior(all_priors, name="prior", **kwargs)
 
         # If all of our priors and posteriors are Gaussian we can use an analytic expression for
         # the latent loss - so set this flag to decide if this is possible
-        self.analytic_latent_loss = (np.all([isinstance(prior, NormalPrior) for prior in param_priors]) and
-                             not nogaussian_posts and not kwargs.get("force_num_latent_loss", False))
+        self.analytic_latent_loss = (np.all([isinstance(prior, NormalPrior) for prior in all_priors]) and
+                             not nongaussian_posts and not kwargs.get("force_num_latent_loss", False))
         if self.analytic_latent_loss:
             self.log.info(" - Using analytical expression for latent loss since prior and posterior are Gaussian")
         else:
@@ -195,7 +196,9 @@ class SvbFit(LogBase):
 
         # Report summary of parameters
         for idx, param in enumerate(self.params):
-            self.log.info(" - %s: %s: %s" % (param, param_priors[idx], param_posts[idx]))
+            self.log.info(" - %s", param)
+            self.log.info("   - Prior: %s %s", param.prior_dist, all_priors[idx])
+            self.log.info("   - Posterior: %s %s", param.post_dist, all_posts[idx])
 
     def _get_model_prediction(self, samples):
         """
