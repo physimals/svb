@@ -72,7 +72,7 @@ class NormalPrior(Prior):
         return mean_log_pdf
 
     def __str__(self):
-        return "Normal prior (%f, %f)" % (self.scalar_mean, self.scalar_var)
+        return "Non-spatial prior (%f, %f)" % (self.scalar_mean, self.scalar_var)
 
 class MRFSpatialPrior(NormalPrior):
     """
@@ -142,6 +142,81 @@ class MRFSpatialPrior(NormalPrior):
         self.ak = self.log_tf(gk * hk, name="%s_ak" % self.name, force=True)
 
     def _setup_mean_var(self, post, nn, n2):
+        # This is the equivalent of ApplyToMVN in Fabber
+        contrib_nn = self.log_tf(8*self.sum_means_nn, name="contrib_nn") # [V]
+        contrib_n2 = self.log_tf(-self.sum_means_n2, name="contrib_n2") # [V]
+        
+        spatial_mean = self.log_tf(contrib_nn / (8*self.num_nn), name="spatial_mean")
+        spatial_prec = self.log_tf(self.num_nn * self.ak, name="spatial_prec")
+
+        self.var = self.log_tf(1 / (1/self.fixed_var + spatial_prec), name="%s_var" % self.name)
+        #self.var = self.fixed_var
+        self.mean = self.log_tf(self.var * spatial_prec * spatial_mean, name="%s_mean" % self.name)
+        #self.mean = self.fixed_mean + self.ak
+
+class ConstantMRFSpatialPrior(NormalPrior):
+    """
+    Prior which performs adaptive spatial regularization based on the 
+    contents of neighbouring voxels using the Markov Random Field method
+
+    This is equivalent to the Fabber 'M' type spatial prior
+    """
+
+    def __init__(self, nvoxels, mean, var, idx=None, nn=None, n2=None, **kwargs):
+        """
+        :param mean: Tensor of shape [V] containing the prior mean at each voxel
+        :param var: Tensor of shape [V] containing the prior variance at each voxel
+        :param post: Posterior instance
+        :param nn: Sparse tensor of shape [V, V] containing nearest neighbour lists
+        :param n2: Sparse tensor of shape [V, V] containing second nearest neighbour lists
+        """
+        NormalPrior.__init__(self, nvoxels, mean, var, name="MRFSpatialPrior")
+        self.idx = idx
+
+        # Save the original voxelwise mean and variance - the actual prior mean/var
+        # will be calculated from these and also the spatial variation in neighbour voxels
+        self.fixed_mean = self.mean
+        self.fixed_var = self.var
+
+        # nn and n2 are sparse tensors of shape [V, V]. If nn[V, W] = 1 then W is
+        # a nearest neighbour of W, and similarly for n2 and second nearest neighbours
+        self.nn = nn
+        self.n2 = n2
+
+    def __str__(self):
+        return "Spatial MRF prior (%f, %f) - const" % (self.scalar_mean, self.scalar_var)
+
+    def update_ak(self, post_mean, post_cov):
+        # This is the equivalent of CalculateAk in Fabber
+        #
+        # Some of this could probably be better done using linalg
+        # operations but bear in mind this is one parameter only
+
+        self.sigmaK = post_cov[:, self.idx, self.idx] # [V]
+        self.wK = post_mean[:, self.idx] # [V]
+        self.num_nn = np.sum(self.nn, axis=1) # [V]
+
+        # Sum over voxels of parameter variance multiplied by number of 
+        # nearest neighbours for each voxel
+        trace_term = np.sum(self.sigmaK * self.num_nn) # [1]
+
+        # Sum of nearest and next-nearest neighbour mean values
+        self.sum_means_nn = np.matmul(self.nn, np.reshape(self.wK, (-1, 1))) # [V]
+        self.sum_means_n2 = np.matmul(self.n2, tf.reshape(self.wK, (-1, 1))) # [V]
+        
+        # Voxel parameter mean multipled by number of nearest neighbours
+        wknn = self.wK * self.num_nn # [V]
+
+        swk = wknn - self.sum_means_nn # [V]
+
+        term2 = np.sum(swk * self.wK) # [1]
+
+        gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1)
+        hk = float(self.nvoxels) * 0.5 + 1.0
+        self.ak = gk * hk
+        self.log.info("%s: ak=%f", self.name, self.ak)
+
+    def _setup_mean_var(self, post_mean, post_cov):
         # This is the equivalent of ApplyToMVN in Fabber
         contrib_nn = self.log_tf(8*self.sum_means_nn, name="contrib_nn") # [V]
         contrib_n2 = self.log_tf(-self.sum_means_n2, name="contrib_n2") # [V]
