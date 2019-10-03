@@ -20,17 +20,13 @@ def get_voxelwise_posterior(param, t, data, **kwargs):
 
     if initial_mean is None:
         initial_mean = tf.fill([nvoxels], param.post_dist.mean)
-        #self.log.info("Parameter %s: Initial posterior mean %f", param.name, param.post_dist.mean)
     else:
         initial_mean = param.post_dist.transform.int_values(initial_mean)
-        #self.log.info("Parameter %s: Voxelwise initial posterior mean", param.name)
 
     if initial_var is None:
         initial_var = tf.fill([nvoxels], param.post_dist.var)
-        #self.log.info("Parameter %s: Initial posterior variance %f", param.name, param.post_dist.mean)
     else:
         initial_var = param.post_dist.transform.int_values(initial_var)
-        #self.log.info("Parameter %s: Voxelwise initial posterior variance", param.name)
 
     if isinstance(param.post_dist, dist.Normal):
         return NormalPosterior(initial_mean, initial_var, name=param.name, **kwargs)
@@ -99,13 +95,19 @@ class NormalPosterior(Posterior):
         Posterior.__init__(self, **kwargs)
         self.nvoxels = tf.shape(mean)[0]
         self.name = kwargs.get("name", "NormPost")
-        self.mean = self.log_tf(tf.Variable(mean, dtype=tf.float32, validate_shape=False,
-                                            name="%s_mean" % self.name))
-        #self.mean = tf.where(tf.is_nan(self.mean), tf.ones_like(self.mean), self.mean)
+        self.mean_variable = self.log_tf(tf.Variable(mean, dtype=tf.float32, validate_shape=False,
+                                                     name="%s_mean" % self.name))
         self.log_var = tf.Variable(tf.log(tf.cast(var, dtype=tf.float32)), validate_shape=False,
                                    name="%s_log_var" % self.name)
-        self.var = self.log_tf(tf.exp(self.log_var, name="%s_var" % self.name))
-        #self.var = tf.where(tf.is_nan(self.var), tf.ones_like(self.var), self.var)
+        self.var_variable = self.log_tf(tf.exp(self.log_var, name="%s_var" % self.name))
+        if kwargs.get("suppress_nan", True):
+            #self.mean = tf.where(tf.is_nan(self.mean_variable), tf.ones_like(self.mean_variable), self.mean_variable)
+            #self.var = tf.where(tf.is_nan(self.var_variable), tf.ones_like(self.var_variable), self.var_variable)
+            self.mean = tf.where(tf.is_nan(self.mean_variable), mean, self.mean_variable)
+            self.var = tf.where(tf.is_nan(self.var_variable), var, self.var_variable)
+        else:
+            self.mean = self.mean_variable
+            self.var = self.var_variable
         self.std = self.log_tf(tf.sqrt(self.var, name="%s_std" % self.name))
 
     def sample(self, nsamples):
@@ -124,9 +126,58 @@ class NormalPosterior(Posterior):
 
     def set_state(self, state):
         return [
-            tf.assign(self.mean, state[0]),
+            tf.assign(self.mean_variable, state[0]),
             tf.assign(self.log_var, state[1])
         ]
+
+    def __str__(self):
+        return "Voxelwise posterior"
+
+class GlobalPosterior(NormalPosterior):
+    """
+    Posterior which has the same value at every voxel
+    """
+
+    def __init__(self, mean, var, **kwargs):
+        """
+        :param mean: Tensor of shape [V] containing the mean at each voxel
+        :param var: Tensor of shape [V] containing the variance at each voxel
+        """
+        Posterior.__init__(self, **kwargs)
+        self.nvoxels = tf.shape(mean)[0]
+        self.name = kwargs.get("name", "GlobalPost")
+        
+        # Take the mean of the mean and variance across voxels as the initial value
+        # in case there is a voxelwise initialization function
+        self.mean_variable = self.log_tf(tf.Variable(tf.reduce_mean(mean), dtype=tf.float32, validate_shape=False,
+                                                     name="%s_mean" % self.name))
+        self.log_var = tf.Variable(tf.log(tf.cast(tf.reduce_mean(var), dtype=tf.float32)), validate_shape=False,
+                                   name="%s_log_var" % self.name)
+        self.var_variable = self.log_tf(tf.exp(self.log_var, name="%s_var" % self.name))
+        if kwargs.get("suppress_nan", True):
+            #self.mean = tf.where(tf.is_nan(self.mean_variable), tf.ones_like(self.mean_variable), self.mean_variable)
+            #self.var = tf.where(tf.is_nan(self.var_variable), tf.ones_like(self.var_variable), self.var_variable)
+            self.mean_global = tf.where(tf.is_nan(self.mean_variable), mean, self.mean_variable)
+            self.var_global = tf.where(tf.is_nan(self.var_variable), var, self.var_variable)
+        else:
+            self.mean_global = self.mean_variable
+            self.var_global = self.var_variable
+
+        self.mean = tf.tile(self.mean_global, [self.nvoxels])
+        self.var = tf.tile(self.var_global, [self.nvoxels])
+        self.std = self.log_tf(tf.sqrt(self.var, name="%s_std" % self.name))
+
+    def state(self):
+        return [self.mean_global, self.log_var]
+
+    def set_state(self, state):
+        return [
+            tf.assign(self.mean_variable, state[0]),
+            tf.assign(self.log_var, state[1])
+        ]
+
+    def __str__(self):
+        return "Global posterior"
 
 class FactorisedPosterior(Posterior):
     """
@@ -197,7 +248,6 @@ class FactorisedPosterior(Posterior):
         Determinant of diagonal matrix is product of diagonal entries
         """
         return tf.reduce_sum(tf.log(self.var), axis=1, name='%s_log_det_cov' % self.name)
-        #return tf.log(tf.matrix_determinant(self.cov), name='%s_log_det_cov' % self.name)
 
     def latent_loss(self, prior):
         """
@@ -245,8 +295,12 @@ class MVNPosterior(FactorisedPosterior):
         else:
             covar_init = tf.zeros([self.nvoxels, self.nparams, self.nparams], dtype=tf.float32)
 
-        self.off_diag_vars = self.log_tf(tf.Variable(covar_init, validate_shape=False,
+        self.off_diag_vars_base = self.log_tf(tf.Variable(covar_init, validate_shape=False,
                                                      name='%s_off_diag_vars' % self.name))
+        if kwargs.get("suppress_nan", True):
+            self.off_diag_vars = tf.where(tf.is_nan(self.off_diag_vars_base), tf.zeros_like(self.off_diag_vars_base), self.off_diag_vars_base)
+        else:
+            self.off_diag_vars = self.off_diag_vars_base
         self.off_diag_cov_chol = tf.matrix_set_diag(tf.matrix_band_part(self.off_diag_vars, -1, 0),
                                                     tf.zeros([self.nvoxels, self.nparams]),
                                                     name='%s_off_diag_cov_chol' % self.name)
@@ -263,6 +317,10 @@ class MVNPosterior(FactorisedPosterior):
         self.cov = self.log_tf(self.cov)
 
     def log_det_cov(self):
+        """
+        Determinant of a matrix can be calculated from the Cholesky decomposition which may
+        be faster and more stable than tf.matrix_determinant
+        """
         return self.log_tf(tf.multiply(2.0, tf.reduce_sum(tf.log(tf.matrix_diag_part(self.cov_chol)), axis=1), name="%s_det_cov" % self.name), force=False)
 
     def sample(self, nsamples):
@@ -285,5 +343,5 @@ class MVNPosterior(FactorisedPosterior):
 
     def set_state(self, state):
         ops = list(FactorisedPosterior.set_state(self, state[:-1]))
-        ops += [tf.assign(self.off_diag_vars, state[-1], validate_shape=False)]
+        ops += [tf.assign(self.off_diag_vars_base, state[-1], validate_shape=False)]
         return ops
