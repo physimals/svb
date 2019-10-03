@@ -6,8 +6,8 @@ import tensorflow as tf
 import numpy as np
 
 from svb import __version__
-from svb.model import Model
-from svb.parameter import Parameter
+from svb.model import Model, ModelOption
+from svb.parameter import get_parameter
 import svb.dist as dist
 import svb.prior as prior
 
@@ -18,12 +18,16 @@ class AslRestModel(Model):
     FIXME integrate with oxasl AslImage class?
     """
 
+    OPTIONS = [
+        ModelOption("tau", "Bolus duration", units="s", clargs=("--tau", "--bolus"), type=float, default=1.8),
+    ]
+
     def __init__(self, **options):
         Model.__init__(self, **options)
-        self.tau = options["tau"]
+        self.tau = options.get("tau", 1.8)
         self.casl = options.get("casl", True)
         self.bat = options.get("bat", 1.3)
-        self.batsd = options.get("batsd", 1.0)
+        self.batsd = options.get("batsd", 0.5)
         self.t1 = options.get("t1", 1.3)
         self.t1b = options.get("t1b", 1.65)
         self.pc = options.get("pc", 0.9)
@@ -42,14 +46,13 @@ class AslRestModel(Model):
         #    self.params.append(RoiParameter("ftiss", dist.FoldedNormal(0, 1e12), mean_init=self._init_flow, log_var_init=0.0, rois=[pvgm, pvwm, pvcsf]))
         #else:
         self.params = [
-            Parameter("ftiss",
-                      prior=dist.FoldedNormal(mean=0.0, var=1e12),
-                      post=dist.FoldedNormal(mean=10.0, var=1.0),
-                      initialise=self._init_flow,
-                      **options),
-            Parameter("delttiss",
-                      prior=dist.FoldedNormal(mean=self.bat, var=self.batsd**2),
-                      **options),
+            get_parameter("ftiss", dist="FoldedNormal", 
+                          mean=0.0, prior_var=1e6, post_var=1.0, 
+                          post_init=self._init_flow,
+                          **options),
+            get_parameter("delttiss", dist="FoldedNormal", 
+                          mean=self.bat, var=self.batsd**2,
+                          **options)
         ]
 
     def evaluate(self, params, tpts):

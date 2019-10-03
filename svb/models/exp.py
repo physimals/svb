@@ -5,7 +5,7 @@ import tensorflow as tf
 
 from svb import __version__
 from svb.model import Model
-from svb.parameter import Parameter
+from svb.parameter import Parameter, get_parameter
 import svb.dist as dist
 
 class MultiExpModel(Model):
@@ -17,17 +17,29 @@ class MultiExpModel(Model):
         Model.__init__(self, **options)
         self._num_exps = options.get("num_exps", 1)
         for idx in range(self._num_exps):
+            #self.params += [
+            #    Parameter("amp%i" % (idx+1),
+            #              prior=dist.LogNormal(1.0, 1e6),
+            #              post=dist.LogNormal(1.0, 1.5),
+            #              initialise=self._init_amp,
+            #              **options),
+            #    Parameter("r%i" % (idx+1),
+            #              prior=dist.LogNormal(1.0, 1e6),
+            #              post=dist.LogNormal(1.0, 1.5),
+            #              **options),
+            #]
             self.params += [
-                Parameter("amp%i" % (idx+1),
-                          prior=dist.LogNormal(1.0, 1e6),
-                          post=dist.LogNormal(1.0, 1.5),
-                          initialise=self._init_amp,
-                          **options),
-                Parameter("r%i" % (idx+1),
-                          prior=dist.LogNormal(1.0, 1e6),
-                          post=dist.LogNormal(1.0, 1.5),
-                          **options),
+                get_parameter("amp%i" % (idx+1), 
+                              dist="LogNormal", mean=1.0, 
+                              prior_var=1e6, post_var=1.5, 
+                              post_init=self._init_amp,
+                              **options),
+                get_parameter("r%i" % (idx+1), 
+                              dist="LogNormal", mean=1.0, 
+                              prior_var=1e6, post_var=1.5,
+                              **options),
             ]
+
 
     def _init_amp(self, _param, _t, data):
         return tf.reduce_max(data, axis=1) / self._num_exps, None
@@ -61,6 +73,11 @@ class BiExpModel(MultiExpModel):
     """
     Exponential decay with two independent decay rates and amplitudes
     """
+    @staticmethod
+    def add_options(parser):
+        group = parser.add_argument_group("Biexponential model options")
+        group.add_argument("--dt", help="Time separation between volumes", type=float, default=1.0)
+
     def __init__(self, **options):
         MultiExpModel.__init__(self, num_exps=2, **options)
 

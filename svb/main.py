@@ -89,7 +89,16 @@ class SvbArgumentParser(argparse.ArgumentParser):
 
     def parse_args(self, argv=None, namespace=None):
         # Parse built-in fixed options but skip unrecognized options as they may be
-        # parameter-specific options.
+        #  model-specific option or parameter-specific optionss.
+        options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
+
+        # Now we should know the model, so we can add it's options and parse again
+        for model_option in get_model_class(options.model_name).OPTIONS:
+            group = self.add_argument_group("%s model options" % options.model_name.upper())
+            help_text = model_option.desc
+            if model_option.units:
+                help_text += " (%s)" % model_option.units
+            group.add_argument(*model_option.clargs, help=help_text, type=model_option.type, default=model_option.default)
         options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
 
         # Support arguments of the form --param-<param name>-<param option>
@@ -176,6 +185,8 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     # Create the generative model
     fwd_model = get_model_class(model_name)(**kwargs)
     log.info("Created model: %s", str(fwd_model))
+    for option in fwd_model.OPTIONS:
+        log.info(" - %s: %s", option.desc, str(getattr(fwd_model, option.attr_name)))
 
     # Get the time points from the model
     tpts = fwd_model.tpts(data_model)
