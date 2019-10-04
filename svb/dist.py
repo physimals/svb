@@ -5,7 +5,6 @@ import math
 
 import tensorflow as tf
 
-from .posterior import NormalPosterior
 from .utils import LogBase
 
 def get_dist(prefix, **kwargs):
