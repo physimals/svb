@@ -68,10 +68,10 @@ class SvbArgumentParser(argparse.ArgumentParser):
         group.add_argument("--epochs",
                          help="Number of training epochs",
                          type=int, default=100)
-        group.add_argument("--learning_rate", "--lr",
+        group.add_argument("--learning-rate", "--lr",
                          help="Initial learning rate",
                          type=float, default=0.1)
-        group.add_argument("--batch_size", "--bs",
+        group.add_argument("--batch-size", "--bs",
                          help="Batch size. If not specified data will not be processed in batches",
                          type=int)
         group.add_argument("--sample-size", "--ss",
