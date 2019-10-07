@@ -6,6 +6,11 @@ import numpy as np
 
 from .utils import LogBase
 
+def ValueList(value_type):
+    def _call(value):
+        return [value_type(v) for v in value.replace(",", " ").split()]
+    return _call
+
 class ModelOption:
     def __init__(self, attr_name, desc, **kwargs):
         self.attr_name = attr_name
