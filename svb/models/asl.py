@@ -6,7 +6,7 @@ import tensorflow as tf
 import numpy as np
 
 from svb import __version__
-from svb.model import Model, ModelOption
+from svb.model import Model, ModelOption, ValueList
 from svb.parameter import get_parameter
 import svb.dist as dist
 import svb.prior as prior
@@ -20,24 +20,38 @@ class AslRestModel(Model):
 
     OPTIONS = [
         ModelOption("tau", "Bolus duration", units="s", clargs=("--tau", "--bolus"), type=float, default=1.8),
+        ModelOption("casl", "Data is CASL/pCASL", type=bool, default=False),
+        ModelOption("bat", "Bolus arrival time", units="s", type=float, default=1.3),
+        ModelOption("batsd", "Bolus arrival time prior std.dev.", units="s", default=None),
+        ModelOption("t1", "Tissue T1 value", units="s", default=1.3),
+        ModelOption("t1b", "Blood T1 value", units="s", default=1.65),
+        ModelOption("tis", "Inversion times", units="s", type=ValueList(float)),
+        ModelOption("plds", "Post-labelling delays (for CASL instead of TIs)", units="s", type=ValueList(float)),
+        ModelOption("repeats", "Number of repeats - single value or one per TI/PLD", units="s", type=ValueList(int), default=1),
+        ModelOption("slicedt", "Increase in TI/PLD per slice", units="s", type=float),
     ]
 
     def __init__(self, **options):
         Model.__init__(self, **options)
-        self.tau = options.get("tau", 1.8)
-        self.casl = options.get("casl", True)
-        self.bat = options.get("bat", 1.3)
-        self.batsd = options.get("batsd", 0.5)
-        self.t1 = options.get("t1", 1.3)
-        self.t1b = options.get("t1b", 1.65)
+        #self.tau = options.get("tau", 1.8)
+        #self.casl = options.get("casl", True)
+        #self.bat = options.get("bat", 1.3)
+        #self.batsd = options.get("batsd", 0.5)
+        #self.t1 = options.get("t1", 1.3)
+        #self.t1b = options.get("t1b", 1.65)
         self.pc = options.get("pc", 0.9)
         self.f_calib = options.get("fcalib", 0.01)
-        self.slicedt = options.get("slicedt", 0)
-        self.repeats = options.get("repeats", 1)
-        self.plds = options.get("plds", None)
-        self.tis = options.get("tis", None)
+        #self.slicedt = options.get("slicedt", 0)
+        #self.repeats = options.get("repeats", 1)
+        #self.plds = options.get("plds", None)
+        #self.tis = options.get("tis", None)
         if self.plds is not None:
             self.tis = [self.tau + pld for pld in self.plds]
+        if self.batsd is None:
+            self.batsd = 1.0 if len(self.tis) > 1 else 0.1
+        if len(self.repeats) == 1:
+            # FIXME variable repeats
+            self.repeats = self.repeats[0]
 
         #pvgm = options.get("pvgm", None)
         #pvwm = options.get("pvwm", None)
@@ -104,7 +118,7 @@ class AslRestModel(Model):
 
     def tpts(self, data_model):
         if data_model.n_tpts != len(self.tis) * self.repeats:
-            raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis), data_model.n_tpts))
+            raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis)*self.repeats, data_model.n_tpts))
 
         # FIXME assuming grouped by TIs/PLDs
         if self.slicedt > 0:
