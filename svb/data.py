@@ -105,7 +105,7 @@ class DataModel(LogBase):
         :return: A nibabel.Nifti1Image for some, potentially masked, output data
         """
         shape = self.shape
-        if data.ndim > 1 and data.shape[1] > 1:
+        if data.ndim > 1:
             shape = list(shape) + [data.shape[1]]
         ndata = np.zeros(shape, dtype=np.float)
         ndata[self.mask_vol > 0] = data
