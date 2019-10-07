@@ -19,6 +19,7 @@ import nibabel as nib
 from . import __version__, SvbFit
 from .models import get_model_class
 from .data import DataModel
+from .model import ValueList
 
 USAGE = "svb <options>"
 
@@ -35,7 +36,7 @@ class SvbArgumentParser(argparse.ArgumentParser):
     }
 
     def __init__(self, **kwargs):
-        argparse.ArgumentParser.__init__(self, prog="svb", usage=USAGE, **kwargs)
+        argparse.ArgumentParser.__init__(self, prog="svb", usage=USAGE, add_help=False, **kwargs)
 
         group = self.add_argument_group("Main Options")
         group.add_argument("--data", dest="data_fname",
@@ -51,7 +52,9 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          help="Logging level - defaults to INFO")
         group.add_argument("--log-config",
                          help="Optional logging configuration file, overrides --log-level")
-
+        group.add_argument("--help", action="store_true", default=False,
+                         help="Display help")
+        
         group = self.add_argument_group("Inference options")
         group.add_argument("--infer-covar",
                          help="Infer a full covariance matrix",
@@ -91,15 +94,32 @@ class SvbArgumentParser(argparse.ArgumentParser):
         # Parse built-in fixed options but skip unrecognized options as they may be
         #  model-specific option or parameter-specific optionss.
         options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
-
+                
         # Now we should know the model, so we can add it's options and parse again
-        for model_option in get_model_class(options.model_name).OPTIONS:
+        if options.model_name:
             group = self.add_argument_group("%s model options" % options.model_name.upper())
-            help_text = model_option.desc
-            if model_option.units:
-                help_text += " (%s)" % model_option.units
-            group.add_argument(*model_option.clargs, help=help_text, type=model_option.type, default=model_option.default)
-        options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
+            for model_option in get_model_class(options.model_name).OPTIONS:
+                kwargs = {
+                    "help" : model_option.desc,
+                    "type" : model_option.type,
+                    "default" : model_option.default,
+                }
+                if model_option.units:
+                    kwargs["help"] += " (%s)" % model_option.units
+                if model_option.default is not None:
+                    kwargs["help"] += " - default %s" % str(model_option.default)
+                else:
+                    kwargs["help"] += " - no default"
+
+                if model_option.type == bool:
+                    kwargs["action"] = "store_true"
+                    kwargs.pop("type")
+                group.add_argument(*model_option.clargs, **kwargs)
+            options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
+
+        if options.help:
+            self.print_help()
+            sys.exit(0)
 
         # Support arguments of the form --param-<param name>-<param option>
         # (e.g. --param-ftiss-mean=4.4 --param-delttiss-prior-type M)
