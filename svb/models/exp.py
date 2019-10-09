@@ -17,17 +17,6 @@ class MultiExpModel(Model):
         Model.__init__(self, **options)
         self._num_exps = options.get("num_exps", 1)
         for idx in range(self._num_exps):
-            #self.params += [
-            #    Parameter("amp%i" % (idx+1),
-            #              prior=dist.LogNormal(1.0, 1e6),
-            #              post=dist.LogNormal(1.0, 1.5),
-            #              initialise=self._init_amp,
-            #              **options),
-            #    Parameter("r%i" % (idx+1),
-            #              prior=dist.LogNormal(1.0, 1e6),
-            #              post=dist.LogNormal(1.0, 1.5),
-            #              **options),
-            #]
             self.params += [
                 get_parameter("amp%i" % (idx+1), 
                               dist="LogNormal", mean=1.0, 
