@@ -33,6 +33,7 @@ class SvbArgumentParser(argparse.ArgumentParser):
         "prior_var" : float,
         "prior_dist" : str,
         "prior_type" : str,
+        "post_type" : str,
     }
 
     def __init__(self, **kwargs):
@@ -56,9 +57,10 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          help="Display help")
         
         group = self.add_argument_group("Inference options")
-        group.add_argument("--infer-covar",
-                         help="Infer a full covariance matrix",
-                         action="store_true", default=False)
+        group.add_argument("--no-covar", 
+                         dest="infer_covar",
+                         help="Do not infer a full covariance matrix",
+                         action="store_false", default=True)
         group.add_argument("--force-num-latent-loss",
                          help="Force numerical calculation of the latent loss function",
                          action="store_true", default=False)
@@ -89,6 +91,29 @@ class SvbArgumentParser(argparse.ArgumentParser):
         group.add_argument("--lr-min",
                          help="Minimum learning rate",
                          type=float, default=0.00001)
+
+        group = self.add_argument_group("Output options")
+        group.add_argument("--save-var",
+                         help="Save parameter variance",
+                         action="store_true", default=False)
+        group.add_argument("--save-std",
+                         help="Save parameter standard deviation",
+                         action="store_true", default=False)
+        group.add_argument("--save-param-history",
+                         help="Save parameter history by epoch",
+                         action="store_true", default=False)
+        group.add_argument("--save-noise",
+                         help="Save noise parameter",
+                         action="store_true", default=False)
+        group.add_argument("--save-cost",
+                         help="Save cost",
+                         action="store_true", default=False)
+        group.add_argument("--save-cost-history",
+                         help="Save cost history by epoch",
+                         action="store_true", default=False)
+        group.add_argument("--save-model-fit",
+                         help="Save model fit",
+                         action="store_true", default=False)
 
     def parse_args(self, argv=None, namespace=None):
         # Parse built-in fixed options but skip unrecognized options as they may be
@@ -226,21 +251,34 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     means = svb.output("model_params")
     variances = np.transpose(np.diagonal(svb.output("post_cov"), axis1=1, axis2=2))
 
+    if kwargs.get("save_noise", False):
+        params = svb.params
+    else:
+        params = fwd_model.params
+
     # Write out parameter mean and variance images
     _makedirs(output, exist_ok=True)
-    for idx, param in enumerate(svb.params):
+    for idx, param in enumerate(params):
         data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
-        data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
+        if kwargs.get("save_var", False):
+            data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
+        if kwargs.get("save_std", False):
+            data_model.nifti_image(np.sqrt(variances[idx])).to_filename(os.path.join(output, "std_%s.nii.gz" % param.name))
 
     # Write out voxelwise cost history
-    data_model.nifti_image(cost_history_v).to_filename(os.path.join(output, "cost_history.nii.gz"))
+    if kwargs.get("save_cost", False):
+        data_model.nifti_image(cost_history_v[..., -1]).to_filename(os.path.join(output, "cost.nii.gz"))
+    if kwargs.get("save_cost_history", False):
+        data_model.nifti_image(cost_history_v).to_filename(os.path.join(output, "cost_history.nii.gz"))
 
     # Write out voxelwise parameter history
-    for idx, param in enumerate(svb.params):
-        data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
+    if kwargs.get("save_param_history", False):
+        for idx, param in enumerate(params):
+            data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
 
     # Write out modelfit
-    data_model.nifti_image(modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
+    if kwargs.get("save_model_fit", False):
+        data_model.nifti_image(modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
 
     # Write out runtime
     with open(os.path.join(output, "runtime"), "w") as runtime_f:
