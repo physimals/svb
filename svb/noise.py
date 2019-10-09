@@ -15,7 +15,7 @@ class NoiseParameter(Parameter):
         Parameter.__init__(self, "noise",
                            prior=dist.Normal(0.0, 10.0),
                            post=dist.Normal(0.0, 0.02),
-                           initialise=self._init_noise,
+                           post_init=self._init_noise,
                            **kwargs)
 
     def _init_noise(self, _param, _t, data):
