@@ -36,14 +36,52 @@ class DataModel(LogBase):
             self.mask_flattened = self.mask_vol.flatten()
 
         self.n_unmasked_voxels = self.data_flattened.shape[0]
+        
+        # FIXME By default parameter space is same as data space
+        self.n_vertices = self.n_unmasked_voxels
+
         self._calc_neighbours()
-            
+    
+    def vertices_to_voxels(self, tensor, vertex_axis=0):
+        """
+        Map parameter vertex-based data to data voxels
+
+        This is for the use case where data is defined in a different space to the
+        parameter estimation space. For example we may be estimating parameters on
+        a surface mesh, but using volumetric data to train this model.
+
+        FIXME For now we simply have a default case where the two spaces are identical.
+
+        :param tensor: TensorFlow tensor of which one axis represents indexing over
+                       parameter vertices
+        :param vertex_axis: Index of axis of tensor which corresponds to parameter vertices
+
+        :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
+                 axis and other tensor entries transformed appropriately to the 
+                 data space
+        """
+        return tensor
+
+    def nifti_image(self, data):
+        """
+        :return: A nibabel.Nifti1Image for some, potentially masked, output data
+        """
+        shape = self.shape
+        if data.ndim > 1:
+            shape = list(shape) + [data.shape[1]]
+        ndata = np.zeros(shape, dtype=np.float)
+        ndata[self.mask_vol > 0] = data
+        return nib.Nifti1Image(ndata, None, header=self.nii.header)
+       
     def _calc_neighbours(self):
         """
         Generate nearest neighbour and second nearest neighbour lists
         
         These are required for spatial priors and in practice do not
         take long to calculate so we provide them as a matter of course
+
+        FIXME this needs to be done in parameter space where that differs 
+        from the data space
         """
         def add_if_unmasked(x, y, z, masked_indices, nns):
             # Check that potential neighbour is not masked and if so
@@ -99,14 +137,3 @@ class DataModel(LogBase):
             voxel_n2s[voxel_idx] = [v for v in voxel_n2s[voxel_idx] if v != voxel_idx]
             for n2 in voxel_n2s[voxel_idx]:
                 self.indices_n2.append([voxel_idx, n2])
-
-    def nifti_image(self, data):
-        """
-        :return: A nibabel.Nifti1Image for some, potentially masked, output data
-        """
-        shape = self.shape
-        if data.ndim > 1 and data.shape[1] > 1:
-            shape = list(shape) + [data.shape[1]]
-        ndata = np.zeros(shape, dtype=np.float)
-        ndata[self.mask_vol > 0] = data
-        return nib.Nifti1Image(ndata, None, header=self.nii.header)

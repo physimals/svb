@@ -5,8 +5,21 @@ import math
 
 import tensorflow as tf
 
-from .posterior import NormalPosterior
 from .utils import LogBase
+
+def get_dist(prefix, **kwargs):
+    """
+    Factory method to return a distribution from options
+    """
+    dist = kwargs.get("%s_dist" % prefix, kwargs.get("dist", "Normal"))
+    mean = kwargs.get("%s_mean" % prefix, kwargs.get("mean", 0.0))
+    var = kwargs.get("%s_var" % prefix, kwargs.get("var", 1.0))
+
+    dist_class = globals().get(dist, None)
+    if dist_class is None:
+        raise ValueError("Unrecognized distribution: %s" % dist)
+    else:
+        return dist_class(mean, var)
 
 class Identity:
     """
@@ -111,6 +124,9 @@ class Normal(Dist):
         self.mean, self.var = self.transform.int_moments(ext_mean, ext_var)
         self.sd = math.sqrt(self.var)
 
+    def __str__(self):
+        return "Gaussian (%f, %f)" % (self.mean, self.var)
+
 class LogNormal(Normal):
     """
     Log of the parameter is distributed as a Gaussian.
@@ -120,6 +136,9 @@ class LogNormal(Normal):
 
     def __init__(self, mean, var, geom=True, **kwargs):
         Normal.__init__(self, mean, var, transform=Log(geom), **kwargs)
+
+    def __str__(self):
+        return "Log-Normal (%f, %f)" % (self.ext_mean, self.ext_var)
 
 class FoldedNormal(Normal):
     """
@@ -134,3 +153,7 @@ class FoldedNormal(Normal):
 
     def __init__(self, mean, var, **kwargs):
         Normal.__init__(self, mean, var, transform=Abs(), **kwargs)
+
+    def __str__(self):
+        return "Folded Normal (%f, %f)" % (self.ext_mean, self.ext_var)
+

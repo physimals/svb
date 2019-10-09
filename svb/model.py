@@ -6,6 +6,20 @@ import numpy as np
 
 from .utils import LogBase
 
+def ValueList(value_type):
+    def _call(value):
+        return [value_type(v) for v in value.replace(",", " ").split()]
+    return _call
+
+class ModelOption:
+    def __init__(self, attr_name, desc, **kwargs):
+        self.attr_name = attr_name
+        self.desc = desc
+        self.clargs = kwargs.get("clargs", ["--%s" % attr_name.replace("_", "-")])
+        self.default = kwargs.get("default", None)
+        self.units = kwargs.get("units", None)
+        self.type = kwargs.get("type", str)
+
 class Model(LogBase):
     """
     A forward model
@@ -13,12 +27,16 @@ class Model(LogBase):
     :attr params: Sequence of ``Parameter`` objects
     :attr nparams: Number of model parameters
     """
+    OPTIONS = [
+        ModelOption("dt", "Time separation between volumes", type=float, default=1.0),
+        ModelOption("t0", "Time offset for first volume", type=float, default=0.0),
+    ]
 
     def __init__(self, **options):
         LogBase.__init__(self)
         self.params = []
-        self._t0 = options.get("t0", 0)
-        self._dt = options.get("dt", 1)
+        for option in self.OPTIONS:
+            setattr(self, option.attr_name, options.get(option.attr_name, option.default))
 
     @property
     def nparams(self):
@@ -51,7 +69,7 @@ class Model(LogBase):
         :return: Either a Numpy array of shape [n_tpts] or a Numpy array of shape
                  shape + [n_tpts] for voxelwise timepoints
         """
-        return np.linspace(self._t0, self._t0+data_model.n_tpts*self._dt, num=data_model.n_tpts, endpoint=False)
+        return np.linspace(self.t0, self.t0+data_model.n_tpts*self.dt, num=data_model.n_tpts, endpoint=False)
 
     def evaluate(self, params, tpts):
         """
@@ -61,7 +79,7 @@ class Model(LogBase):
                   [1x1xB] (if time values at each voxel are identical) or [Vx1xB]
                   otherwise.
         :param params Sequence of parameter values arrays, one for each parameter.
-                      Each array is VxSx1 tensor where V is the number of voxels and
+                      Each array is WxSx1 tensor where W is the number of parameter vertices and
                       S is the number of samples per parameter. This
                       may be supplied as a PxVxSx1 tensor where P is the number of
                       parameters.

@@ -7,7 +7,7 @@ Infers:
       positive-definite matrix)
 
 The general order for tensor dimensions is:
-    - Voxel indexing (V=number of voxels)
+    - Voxel indexing (V=number of voxels / W=number of parameter vertices)
     - Parameter indexing (P=number of parameters)
     - Sample indexing (S=number of samples)
     - Data point indexing (B=batch size, i.e. number of time points
@@ -19,13 +19,17 @@ operations. However it is inconvenient for the model which would like
 to be able to index input by parameter. For this reason we transpose
 when calling the model's ``evaluate`` function to put the P dimension
 first.
+
+V and W are currently identical but may not be in the future. For example
+we may want to estimate parameters on a surface (W=number of surface 
+vertices) using data defined on a volume (V=number of voxels).
 """
 import numpy as np
 import tensorflow as tf
 
 from .noise import NoiseParameter
-from .prior import NormalPrior, FactorisedPrior, get_voxelwise_prior
-from .posterior import NormalPosterior, FactorisedPosterior, MVNPosterior, get_voxelwise_posterior
+from .prior import NormalPrior, FactorisedPrior, get_prior
+from .posterior import NormalPosterior, FactorisedPosterior, MVNPosterior, get_posterior
 from .utils import LogBase
 
 class SvbFit(LogBase):
@@ -91,30 +95,59 @@ class SvbFit(LogBase):
         # Training data - may be mini-batch of full data
         self.data_train = tf.placeholder(tf.float32, [None, None], name="data_train")
 
-        # Full data - we need this during training to correctly scale contributions
-        # to the cost
-        self.data_full = tf.placeholder(tf.float32, [None, None], name="data_full")
-
-        # Time points in training data (not necessarily the full data)
+        # Time points in training data (not necessarily the full data - may be mini-batch)
         self.tpts_train = tf.placeholder(tf.float32, [None, None])
 
-        # Learning rate - may be modified during training so must be a placeholder
-        self.learning_rate = tf.placeholder(tf.float32, shape=[])
+        # Full data - we need this during training to correctly scale contributions
+        # to the cost
+        #self.data_full = tf.placeholder(tf.float32, [None, None], name="data_full")
+        self.data_full = tf.constant(self.data_model.data_flattened, dtype=tf.float32, name="data_full")
+
+        # Number of time points in full data - known at runtime
+        #self.nt_full = tf.shape(self.data_full)[1]
+        self.nt_full = self.data_model.n_tpts
+
+        # Initial learning rate
+        self.initial_lr = tf.placeholder(tf.float32, shape=[])
+
+        # Counters to keep track of how far through the full set of optimization steps
+        # we have reached
+        self.global_step = tf.train.create_global_step()
+        self.num_steps = tf.placeholder(tf.float32, shape=[])
+
+        # Optional learning rate decay - to disable simply set decay rate to 1.0
+        self.lr_decay_rate = tf.placeholder(tf.float32, shape=[])
+        self.learning_rate = tf.train.exponential_decay(
+            self.initial_lr,
+            self.global_step,
+            self.num_steps,
+            self.lr_decay_rate,
+            staircase=False,
+        )
 
         # Amount of weight given to latent loss in cost function (0-1)
         self.latent_weight = tf.placeholder(tf.float32, shape=[])
 
-        # Number of samples per parameter for the sampling of the posterior distribution
-        self.num_samples = tf.placeholder(tf.int32, shape=[])
+        # Initial number of samples per parameter for the sampling of the posterior distribution
+        self.initial_ss = tf.placeholder(tf.int32, shape=[])
 
-        # Number of voxels in full data - known at runtime
-        self.nvoxels = tf.shape(self.data_full)[0]
+        # Optional increase in the sample size - to disable set factor to 1.0
+        self.ss_increase_factor = tf.placeholder(tf.float32, shape=[])
+        self.num_samples = tf.cast(tf.round(tf.train.exponential_decay(
+            tf.to_float(self.initial_ss),
+            self.global_step,
+            self.num_steps,
+            self.ss_increase_factor,
+            staircase=False,
+        )), tf.int32)
 
-        # Number of time points in each training batch - known at runtime
-        self.batch_size = tf.shape(self.data_train)[1]
+        # Number of voxels in full data (V) - known at runtime
+        #self.nvoxels = tf.shape(self.data_full)[0]
+        self.nvoxels = self.data_model.n_unmasked_voxels
 
-        # Number of time points in full data - known at runtime
-        self.nt_full = tf.shape(self.data_full)[1]
+        # Number of parameter vertices (W) - known at runtime. Currently equal
+        # to number of voxels. In future this will be defined by the data model.
+        self.nvertices = self.data_model.n_vertices
 
         # Represent neighbour lists as sparse tensors
         self.nn = tf.SparseTensor(
@@ -132,45 +165,70 @@ class SvbFit(LogBase):
         """
         Create voxelwise prior and posterior distribution tensors
         """
+        self.log.info("Setting up prior and posterior")
         # Create posterior distribution - note this can be initialized using the actual data
-        param_posts = []
-        for idx, param in enumerate(self.params):        
-            param_posts.append(get_voxelwise_posterior(param, self.tpts_train, self.data_full))
+        gaussian_posts, nongaussian_posts, all_posts = [], [], []
+        for idx, param in enumerate(self.params):    
+            post = get_posterior(param, self.tpts_train, self.data_full, **kwargs)
+            if isinstance(post, NormalPosterior):
+                gaussian_posts.append(post)
+                # FIXME Noise parameter hack
+                if idx == len(self.params) - 1:
+                    noise_gaussian = True
+            else:
+                nongaussian_posts.append(post)
+                if idx == len(self.params) - 1:
+                    noise_gaussian = False
+            all_posts.append(post)
 
         if self._infer_covar:
-            self.log.info("Inferring covariances (correlation) between Gaussian parameters")
-            self.post = MVNPosterior(param_posts, name="post", **kwargs)
+            self.log.info(" - Inferring covariances (correlation) between %i Gaussian parameters" % len(gaussian_posts))
+            self.post = MVNPosterior(gaussian_posts, name="post", **kwargs)
+            if nongaussian_posts:
+                self.log.info(" - Adding %i non-Gaussian parameters" % len(nongaussian_posts))
+                self.post = FactorisedPosterior([self.post,] + nongaussian_posts, name="post", **kwargs)
+
+            # Depending on whether the noise is gaussian or not it may appear in 
+            # a different position in the parameter lists
+            if noise_gaussian:
+                self.noise_idx = len(all_posts) - len(nongaussian_posts) - 1
+            else:
+                self.noise_idx = len(all_posts) - 1
         else:
-            self.log.info("Not inferring covariances between parameters")
-            self.post = FactorisedPosterior(param_posts, name="post", **kwargs)
+            self.log.info(" - Not inferring covariances between parameters")
+            self.post = FactorisedPosterior(all_posts, name="post", **kwargs)
+            self.noise_idx = len(all_posts) - 1
 
         # Create prior distribution - note this can make use of the posterior e.g.
         # for spatial regularization
-        param_priors = []
+        all_priors = []
         for idx, param in enumerate(self.params):            
-            param_priors.append(get_voxelwise_prior(param, self.nvoxels, idx=idx, post=self.post, nn=self.nn, n2=self.n2))
-        self.prior = FactorisedPrior(param_priors, name="prior", **kwargs)
+            all_priors.append(get_prior(param, self.nvoxels, idx=idx, post=self.post, nn=self.nn, n2=self.n2))
+        self.prior = FactorisedPrior(all_priors, name="prior", **kwargs)
 
         # If all of our priors and posteriors are Gaussian we can use an analytic expression for
         # the latent loss - so set this flag to decide if this is possible
-        self.all_gaussian = (np.all([isinstance(prior, NormalPrior) for prior in param_priors]) and
-                             np.all([isinstance(post, NormalPosterior) for post in param_posts]) and
-                             not kwargs.get("force_num_latent_loss", False))
-        if self.all_gaussian:
-            self.log.info("Using analytical expression for latent loss since prior and posterior are Gaussian")
+        self.analytic_latent_loss = (np.all([isinstance(prior, NormalPrior) for prior in all_priors]) and
+                             not nongaussian_posts and not kwargs.get("force_num_latent_loss", False))
+        if self.analytic_latent_loss:
+            self.log.info(" - Using analytical expression for latent loss since prior and posterior are Gaussian")
         else:
-            self.log.info("Using numerical calculation of latent loss")
+            self.log.info(" - Using numerical calculation of latent loss")
 
         # Report summary of parameters
         for idx, param in enumerate(self.params):
-            self.log.info("%s: %s: %s" % (param, param_priors[idx], param_posts[idx]))
+            self.log.info(" - %s", param)
+            self.log.info("   - Prior: %s %s", param.prior_dist, all_priors[idx])
+            self.log.info("   - Posterior: %s %s", param.post_dist, all_posts[idx])
 
     def _get_model_prediction(self, samples):
         """
         Get a model prediction for the data batch being processed for each
         sample from the posterior
 
-        :param samples: Tensor [V x P x S] containing samples from the posterior.
+        FIXME assuming noise is last parameter
+
+        :param samples: Tensor [W x P x S] containing samples from the posterior.
                         S is the number of samples (not always the same
                         as the batch size)
 
@@ -181,24 +239,32 @@ class SvbFit(LogBase):
         for idx, param in enumerate(self.params):
             int_sample_params = samples[:, idx, :]
             int_mean_params = self.post.mean[:, idx]
+            
             # Transform the underlying Gaussian samples into the values required by the model
             # This depends on each model parameter's underlying distribution
             #
-            # The sample parameter values tensor also needs to be reshaped to [P x V x S x 1] so
+            # The sample parameter values tensor also needs to be reshaped to [P x W x S x 1] so
             # the time values from the data batch will be broadcasted and a full prediction
             # returned for every sample
-            sample_params.append(tf.expand_dims(param.post_dist.transform.ext_values(int_sample_params), -1))
-            mean_params.append(param.post_dist.transform.ext_values(int_mean_params))
+            if idx != self.noise_idx:
+                # Skip the noise parameter for now as the model expects to be passed its own parameters
+                # in order
+                sample_params.append(tf.expand_dims(param.post_dist.transform.ext_values(int_sample_params), -1))
+                mean_params.append(param.post_dist.transform.ext_values(int_mean_params))
+
+        # Put the noise parameter at the end
+        sample_params.append(tf.expand_dims(param.post_dist.transform.ext_values(samples[:, self.noise_idx, :]), -1))
+        mean_params.append(param.post_dist.transform.ext_values(self.post.mean[:, self.noise_idx]))
 
         sample_params = self.log_tf(tf.identity(sample_params, name="sample_params"), shape=True)
         mean_params = self.log_tf(tf.identity(mean_params, name="model_params"), shape=True)
 
         # The timepoints tensor has shape [V x B] or [1 x B]. It needs to be reshaped
         # to [V x 1 x B] or [1 x 1 x B] so it can be broadcast across each of the S samples
-        tpts = tf.reshape(self.tpts_train, [tf.shape(self.tpts_train)[0], 1, self.batch_size])
+        tpts = tf.reshape(self.tpts_train, [tf.shape(self.tpts_train)[0], 1, tf.shape(self.tpts_train)[1]])
 
         # Evaluate the model using the transformed values
-        # Model prediction has shape [V x S x B]
+        # Model prediction has shape [W x S x B]
         sample_prediction = self.log_tf(tf.identity(self.model.evaluate(sample_params, tpts),
                                                     "model_prediction"), shape=True)
         self.log_tf(tf.identity(self.model.evaluate(mean_params, tpts), "modelfit"), shape=True)
@@ -217,7 +283,7 @@ class SvbFit(LogBase):
         2. The latent loss. This is a measure of how closely the posterior fits the
            prior
         """
-        # Generate a set of samples from the posterior [NV x P x B]
+        # Generate a set of samples from the posterior [W x P x B]
         samples = self.post.sample(self.num_samples)
 
         #samples = tf.boolean_mask(samples, self.voxel_mask)
@@ -234,14 +300,16 @@ class SvbFit(LogBase):
 
         # Unpack noise parameter. The noise model knows how to interpret this - typically it is the
         # log of a Gaussian variance but this is not required
-        noise_samples = self.log_tf(tf.identity(samples[:, -1, :], name="noise_samples"))
+        noise_samples = self.log_tf(tf.identity(samples[:, self.noise_idx, :], name="noise_samples"))
 
         # Get the model prediction for the current set of parameters
         model_prediction = self._get_model_prediction(samples)
 
         # Note that we pass the total number of time points as we need to scale this term correctly
         # when the batch size is not the full data size
-        reconstr_loss = self.noise.log_likelihood(self.data_train, model_prediction, noise_samples, self.nt_full)
+        model_prediction_voxels = self.data_model.vertices_to_voxels(model_prediction)
+        noise_samples_voxels = self.data_model.vertices_to_voxels(noise_samples)
+        reconstr_loss = self.noise.log_likelihood(self.data_train, model_prediction_voxels, noise_samples_voxels, self.nt_full)
         self.reconstr_loss = self.log_tf(tf.identity(reconstr_loss, name="reconstr_loss"))
 
         # Part 2: Latent loss
@@ -252,7 +320,7 @@ class SvbFit(LogBase):
         # sample obtained earlier. Note that the mean log pdf of the posterior based on sampling
         # from itself is just the distribution entropy so we allow it to be calculated without
         # sampling.
-        if self.all_gaussian:
+        if self.analytic_latent_loss:
             latent_loss = tf.identity(self.post.latent_loss(self.prior), name="latent_loss")
         else:
             latent_loss = tf.subtract(self.post.entropy(samples), self.prior.mean_log_pdf(samples), name="latent_loss")
@@ -273,7 +341,7 @@ class SvbFit(LogBase):
         # variable numbers of voxels
         self.mean_cost = tf.reduce_mean(self.cost, name="mean_cost")
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
-        self.optimize = self.optimizer.minimize(self.mean_cost)
+        self.optimize = self.optimizer.minimize(self.mean_cost, global_step=self.global_step)
 
     def initialize(self):
         """
@@ -326,7 +394,9 @@ class SvbFit(LogBase):
     def train(self, tpts, data,
               batch_size=None, sequential_batches=False,
               epochs=100, fit_only_epochs=0, display_step=1,
-              learning_rate=0.02, lr_quench=0.5, max_trials=50, lr_min=0.000001, revert_post=True,
+              learning_rate=0.1, lr_decay_rate=1.0,
+              sample_size=None, ss_increase_factor=1.0,
+              revert_post_trials=50,
               **kwargs):
         """
         Train the graph to infer the posterior distribution given timeseries data
@@ -340,17 +410,16 @@ class SvbFit(LogBase):
         :param batch_size: Batch size to use when training model. Need not be a factor of T, however if not
                            batches will not all be the same size. If not specified, data size is used (i.e.
                            no mini-batch optimization)
-        :param training epochs: Number of training epochs
+        :param sequential_batches: If True, form batches from consecutive time points rather than strides
+        :param epochs: Number of training epochs
         :param fit_only_epochs: If specified, this number of epochs will be restricted to fitting only
                                 and ignore prior information. In practice this means only the
                                 reconstruction loss is considered not the latent cost
         :param display_step: How many steps to execute for each display line
-        :param max_trials: How many epoch to continue for without an improvement in the mean cost before
-                           adjusting the learning rate
         :param learning_rate: Initial learning rate
-        :param min_learning_rate: Minimum learning rate - if the learning rate is adjusted it will never
-                                  go below this value
-        :param quench_rate: When adjusting the learning rate, the factor to reduce it by
+        :param lr_decay_rate: When adjusting the learning rate, the factor to reduce it by
+        :param revert_post_trials: How many epoch to continue for without an improvement in the mean cost before
+                                   reverting the posterior to the previous best parameters
         :param sample_size: Number of samples to use when estimating expectations over the posterior
         """
         # Expect tpts to have a dimension for voxelwise variation even if it is the same for all voxels
@@ -368,7 +437,8 @@ class SvbFit(LogBase):
         if batch_size is None:
             batch_size = n_timepoints
         n_batches = int(np.ceil(float(n_timepoints) / batch_size))
-        num_samples = kwargs.get("sample_size", batch_size)
+        if sample_size is None:
+            sample_size = batch_size
 
         # Cost and parameter histories, mean and voxelwise
         mean_cost_history = np.zeros([epochs+1])
@@ -379,8 +449,11 @@ class SvbFit(LogBase):
         # Training cycle
         self.feed_dict = {
             self.data_full : data,
-            self.learning_rate: learning_rate,
-            self.num_samples: num_samples,
+            self.num_steps : epochs*n_batches,
+            self.initial_lr : learning_rate,
+            self.lr_decay_rate : lr_decay_rate,
+            self.initial_ss : sample_size,
+            self.ss_increase_factor : ss_increase_factor,
         }
         self.initialize()
 
@@ -389,6 +462,14 @@ class SvbFit(LogBase):
 
         # Each epoch passes through the whole data but it may do this in 'batches' so there may be
         # multiple training iterations per epoch, one for each batch
+        self.log.info("Training model...")
+        self.log.info(" - Number of training epochs: %i", epochs)
+        self.log.info(" - %i voxels of %i time points (processed in %i batches of target size %i)" , n_voxels, n_timepoints, n_batches, batch_size)
+        self.log.info(" - Initial learning rate: %.5f (decay rate %.3f)", learning_rate, lr_decay_rate)
+        self.log.info(" - Initial sample size: %i (increase factor %.3f)", sample_size, ss_increase_factor)
+        if revert_post_trials > 0:
+            self.log.info(" - Posterior reversion after %i trials", revert_post_trials)
+            
         for epoch in range(epochs):
             try:
                 total_cost = np.zeros([n_voxels])
@@ -425,7 +506,7 @@ class SvbFit(LogBase):
                     self.feed_dict.update({
                         self.data_train: batch_data,
                         self.tpts_train : batch_tpts,
-                        self.latent_weight : latent_weight
+                        self.latent_weight : latent_weight,
                     })
                     batch_cost, batch_latent, batch_reconstr = self.fit_batch()
 
@@ -442,8 +523,9 @@ class SvbFit(LogBase):
 
             # Record the cost and parameter values at the end of each epoch. We do
             # this voxelwise and the mean over voxels
-            params = self.output("model_params") # [P, V]
-            var = self.output("post_var") # [V, P]
+            params = self.output("model_params") # [P, W]
+            var = self.output("post_var") # [W, P]
+            current_lr, global_step = self.sess.run((self.learning_rate, self.global_step), feed_dict=self.feed_dict)
             mean_params = np.mean(params, axis=1)
             mean_var = np.mean(var, axis=0)
 
@@ -457,18 +539,10 @@ class SvbFit(LogBase):
             voxel_param_history[:, epoch, :] = params.transpose()
 
             if err or np.isnan(mean_total_cost) or np.any(np.isnan(mean_params)):
-                # Numerical errors while processing this epoch. We will reduce the learning rate
-                # if possible and revert to best previously saved params
-                self.feed_dict[self.learning_rate] = max(lr_min, self.feed_dict[self.learning_rate] * lr_quench)
-                self.initialize()
+                # Numerical errors while processing this epoch. Revert to best saved params if possible
                 if best_state is not None:
                     self.set_state(best_state)
-                    #params = self.output("model_params") # [P, V]
-                    #var = self.output("post_var") # [V, P]
-                    #mean_params = np.mean(params, axis=1)
-                    #mean_var = np.mean(var, axis=0)
-                outcome = "Revert -> LR=%f" % self.feed_dict[self.learning_rate]
-                self.log.warning("Numerical errors: Revert with learning rate: %f" % self.feed_dict[self.learning_rate])
+                outcome = "Revert - Numerical errors"
             elif mean_total_cost < best_cost:
                 # There was an improvement in the mean cost - save the current state of the posterior
                 outcome = "Saving"
@@ -476,23 +550,25 @@ class SvbFit(LogBase):
                 best_state = self.state()
                 trials = 0
             else:
-                # The mean cost did not improve. We will continue until it has not improved for max_trials
-                # epochs and then revert with lower learning rate
-                trials += 1
-                if trials < max_trials:
-                    outcome = "Trial %i" % trials
-                else:
-                    self.feed_dict[self.learning_rate] = max(lr_min, self.feed_dict[self.learning_rate] * lr_quench)
-                    if revert_post:
+                # The mean cost did not improve. 
+                if revert_post_trials > 0:
+                    # Continue until it has not improved for revert_post_trials epochs and then revert 
+                    trials += 1
+                    if trials < revert_post_trials:
+                        outcome = "Trial %i" % trials
+                    elif best_state is not None:
                         self.set_state(best_state)
-                        outcome = "Revert -> LR=%f" % self.feed_dict[self.learning_rate]
+                        outcome = "Revert"
+                        trials = 0
                     else:
-                        outcome = "Continue -> LR=%f" % self.feed_dict[self.learning_rate]
-                    trials = 0
+                        outcome = "Continue - No best state"
+                        trials = 0
+                else:
+                    outcome = "Not saving"
 
             if epoch % display_step == 0:
-                state_str = "mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s" % (
-                    mean_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var)
+                state_str = "mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s lr=%f, step=%i" % (
+                    mean_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var, current_lr, global_step)
                 self.log.info("Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
                 
         # At the end of training we revert to the state with best mean cost and write a final history step
@@ -501,13 +577,13 @@ class SvbFit(LogBase):
         self.set_state(best_state)
         self.feed_dict[self.data_train] = data
         self.feed_dict[self.tpts_train] = tpts
-        cost = self.output("cost") # [V]
-        params = self.output("model_params") # [P, NV]
+        cost = self.output("cost") # [W]
+        params = self.output("model_params") # [P, W]
         self.log.info("Best mean cost=%f / %f\n", best_cost, np.mean(cost))
         self.log.info("Final params: %s", np.mean(params, axis=1))
 
-        cost = self.output("cost") # [V]
-        params = self.output("model_params") # [P, NV]
+        cost = self.output("cost") # [W]
+        params = self.output("model_params") # [P, W]
         self.log.info("Best mean cost=%f / %f\n", best_cost, np.mean(cost))
         self.log.info("Final params: %s", np.mean(params, axis=1))
 

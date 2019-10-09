@@ -19,6 +19,7 @@ import nibabel as nib
 from . import __version__, SvbFit
 from .models import get_model_class
 from .data import DataModel
+from .model import ValueList
 
 USAGE = "svb <options>"
 
@@ -28,13 +29,15 @@ class SvbArgumentParser(argparse.ArgumentParser):
     """
 
     PARAM_OPTIONS = {
-        "mean" : float,
-        "var" : float,
-        "priortype" : str,
+        "prior_mean" : float,
+        "prior_var" : float,
+        "prior_dist" : str,
+        "prior_type" : str,
+        "post_type" : str,
     }
 
     def __init__(self, **kwargs):
-        argparse.ArgumentParser.__init__(self, prog="svb", usage=USAGE, **kwargs)
+        argparse.ArgumentParser.__init__(self, prog="svb", usage=USAGE, add_help=False, **kwargs)
 
         group = self.add_argument_group("Main Options")
         group.add_argument("--data", dest="data_fname",
@@ -50,23 +53,30 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          help="Logging level - defaults to INFO")
         group.add_argument("--log-config",
                          help="Optional logging configuration file, overrides --log-level")
-
+        group.add_argument("--help", action="store_true", default=False,
+                         help="Display help")
+        
         group = self.add_argument_group("Inference options")
-        group.add_argument("--infer-covar",
-                         help="Infer a full covariance matrix",
-                         action="store_true", default=False)
+        group.add_argument("--no-covar", 
+                         dest="infer_covar",
+                         help="Do not infer a full covariance matrix",
+                         action="store_false", default=True)
         group.add_argument("--force-num-latent-loss",
                          help="Force numerical calculation of the latent loss function",
                          action="store_true", default=False)
+        group.add_argument("--allow-nan",
+                         dest="suppress_nan",
+                         help="Do not suppress NaN values in posterior",
+                         action="store_false", default=True)
 
         group = self.add_argument_group("Training options")
         group.add_argument("--epochs",
                          help="Number of training epochs",
                          type=int, default=100)
-        group.add_argument("--learning_rate", "--lr",
+        group.add_argument("--learning-rate", "--lr",
                          help="Initial learning rate",
                          type=float, default=0.1)
-        group.add_argument("--batch_size", "--bs",
+        group.add_argument("--batch-size", "--bs",
                          help="Batch size. If not specified data will not be processed in batches",
                          type=int)
         group.add_argument("--sample-size", "--ss",
@@ -82,14 +92,63 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          help="Minimum learning rate",
                          type=float, default=0.00001)
 
+        group = self.add_argument_group("Output options")
+        group.add_argument("--save-var",
+                         help="Save parameter variance",
+                         action="store_true", default=False)
+        group.add_argument("--save-std",
+                         help="Save parameter standard deviation",
+                         action="store_true", default=False)
+        group.add_argument("--save-param-history",
+                         help="Save parameter history by epoch",
+                         action="store_true", default=False)
+        group.add_argument("--save-noise",
+                         help="Save noise parameter",
+                         action="store_true", default=False)
+        group.add_argument("--save-cost",
+                         help="Save cost",
+                         action="store_true", default=False)
+        group.add_argument("--save-cost-history",
+                         help="Save cost history by epoch",
+                         action="store_true", default=False)
+        group.add_argument("--save-model-fit",
+                         help="Save model fit",
+                         action="store_true", default=False)
+
     def parse_args(self, argv=None, namespace=None):
         # Parse built-in fixed options but skip unrecognized options as they may be
-        # parameter-specific options.
+        #  model-specific option or parameter-specific optionss.
         options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
+                
+        # Now we should know the model, so we can add it's options and parse again
+        if options.model_name:
+            group = self.add_argument_group("%s model options" % options.model_name.upper())
+            for model_option in get_model_class(options.model_name).OPTIONS:
+                kwargs = {
+                    "help" : model_option.desc,
+                    "type" : model_option.type,
+                    "default" : model_option.default,
+                }
+                if model_option.units:
+                    kwargs["help"] += " (%s)" % model_option.units
+                if model_option.default is not None:
+                    kwargs["help"] += " - default %s" % str(model_option.default)
+                else:
+                    kwargs["help"] += " - no default"
+
+                if model_option.type == bool:
+                    kwargs["action"] = "store_true"
+                    kwargs.pop("type")
+                group.add_argument(*model_option.clargs, **kwargs)
+            options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
+
+        if options.help:
+            self.print_help()
+            sys.exit(0)
 
         # Support arguments of the form --param-<param name>-<param option>
-        # (e.g. --param-ftiss-mean=4.4 --param-delttiss-priortype M)
-        param_arg = re.compile("--param-(\w+)-(\w+)")
+        # (e.g. --param-ftiss-mean=4.4 --param-delttiss-prior-type M)
+        param_arg = re.compile("--param-(\w+)-([\w-]+)")
         options.param_overrides = {}
         consume_next_arg = None
         for arg in extras:
@@ -105,6 +164,9 @@ class SvbArgumentParser(argparse.ArgumentParser):
                 match = param_arg.match(key)
                 if match:
                     param, thing = match.group(1), match.group(2)
+
+                    # Use underscore for compatibility with kwargs
+                    thing = thing.replace("-", "_")
                     if thing not in self.PARAM_OPTIONS:
                         raise ValueError("Unrecognized parameter option: %s" % thing)
 
@@ -168,6 +230,8 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     # Create the generative model
     fwd_model = get_model_class(model_name)(**kwargs)
     log.info("Created model: %s", str(fwd_model))
+    for option in fwd_model.OPTIONS:
+        log.info(" - %s: %s", option.desc, str(getattr(fwd_model, option.attr_name)))
 
     # Get the time points from the model
     tpts = fwd_model.tpts(data_model)
@@ -176,7 +240,6 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
 
     # Train model
     svb = SvbFit(data_model, fwd_model, **kwargs)
-    log.info("Training model...")
     runtime, ret = _runtime(svb.train, tpts, data_model.data_flattened, **kwargs)
     log.info("DONE: %.3fs", runtime)
 
@@ -188,24 +251,34 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     means = svb.output("model_params")
     variances = np.transpose(np.diagonal(svb.output("post_cov"), axis1=1, axis2=2))
 
+    if kwargs.get("save_noise", False):
+        params = svb.params
+    else:
+        params = fwd_model.params
+
     # Write out parameter mean and variance images
     _makedirs(output, exist_ok=True)
-    for idx, param in enumerate(fwd_model.params):
+    for idx, param in enumerate(params):
         data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
-        data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
+        if kwargs.get("save_var", False):
+            data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
+        if kwargs.get("save_std", False):
+            data_model.nifti_image(np.sqrt(variances[idx])).to_filename(os.path.join(output, "std_%s.nii.gz" % param.name))
 
     # Write out voxelwise cost history
-    data_model.nifti_image(cost_history_v).to_filename(os.path.join(output, "cost_history.nii.gz"))
+    if kwargs.get("save_cost", False):
+        data_model.nifti_image(cost_history_v[..., -1]).to_filename(os.path.join(output, "cost.nii.gz"))
+    if kwargs.get("save_cost_history", False):
+        data_model.nifti_image(cost_history_v).to_filename(os.path.join(output, "cost_history.nii.gz"))
 
     # Write out voxelwise parameter history
-    for idx, param in enumerate(fwd_model.params):
-        data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
-
-    # Noise history
-    data_model.nifti_image(param_history_v[:, :, fwd_model.nparams]).to_filename("mean_noise_history.nii.gz")
+    if kwargs.get("save_param_history", False):
+        for idx, param in enumerate(params):
+            data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
 
     # Write out modelfit
-    data_model.nifti_image(modelfit).to_filename("modelfit.nii.gz")
+    if kwargs.get("save_model_fit", False):
+        data_model.nifti_image(modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
 
     # Write out runtime
     with open(os.path.join(output, "runtime"), "w") as runtime_f:

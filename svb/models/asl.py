@@ -6,8 +6,8 @@ import tensorflow as tf
 import numpy as np
 
 from svb import __version__
-from svb.model import Model
-from svb.parameter import Parameter
+from svb.model import Model, ModelOption, ValueList
+from svb.parameter import get_parameter
 import svb.dist as dist
 import svb.prior as prior
 
@@ -18,39 +18,45 @@ class AslRestModel(Model):
     FIXME integrate with oxasl AslImage class?
     """
 
+    OPTIONS = [
+        ModelOption("tau", "Bolus duration", units="s", clargs=("--tau", "--bolus"), type=float, default=1.8),
+        ModelOption("casl", "Data is CASL/pCASL", type=bool, default=False),
+        ModelOption("att", "Bolus arrival time", units="s", type=float, default=1.3),
+        ModelOption("attsd", "Bolus arrival time prior std.dev.", units="s", type=float, default=None),
+        ModelOption("t1", "Tissue T1 value", units="s", type=float, default=1.3),
+        ModelOption("t1b", "Blood T1 value", units="s", type=float, default=1.65),
+        ModelOption("tis", "Inversion times", units="s", type=ValueList(float)),
+        ModelOption("plds", "Post-labelling delays (for CASL instead of TIs)", units="s", type=ValueList(float)),
+        ModelOption("repeats", "Number of repeats - single value or one per TI/PLD", units="s", type=ValueList(int), default=1),
+        ModelOption("slicedt", "Increase in TI/PLD per slice", units="s", type=float),
+        ModelOption("infert1", "Infer T1 value", type=bool),
+        ModelOption("pc", "Blood/tissue partition coefficient", type=float, default=0.9),
+        ModelOption("fcalib", "Perfusion value to use in estimation of effective T1", type=float, default=0.01),
+    ]
+
     def __init__(self, **options):
         Model.__init__(self, **options)
-        self.tau = options["tau"]
-        self.casl = options.get("casl", True)
-        self.bat = options.get("bat", 1.3)
-        self.batsd = options.get("batsd", 1.0)
-        self.t1 = options.get("t1", 1.3)
-        self.t1b = options.get("t1b", 1.65)
-        self.pc = options.get("pc", 0.9)
-        self.f_calib = options.get("fcalib", 0.01)
-        self.slicedt = options.get("slicedt", 0)
-        self.repeats = options.get("repeats", 1)
-        self.plds = options.get("plds", None)
-        self.tis = options.get("tis", None)
         if self.plds is not None:
             self.tis = [self.tau + pld for pld in self.plds]
+        if self.attsd is None:
+            self.attsd = 1.0 if len(self.tis) > 1 else 0.1
+        if len(self.repeats) == 1:
+            # FIXME variable repeats
+            self.repeats = self.repeats[0]
 
-        #pvgm = options.get("pvgm", None)
-        #pvwm = options.get("pvwm", None)
-        #if pvgm is not None and pvwm is not None:
-        #    pvcsf = np.ones(pvgm.shape, dtype=np.float32) - pvgm - pvwm
-        #    self.params.append(RoiParameter("ftiss", dist.FoldedNormal(0, 1e12), mean_init=self._init_flow, log_var_init=0.0, rois=[pvgm, pvwm, pvcsf]))
-        #else:
         self.params = [
-            Parameter("ftiss",
-                      prior=dist.FoldedNormal(mean=0.0, var=1e12),
-                      post=dist.FoldedNormal(mean=10.0, var=1.0),
-                      initialise=self._init_flow,
-                      **options),
-            Parameter("delttiss",
-                      prior=dist.FoldedNormal(mean=self.bat, var=self.batsd**2),
-                      **options),
+            get_parameter("ftiss", dist="FoldedNormal", 
+                          mean=0.0, prior_var=1e6, post_var=1.0, 
+                          post_init=self._init_flow,
+                          **options),
+            get_parameter("delttiss", dist="FoldedNormal", 
+                          mean=self.att, var=self.attsd**2,
+                          **options)
         ]
+        if self.infert1:
+            self.params.append(
+                get_parameter("t1", mean=1.3, var=0.01, **options)
+            )
 
     def evaluate(self, params, tpts):
         """
@@ -70,23 +76,32 @@ class AslRestModel(Model):
         ftiss = self.log_tf(params[0], name="ftiss", shape=True)
         delt = self.log_tf(params[1], name="delt", shape=True)
 
+        if self.infert1:
+            t1 = self.log_tf(params[2], name="t1", shape=True)
+        else:
+            t1 = self.t1
+
         # Boolean masks indicating which voxel-timepoints are during the
         # bolus arrival and which are after
         post_bolus = self.log_tf(tf.greater(t, tf.add(self.tau, delt), name="post_bolus"), shape=True)
         during_bolus = tf.logical_and(tf.greater(t, delt), tf.logical_not(post_bolus))
 
         # Rate constants
-        t1_app = 1 / (1 / self.t1 + self.f_calib / self.pc)
-        r = 1 / t1_app - 1 / self.t1b
-        f = 2 * tf.exp(-t / t1_app)
+        t1_app = 1 / (1 / t1 + self.fcalib / self.pc)
 
         # Calculate signal
         if self.casl:
-            during_bolus_signal = 2 * t1_app * tf.exp(-delt / self.t1b) * (1 - tf.exp(-(t - delt) / t1_app))
-            post_bolus_signal = 2 * t1_app * tf.exp(-delt / self.t1b) * tf.exp(-(t - self.tau - delt) / t1_app) * (1 - tf.exp(-self.tau / t1_app))
+            # CASL kinetic model
+            factor = 2 * t1_app * tf.exp(-delt / self.t1b)
+            during_bolus_signal =  factor * (1 - tf.exp(-(t - delt) / t1_app))
+            post_bolus_signal = factor * tf.exp(-(t - self.tau - delt) / t1_app) * (1 - tf.exp(-self.tau / t1_app))
         else:
-            during_bolus_signal = f / r * ((tf.exp(r * t) - tf.exp(r * delt)))
-            post_bolus_signal = f / r * ((tf.exp(r * (delt + self.tau)) - tf.exp(r * delt)))
+            # PASL kinetic model
+            r = 1 / t1_app - 1 / self.t1b
+            f = 2 * tf.exp(-t / t1_app)
+            factor = f / r
+            during_bolus_signal = factor * ((tf.exp(r * t) - tf.exp(r * delt)))
+            post_bolus_signal = factor * ((tf.exp(r * (delt + self.tau)) - tf.exp(r * delt)))
 
         post_bolus_signal = self.log_tf(post_bolus_signal, name="post_bolus_signal", shape=True)
         during_bolus_signal = self.log_tf(during_bolus_signal, name="during_bolus_signal", shape=True)
@@ -97,11 +112,11 @@ class AslRestModel(Model):
         signal = tf.where(during_bolus, during_bolus_signal, signal)
         signal = tf.where(post_bolus, post_bolus_signal, signal)
 
-        return ftiss*signal
+        return self.log_tf(ftiss*signal, name="asl_signal", shape=True)
 
     def tpts(self, data_model):
         if data_model.n_tpts != len(self.tis) * self.repeats:
-            raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis), data_model.n_tpts))
+            raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis)*self.repeats, data_model.n_tpts))
 
         # FIXME assuming grouped by TIs/PLDs
         if self.slicedt > 0:
