@@ -44,6 +44,8 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          help="Timeseries input data")
         group.add_argument("--mask", dest="mask_fname",
                          help="Optional voxel mask")
+        group.add_argument("--post-init", dest="post_init_fname",
+                         help="Initialize posterior from data file saved using --output-post")
         group.add_argument("--model", dest="model_name",
                          help="Model name")
         group.add_argument("--output",
@@ -113,6 +115,9 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          action="store_true", default=False)
         group.add_argument("--save-model-fit",
                          help="Save model fit",
+                         action="store_true", default=False)
+        group.add_argument("--save-post", "--save-posterior",
+                         help="Save full posterior distribution",
                          action="store_true", default=False)
 
     def parse_args(self, argv=None, namespace=None):
@@ -225,7 +230,7 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
 
     # Initialize the data model which contains data dimensions, number of time
     # points, list of unmasked voxels, etc
-    data_model = DataModel(data_fname, mask_fname)
+    data_model = DataModel(data_fname, mask_fname, **kwargs)
     
     # Create the generative model
     fwd_model = get_model_class(model_name)(**kwargs)
@@ -248,8 +253,8 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     cost_history_v = ret[2]
     param_history_v = ret[3]
     modelfit = ret[4]
-    means = svb.output("model_params")
-    variances = np.transpose(np.diagonal(svb.output("post_cov"), axis1=1, axis2=2))
+    means = svb.evaluate(svb.model_means)
+    variances = np.transpose(svb.evaluate(svb.post.var))
 
     if kwargs.get("save_noise", False):
         params = svb.params
@@ -279,6 +284,12 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     # Write out modelfit
     if kwargs.get("save_model_fit", False):
         data_model.nifti_image(modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
+
+    # Write out posterior
+    if kwargs.get("save_post", False):
+        post_data = data_model.posterior_data(svb.evaluate(svb.post.mean), svb.evaluate(svb.post.cov))
+        log.info("Posterior data shape: %s", post_data.shape)
+        data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
 
     # Write out runtime
     with open(os.path.join(output, "runtime"), "w") as runtime_f:
