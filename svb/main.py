@@ -215,7 +215,7 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
 
     :param data: File name of 4D NIFTI data set containing data to be fitted
     :param model_name: Name of model we are fitting to
-    :param output: Output directory, will be created if it does not exist
+    :param output: output directory, will be created if it does not exist
     :param mask: Optional file name of 3D Nifti data set containing data voxel mask
 
     All keyword arguments are passed to constructor of the model, the ``SvbFit``
@@ -224,7 +224,7 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     # Create output directory
     _makedirs(output, exist_ok=True)
     
-    _setup_logging(output, **kwargs)
+    setup_logging(output, **kwargs)
     log = logging.getLogger(__name__)
     log.info("SVB %s", __version__)
 
@@ -298,7 +298,7 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
     log.info("Output written to: %s", output)
     return runtime, mean_cost_history
 
-def _setup_logging(output, **kwargs):
+def setup_logging(outdir=".", **kwargs):
     """
     Set the log level, formatters and output streams for the logging output
 
@@ -314,7 +314,7 @@ def _setup_logging(output, **kwargs):
         logging.config.fileConfig(kwargs["log_config"])
     else:
         # By default we send the log to an output logfile
-        logfile = os.path.join(output, "logfile")
+        logfile = os.path.join(outdir, "logfile")
         level = kwargs.get("log_level", "info")
         if not level:
             level = "info"
