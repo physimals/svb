@@ -3,6 +3,7 @@ SVB - Data model
 """
 import math
 
+import six
 import numpy as np
 import nibabel as nib
 
@@ -19,20 +20,19 @@ class DataModel(LogBase):
     def __init__(self, data_fname, mask_fname=None, **kwargs):
         LogBase.__init__(self)
 
-        self.nii = nib.load(data_fname)
-        self.data_vol = self.nii.get_data()
+        self.nii, self.data_vol = self._get_data(data_fname)
+        while self.data_vol.ndim < 4:
+            self.data_vol = self.data_vol[np.newaxis, ...]
+
         self.shape = list(self.data_vol.shape)[:3]
         self.n_tpts = self.data_vol.shape[3]
         self.data_flattened = self.data_vol.reshape(-1, self.n_tpts)
-        self.log.info("Loaded data from %s", data_fname)
 
         # If there is a mask load it and use it to mask the data
         if mask_fname:
-            mask_nii = nib.load(mask_fname)
-            self.mask_vol = mask_nii.get_data()
+            mask_nii, self.mask_vol = self._get_data(mask_fname)
             self.mask_flattened = self.mask_vol.flatten()
             self.data_flattened = self.data_flattened[self.mask_flattened > 0]
-            self.log.info("Loaded mask from %s", mask_fname)
         else:
             self.mask_vol = np.ones(self.shape)
             self.mask_flattened = self.mask_vol.flatten()
@@ -68,6 +68,16 @@ class DataModel(LogBase):
                  data space
         """
         return tensor
+
+    def _get_data(self, data):
+        if isinstance(data, six.string_types):
+            nii = nib.load(data)
+            data_vol = nii.get_data()
+            self.log.info("Loaded data from %s", data)
+        else:
+            nii = nib.Nifti1Image(data, np.identity(4))
+            data_vol = data
+        return nii, data_vol
 
     def nifti_image(self, data):
         """
