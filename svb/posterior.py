@@ -325,7 +325,7 @@ class MVNPosterior(FactorisedPosterior):
             # of the covariance to initialize the off-diagonal terms
             self.log.info(" - Initializing posterior covariance from input posterior")
             _mean, cov = kwargs["init"]
-            covar_init = tf.cholesky(cov, dtype=tf.float32)
+            covar_init = tf.cholesky(cov)
         else:
             covar_init = tf.zeros([self.nvertices, self.nparams, self.nparams], dtype=tf.float32)
 
