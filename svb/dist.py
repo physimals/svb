@@ -102,7 +102,8 @@ class Log(Identity):
         if self._geom:
             return ns.exp(int_mean), ns.exp(int_var)
         else:
-            raise NotImplementedError()
+            # FIXME this is wrong...
+            return ns.exp(int_mean), ns.exp(int_var)
 
 class Abs(Identity):
     """
@@ -112,7 +113,7 @@ class Abs(Identity):
         return ns.abs(int_values)
 
     def ext_moments(self, int_mean, int_var, ns=tf):
-        raise NotImplementedError()
+        return ns.abs(int_mean), int_var
 
 class Dist(LogBase):
     """
