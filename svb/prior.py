@@ -192,7 +192,7 @@ class MRFSpatialPrior(Prior):
         self.ak = self.log_tf(tf.exp(self.logak, name="ak"), force=True)
 
     def mean_log_pdf(self, samples):
-        """
+        r"""
         mean log PDF for the MRF spatial prior.
 
         This is calculating:
