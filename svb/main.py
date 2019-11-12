@@ -40,9 +40,9 @@ class SvbArgumentParser(argparse.ArgumentParser):
         argparse.ArgumentParser.__init__(self, prog="svb", usage=USAGE, add_help=False, **kwargs)
 
         group = self.add_argument_group("Main Options")
-        group.add_argument("--data", dest="data_fname",
+        group.add_argument("--data",
                          help="Timeseries input data")
-        group.add_argument("--mask", dest="mask_fname",
+        group.add_argument("--mask",
                          help="Optional voxel mask")
         group.add_argument("--post-init", dest="post_init_fname",
                          help="Initialize posterior from data file saved using --output-post")
@@ -194,22 +194,27 @@ def main():
         arg_parser = SvbArgumentParser()
         options = arg_parser.parse_args()
 
-        if not options.data_fname:
+        if not options.data:
             raise ValueError("Input data not specified")
         if not options.model_name:
             raise ValueError("Model name not specified")
 
+        # Fixed for CL tool
+        options.save_mean = True
+        options.save_runtime = True
+        options.save_log = True
+
         welcome = "Welcome to SVB %s" % __version__
         print(welcome)
         print("=" * len(welcome))
-        runtime, _ = run(tee=sys.stdout, **vars(options))
+        runtime, _ = run(log_stream=sys.stdout, **vars(options))
         print("FINISHED - runtime %.3fs" % runtime)
     except (RuntimeError, ValueError) as exc:
         sys.stderr.write("ERROR: %s\n" % str(exc))
         import traceback
         traceback.print_exc()
 
-def run(data_fname, model_name, output, mask_fname=None, **kwargs):
+def run(data, model_name, output, mask=None, **kwargs):
     """
     Run model fitting on a data set
 
@@ -230,13 +235,11 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
 
     # Initialize the data model which contains data dimensions, number of time
     # points, list of unmasked voxels, etc
-    data_model = DataModel(data_fname, mask_fname, **kwargs)
+    data_model = DataModel(data, mask, **kwargs)
     
     # Create the generative model
     fwd_model = get_model_class(model_name)(**kwargs)
-    log.info("Created model: %s", str(fwd_model))
-    for option in fwd_model.OPTIONS:
-        log.info(" - %s: %s", option.desc, str(getattr(fwd_model, option.attr_name)))
+    fwd_model.log_config()
 
     # Get the time points from the model
     tpts = fwd_model.tpts(data_model)
@@ -245,32 +248,28 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
 
     # Train model
     svb = SvbFit(data_model, fwd_model, **kwargs)
-    runtime, ret = _runtime(svb.train, tpts, data_model.data_flattened, **kwargs)
+    runtime, training_history = _runtime(svb.train, tpts, data_model.data_flattened, **kwargs)
     log.info("DONE: %.3fs", runtime)
 
-    # Get output, transposing as required so first index is by parameter
-    mean_cost_history = ret[0]
-    cost_history_v = ret[2]
-    param_history_v = ret[3]
-    modelfit = ret[4]
-    means = svb.evaluate(svb.model_means)
-    variances = np.transpose(svb.evaluate(svb.post.var))
-
+    _makedirs(output, exist_ok=True)
     if kwargs.get("save_noise", False):
         params = svb.params
     else:
         params = fwd_model.params
 
     # Write out parameter mean and variance images
-    _makedirs(output, exist_ok=True)
+    means = svb.evaluate(svb.model_means)
+    variances = svb.evaluate(svb.model_vars)
     for idx, param in enumerate(params):
-        data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
+        if kwargs.get("save_mean", False):
+            data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
         if kwargs.get("save_var", False):
             data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
         if kwargs.get("save_std", False):
             data_model.nifti_image(np.sqrt(variances[idx])).to_filename(os.path.join(output, "std_%s.nii.gz" % param.name))
 
     # Write out voxelwise cost history
+    cost_history_v = training_history["voxel_cost"]
     if kwargs.get("save_cost", False):
         data_model.nifti_image(cost_history_v[..., -1]).to_filename(os.path.join(output, "cost.nii.gz"))
     if kwargs.get("save_cost_history", False):
@@ -278,11 +277,13 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
 
     # Write out voxelwise parameter history
     if kwargs.get("save_param_history", False):
+        param_history_v = training_history["voxel_params"]
         for idx, param in enumerate(params):
             data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
 
     # Write out modelfit
     if kwargs.get("save_model_fit", False):
+        modelfit = svb.evaluate(svb.modelfit)
         data_model.nifti_image(modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
 
     # Write out posterior
@@ -292,11 +293,16 @@ def run(data_fname, model_name, output, mask_fname=None, **kwargs):
         data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
 
     # Write out runtime
-    with open(os.path.join(output, "runtime"), "w") as runtime_f:
-        runtime_f.write("%f\n" % runtime)
+    if kwargs.get("save_runtime", False):
+        with open(os.path.join(output, "runtime"), "w") as runtime_f:
+            runtime_f.write("%f\n" % runtime)
+
+    # Write out input data
+    if kwargs.get("save_input_data", False):
+        data_model.nifti_image(data_model.data_flattened).to_filename("input_data.nii.gz")
 
     log.info("Output written to: %s", output)
-    return runtime, mean_cost_history
+    return runtime, svb, training_history
 
 def setup_logging(outdir=".", **kwargs):
     """
@@ -313,17 +319,18 @@ def setup_logging(outdir=".", **kwargs):
         # User can supply a logging config file which overrides everything else
         logging.config.fileConfig(kwargs["log_config"])
     else:
-        # By default we send the log to an output logfile
-        logfile = os.path.join(outdir, "logfile")
-        level = kwargs.get("log_level", "info")
-        if not level:
-            level = "info"
-        level = getattr(logging, level.upper(), logging.INFO)
-        logging.basicConfig(filename=logfile, filemode="w", level=level)
+        if kwargs.get("save_log", False):
+            # Send the log to an output logfile
+            logfile = os.path.join(outdir, "logfile")
+            level = kwargs.get("log_level", "info")
+            if not level:
+                level = "info"
+            level = getattr(logging, level.upper(), logging.INFO)
+            logging.basicConfig(filename=logfile, filemode="w", level=level)
 
-        if kwargs.get("tee", None) is not None:
+        if kwargs.get("log_stream", None) is not None:
             # Can also supply a stream to send log output to as well (e.g. sys.stdout)
-            extra_handler = logging.StreamHandler(kwargs["tee"])
+            extra_handler = logging.StreamHandler(kwargs["log_stream"])
             extra_handler.setLevel(level)
             extra_handler.setFormatter(logging.Formatter('%(levelname)s : %(message)s'))
             logging.getLogger('').addHandler(extra_handler)
