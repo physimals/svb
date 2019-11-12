@@ -27,31 +27,54 @@ class Identity:
     simple identity transformation
     """
 
-    def int_values(self, ext_values):
+    def int_values(self, ext_values, ns=tf):
         """
-        Convert internal (inferred) values to external
-        (model-visible) values
+        Convert external (model-visible) values to internal (inferred)
+        values
+
+        :param ext_values: Model-visible values
+        :ns: Namespace containing maths functions (defaults to TensorFlow, 
+             alternatives would be numpy or math)
+        :return: Object compatible with ext_values containing internal values
         """
         return ext_values
 
-    def int_moments(self, ext_mean, ext_var):
+    def int_moments(self, ext_mean, ext_var, ns=tf):
         """
         Convert internal (inferred) mean/variance to external
         (model-visible) mean/variance
+
+        :param ext_mean: Model-visible mean
+        :param ext_var: Model-visible variance
+        :ns: Namespace containing maths functions (defaults to TensorFlow, 
+             alternatives would be numpy or math)
+        :return: Tuple of objects compatible with ext_mean, ext_var containing internal values
         """
         return ext_mean, ext_var
 
-    def ext_values(self, int_values):
+    def ext_values(self, int_values, ns=tf):
         """
         Convert external (model) values to internal
         (inferred) values
+
+        :param int_values: Internal values
+        :ns: Namespace containing maths functions (defaults to TensorFlow, 
+             alternatives would be numpy or math)
+        :return: Object compatible with int_values containing external (model) values
         """
         return int_values
 
-    def ext_moments(self, int_mean, int_var):
+    def ext_moments(self, int_mean, int_var, ns=tf):
         """
         Convert the external (model) mean/variance to internal
         (inferred) mean/variance
+
+        :param ext_mean: Internal (inferred) mean
+        :param ext_var: Internal (inferred) variance
+        :ns: Namespace containing maths functions (defaults to TensorFlow, 
+             alternatives would be numpy or math)
+        :return: Tuple of objects compatible with int_mean, int_var containing external 
+                 (model) values
         """
         return int_mean, int_var
 
@@ -62,22 +85,22 @@ class Log(Identity):
     def __init__(self, geom=True):
         self._geom = geom
 
-    def int_values(self, ext_values):
-        return tf.log(ext_values)
+    def int_values(self, ext_values, ns=tf):
+        return ns.log(ext_values)
 
-    def int_moments(self, ext_mean, ext_var):
+    def int_moments(self, ext_mean, ext_var, ns=tf):
         if self._geom:
-            return math.log(ext_mean), math.log(ext_var)
+            return ns.log(ext_mean), ns.log(ext_var)
         else:
             # See https://uk.mathworks.com/help/stats/lognstat.html
-            return math.log(ext_mean**2/math.sqrt(ext_var + ext_mean**2)), math.log(ext_var/ext_mean**2 + 1)
+            return ns.log(ext_mean**2/ns.sqrt(ext_var + ext_mean**2)), ns.log(ext_var/ext_mean**2 + 1)
 
-    def ext_values(self, int_values):
-        return tf.exp(int_values)
+    def ext_values(self, int_values, ns=tf):
+        return ns.exp(int_values)
 
-    def ext_moments(self, int_mean, int_var):
+    def ext_moments(self, int_mean, int_var, ns=tf):
         if self._geom:
-            return math.exp(int_mean), math.exp(int_var)
+            return ns.exp(int_mean), ns.exp(int_var)
         else:
             raise NotImplementedError()
 
@@ -85,10 +108,10 @@ class Abs(Identity):
     """
     Absolute value transform used for folded normal distribution
     """
-    def ext_values(self, int_values):
-        return tf.abs(int_values)
+    def ext_values(self, int_values, ns=tf):
+        return ns.abs(int_values)
 
-    def ext_moments(self, int_mean, int_var):
+    def ext_moments(self, int_mean, int_var, ns=tf):
         raise NotImplementedError()
 
 class Dist(LogBase):
@@ -121,7 +144,7 @@ class Normal(Dist):
         Dist.__init__(self)
         self.transform = transform
         self.ext_mean, self.ext_var = ext_mean, ext_var
-        self.mean, self.var = self.transform.int_moments(ext_mean, ext_var)
+        self.mean, self.var = self.transform.int_moments(ext_mean, ext_var, ns=math)
         self.sd = math.sqrt(self.var)
 
     def __str__(self):
