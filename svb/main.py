@@ -319,14 +319,17 @@ def setup_logging(outdir=".", **kwargs):
         # User can supply a logging config file which overrides everything else
         logging.config.fileConfig(kwargs["log_config"])
     else:
+        level = kwargs.get("log_level", "info")
+        if not level:
+            level = "info"
+        level = getattr(logging, level.upper(), logging.INFO)
         if kwargs.get("save_log", False):
             # Send the log to an output logfile
             logfile = os.path.join(outdir, "logfile")
-            level = kwargs.get("log_level", "info")
-            if not level:
-                level = "info"
-            level = getattr(logging, level.upper(), logging.INFO)
             logging.basicConfig(filename=logfile, filemode="w", level=level)
+        else:
+            # FIXME this does not allow log_stream to work without a log file...
+            logging.basicConfig()
 
         if kwargs.get("log_stream", None) is not None:
             # Can also supply a stream to send log output to as well (e.g. sys.stdout)
