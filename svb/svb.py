@@ -238,10 +238,11 @@ class SvbFit(LogBase):
         :return Tensor [V x S x B]. B is the batch size, so for each voxel and sample
                 we return a prediction which can be compared with the data batch
         """
-        model_samples, model_means = [], []
+        model_samples, model_means, model_vars = [], [], []
         for idx, param in enumerate(self.params):
             int_samples = samples[:, idx, :]
             int_means = self.post.mean[:, idx]
+            int_vars = self.post.var[:, idx]
             
             # Transform the underlying Gaussian samples into the values required by the model
             # This depends on each model parameter's underlying distribution
@@ -253,16 +254,24 @@ class SvbFit(LogBase):
                 # Skip the noise parameter for now as the model expects to be passed its own parameters
                 # in order
                 model_samples.append(tf.expand_dims(param.post_dist.transform.ext_values(int_samples), -1))
-                model_means.append(param.post_dist.transform.ext_values(int_means))
+                ext_means, ext_vars = param.post_dist.transform.ext_moments(int_means, int_vars)
+                model_means.append(ext_means)
+                model_vars.append(ext_vars)
 
         # Put the noise parameter at the end
         param = self.params[self.noise_idx]
-        model_samples.append(tf.expand_dims(param.post_dist.transform.ext_values(samples[:, self.noise_idx, :]), -1))
-        model_means.append(param.post_dist.transform.ext_values(self.post.mean[:, self.noise_idx]))
-
+        int_samples = samples[:, self.noise_idx, :]
+        int_means = self.post.mean[:, self.noise_idx]
+        int_vars = self.post.var[:, self.noise_idx]
+        model_samples.append(tf.expand_dims(param.post_dist.transform.ext_values(int_samples), -1))
+        ext_means, ext_vars = param.post_dist.transform.ext_moments(int_means, int_vars)
+        model_means.append(ext_means)
+        model_vars.append(ext_vars)
+        
         # Define convenience tensors for querying the model-space sample, means and prediction
         self.model_samples = self.log_tf(tf.identity(model_samples, name="model_samples"))
         self.model_means = self.log_tf(tf.identity(model_means, name="model_means"))
+        self.model_vars = self.log_tf(tf.identity(model_vars, name="model_vars"))
         self.modelfit = self.log_tf(tf.identity(self.model.evaluate(tf.expand_dims(self.model_means, -1), self.tpts_train), "modelfit"))
 
         # The timepoints tensor has shape [V x B] or [1 x B]. It needs to be reshaped
@@ -442,10 +451,12 @@ class SvbFit(LogBase):
             sample_size = batch_size
 
         # Cost and parameter histories, mean and voxelwise
-        mean_cost_history = np.zeros([epochs+1])
-        voxel_cost_history = np.zeros([n_voxels, epochs+1])
-        mean_param_history = np.zeros([epochs+1, self._nparams])
-        voxel_param_history = np.zeros([n_voxels, epochs+1, self._nparams])
+        training_history = {
+            "mean_cost" : np.zeros([epochs+1]),
+            "voxel_cost" : np.zeros([n_voxels, epochs+1]),
+            "mean_params" : np.zeros([epochs+1, self._nparams]),
+            "voxel_params" : np.zeros([n_voxels, epochs+1, self._nparams]),
+        }
 
         # Training cycle
         self.feed_dict = {
@@ -539,10 +550,10 @@ class SvbFit(LogBase):
             mean_total_latent = np.mean(total_latent)
             mean_total_reconst = np.mean(total_reconstr)
             
-            mean_cost_history[epoch] = mean_total_cost
-            voxel_cost_history[:, epoch] = total_cost
-            mean_param_history[epoch, :] = mean_params
-            voxel_param_history[:, epoch, :] = params.transpose()
+            training_history["mean_cost"][epoch] = mean_total_cost
+            training_history["voxel_cost"][:, epoch] = total_cost
+            training_history["mean_params"][epoch, :] = mean_params
+            training_history["voxel_params"][:, epoch, :] = params.transpose()
 
             if err or np.isnan(mean_total_cost) or np.any(np.isnan(mean_params)):
                 # Numerical errors while processing this epoch. Revert to best saved params if possible
@@ -585,16 +596,15 @@ class SvbFit(LogBase):
         self.feed_dict[self.tpts_train] = tpts
         cost = self.evaluate(self.cost) # [W]
         params = self.evaluate(self.model_means) # [P, W]
-        fit = self.evaluate(self.modelfit) # [W, T]
         
         self.log.info(" - Best batch-averaged cost: %f", best_cost)
         self.log.info(" - Final cost across full data: %f", np.mean(cost))
         self.log.info(" - Final params: %s", np.mean(params, axis=1))
 
-        mean_cost_history[-1] = np.mean(cost)
-        mean_param_history[-1, :] = np.mean(params, axis=1)
-        voxel_cost_history[:, -1] = cost
-        voxel_param_history[:, -1, :] = params.transpose()
+        training_history["mean_cost"][-1] = np.mean(cost)
+        training_history["voxel_cost"][:, -1] = cost
+        training_history["mean_params"][-1, :] = np.mean(params, axis=1)
+        training_history["voxel_params"][:, -1, :] = params.transpose()
 
-        # Return cost and parameter history and model fit
-        return mean_cost_history, mean_param_history, voxel_cost_history, voxel_param_history, fit
+        # Return training history
+        return training_history
