@@ -27,7 +27,10 @@ vertices) using data defined on a volume (V=number of voxels).
 import six
 
 import numpy as np
-import tensorflow as tf
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
 
 from .noise import NoiseParameter
 from .prior import NormalPrior, FactorisedPrior, get_prior

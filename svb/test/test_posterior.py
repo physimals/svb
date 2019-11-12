@@ -1,8 +1,12 @@
 """
 Tests for posterior classes
 """
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
+   
 import numpy as np
-import tensorflow as tf
 
 from svb.posterior import NormalPosterior, FactorisedPosterior, MVNPosterior
 

@@ -1,8 +1,12 @@
 """
 Test for prior classes
 """
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
+   
 import numpy as np
-import tensorflow as tf
 
 from svb.prior import NormalPrior, FactorisedPrior
 

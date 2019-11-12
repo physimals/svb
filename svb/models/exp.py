@@ -1,7 +1,10 @@
 """
 Multi-exponential models
 """
-import tensorflow as tf
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
 
 from svb import __version__
 from svb.model import Model

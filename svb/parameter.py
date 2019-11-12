@@ -7,8 +7,11 @@ The factory methods which create priors/posteriors can
 make use of the instance class to create the appropriate
 type of vertexwise prior/posterior
 """
-import tensorflow as tf
-
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
+   
 from .utils import LogBase
 from . import dist
 

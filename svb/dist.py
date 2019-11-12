@@ -3,8 +3,11 @@ Distributions that can be applied to a model parameter
 """
 import math
 
-import tensorflow as tf
-
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
+    
 from .utils import LogBase
 
 def get_dist(prefix, **kwargs):

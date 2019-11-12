@@ -1,7 +1,10 @@
 """
 Definition of prior distribution
 """
-import tensorflow as tf
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
 
 from .utils import LogBase
 from .dist import Normal

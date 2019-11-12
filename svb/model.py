@@ -1,7 +1,11 @@
 """
 Base class for a forward model whose parameters are to be fitted
 """
-import tensorflow as tf
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
+   
 import numpy as np
 
 from .utils import LogBase
