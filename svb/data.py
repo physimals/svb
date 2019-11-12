@@ -2,6 +2,7 @@
 SVB - Data model
 """
 import math
+import collections
 
 import six
 import numpy as np
@@ -17,10 +18,10 @@ class DataModel(LogBase):
     and neighbouring voxel lists
     """
 
-    def __init__(self, data_fname, mask_fname=None, **kwargs):
+    def __init__(self, data, mask=None, **kwargs):
         LogBase.__init__(self)
 
-        self.nii, self.data_vol = self._get_data(data_fname)
+        self.nii, self.data_vol = self._get_data(data)
         while self.data_vol.ndim < 4:
             self.data_vol = self.data_vol[np.newaxis, ...]
 
@@ -29,8 +30,8 @@ class DataModel(LogBase):
         self.data_flattened = self.data_vol.reshape(-1, self.n_tpts)
 
         # If there is a mask load it and use it to mask the data
-        if mask_fname:
-            mask_nii, self.mask_vol = self._get_data(mask_fname)
+        if mask:
+            mask_nii, self.mask_vol = self._get_data(mask)
             self.mask_flattened = self.mask_vol.flatten()
             self.data_flattened = self.data_flattened[self.mask_flattened > 0]
         else:
@@ -42,8 +43,8 @@ class DataModel(LogBase):
         # FIXME By default parameter space is same as data space
         self.n_vertices = self.n_unmasked_voxels
 
-        if kwargs.get("post_init_fname", None):
-            self.post_init = self._posterior_from_file(kwargs["post_init_fname"])
+        if kwargs.get("initial_posterior", None):
+            self.post_init = self._get_posterior_data(kwargs["initial_posterior"])
         else:
             self.post_init = None
 
@@ -68,16 +69,6 @@ class DataModel(LogBase):
                  data space
         """
         return tensor
-
-    def _get_data(self, data):
-        if isinstance(data, six.string_types):
-            nii = nib.load(data)
-            data_vol = nii.get_data()
-            self.log.info("Loaded data from %s", data)
-        else:
-            nii = nib.Nifti1Image(data, np.identity(4))
-            data_vol = data
-        return nii, data_vol
 
     def nifti_image(self, data):
         """
@@ -114,6 +105,24 @@ class DataModel(LogBase):
             vols.append(mean[:, row])
         vols.append(np.ones(mean.shape[0]))
         return np.array(vols).transpose((1, 0))
+
+    def _get_data(self, data):
+        if isinstance(data, six.string_types):
+            nii = nib.load(data)
+            data_vol = nii.get_data()
+            self.log.info("Loaded data from %s", data)
+        else:
+            nii = nib.Nifti1Image(data, np.identity(4))
+            data_vol = data
+        return nii, data_vol
+
+    def _get_posterior_data(self, post_data):
+        if isinstance(post_data, six.string_types):
+            return self._posterior_from_file(post_data)
+        elif isinstance(post_data, collections.Sequence):
+            return tuple(post_data)
+        else:
+            raise TypeError("Invalid data type for initial posterior: should be filename or tuple of mean, covariance")
 
     def _posterior_from_file(self, fname):
         """
