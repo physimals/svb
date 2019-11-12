@@ -299,7 +299,7 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     # Write out input data
     if kwargs.get("save_input_data", False):
-        data_model.nifti_image(data_model.data_flattened).to_filename("input_data.nii.gz")
+        data_model.nifti_image(data_model.data_flattened).to_filename(os.path.join(output, "input_data.nii.gz"))
 
     log.info("Output written to: %s", output)
     return runtime, svb, training_history
