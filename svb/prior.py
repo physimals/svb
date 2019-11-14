@@ -26,6 +26,8 @@ def get_prior(param, nvertices, **kwargs):
             prior = MRF2SpatialPrior(nvertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
         elif param.prior_type == "Mfab":
             prior = FabberMRFSpatialPrior(nvertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+        elif param.prior_type == "A":
+            prior = ARDPrior(nvertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
 
     if prior is not None:
         return prior
@@ -153,7 +155,7 @@ class FabberMRFSpatialPrior(NormalPrior):
 
         gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1)
         hk = tf.multiply(tf.to_float(self.nvertices), 0.5) + 1.0
-        self.ak = self.log_tf(gk * hk, name="%s_ak" % self.name, force=True)
+        self.ak = self.log_tf(tf.identity(gk * hk, name="ak"))
 
     def _setup_mean_var(self, post, nn, n2):
         # This is the equivalent of ApplyToMVN in Fabber
@@ -191,8 +193,8 @@ class MRFSpatialPrior(Prior):
 
         # Set up spatial smoothing parameter calculation from posterior and neighbour lists
         # We infer the log of ak.
-        self.logak = tf.Variable(-4.0, name="log_ak", dtype=tf.float32)
-        self.ak = self.log_tf(tf.exp(self.logak, name="ak"), force=True)
+        self.logak = tf.Variable(-5.0, name="log_ak", dtype=tf.float32)
+        self.ak = self.log_tf(tf.exp(self.logak, name="ak"))
 
     def mean_log_pdf(self, samples):
         r"""
@@ -212,10 +214,33 @@ class MRFSpatialPrior(Prior):
         term2 = tf.identity(-0.5*self.ak*self.xdx, name="term2")
         log_pdf = term1 + term2  # [W, N]
         mean_log_pdf = tf.reshape(tf.reduce_mean(log_pdf, axis=-1), [self.nvertices]) # [W]
+
+        # Gamma prior if we care
+        #q1, q2 = 1, 100
+        #mean_log_pdf += (q1-1) * self.logak - self.ak / q2
+
         return mean_log_pdf
 
     def __str__(self):
         return "MRF spatial prior"
+
+class ARDPrior(NormalPrior):
+    """
+    Automatic Relevance Determination prior
+    """
+    def __init__(self, nvertices, mean, var, **kwargs):
+        NormalPrior.__init__(self, nvertices, mean, var, **kwargs)
+        self.name = kwargs.get("name", "ARDPrior")
+        self.fixed_var = self.var
+        
+        # Set up inferred precision parameter phi
+        self.logphi = tf.Variable(tf.log(1/self.fixed_var), name="log_phi", dtype=tf.float32)
+        self.phi = self.log_tf(tf.exp(self.logphi, name="phi"))
+        self.var = 1/self.phi
+        self.std = tf.sqrt(self.var, name="%s_std" % self.name)
+
+    def __str__(self):
+        return "ARD prior"
 
 class MRF2SpatialPrior(Prior):
     """
@@ -226,6 +251,8 @@ class MRF2SpatialPrior(Prior):
     as a parameter of the optimization. It differs from MRFSpatialPrior by using the
     PDF formulation of the PDF rather than the matrix formulation (the two are equivalent
     but currently we keep both around for checking that they really are!)
+
+    FIXME currently this does not work unless sample size=1
     """
 
     def __init__(self, nvertices, mean, var, idx=None, post=None, nn=None, n2=None, **kwargs):
@@ -236,22 +263,25 @@ class MRF2SpatialPrior(Prior):
         self.var = tf.fill([nvertices], var, name="%s_var" % self.name)
         self.std = tf.sqrt(self.var, name="%s_std" % self.name)
 
-        # nn and n2 are sparse tensors of shape [W, W]. If nn[A, B] = 1 then A is
-        # a nearest neighbour of B, and similarly for n2 and second nearest neighbours
+        # nn is a sparse tensor of shape [W, W]. If nn[A, B] = 1 then A is
+        # a nearest neighbour of B
         self.nn = nn
-        self.n2 = n2
+
+        # We need the number of samples to implement the log PDF function
+        self.sample_size = kwargs.get("sample_size", 5)
 
         # Set up spatial smoothing parameter calculation from posterior and neighbour lists
-        self.logak = tf.Variable(-4.0, name="log_ak", dtype=tf.float32)
-        self.ak = self.log_tf(tf.exp(self.logak, name="ak"), force=True)
+        self.logak = tf.Variable(-5.0, name="log_ak", dtype=tf.float32)
+        self.ak = self.log_tf(tf.exp(self.logak, name="ak"))
 
     def mean_log_pdf(self, samples):
         samples = tf.reshape(samples, (self.nvertices, -1)) # [W, N]
         self.num_nn = self.log_tf(tf.sparse_reduce_sum(self.nn, axis=1), name="num_nn") # [W]
 
-        xj = tf.sparse.reshape(self.nn, (self.nvertices, self.nvertices, 1)) * tf.reshape(samples, (self.nvertices, 1, -1))
+        expanded_nn = tf.sparse_concat(2, [tf.sparse.reshape(self.nn, (self.nvertices, self.nvertices, 1))] * self.sample_size)
+        xj = expanded_nn * tf.reshape(samples, (self.nvertices, 1, -1))
         #xi = tf.reshape(tf.sparse.to_dense(tf.sparse.reorder(self.nn)), (self.nvertices, self.nvertices, 1)) * tf.reshape(samples, (1, self.nvertices, -1))
-        xi = tf.sparse.reshape(self.nn, (self.nvertices, self.nvertices, 1)) * tf.reshape(samples, (1, self.nvertices, -1))
+        xi = expanded_nn * tf.reshape(samples, (1, self.nvertices, -1))
         #xi = tf.sparse.transpose(xj, perm=(1, 0, 2)) 
         neg_xi = tf.SparseTensor(xi.indices, -xi.values, dense_shape=xi.dense_shape )
         dx2 = tf.square(tf.sparse.add(xj, neg_xi), name="dx2")
