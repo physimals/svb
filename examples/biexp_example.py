@@ -1,3 +1,11 @@
+# Example fitting of biexponential model
+#
+# This example runs SVB on a set of instances of biexponential data
+# (by default just 4, to make it possible to display the results
+# graphically, but you can up this number and not plot the output
+# if you want a bigger data set)
+#
+# Usage: python biexp_exam
 import sys
 import math
 
@@ -9,7 +17,7 @@ from svb.main import run
 
 # Set the properties of the simulated data
 num_times=200
-num_examples = 9
+num_examples = 4
 name = "example_data"
 true_params = {
     "amp1" : 10.0, # the true amplitude of the model
@@ -53,7 +61,7 @@ options = {
     "save_log" : True,
 }
 
-runtime, svb, training_history = run(data_noisy, "biexp", "example_out", **options)
+runtime, svb, training_history = run(data_noisy, "biexp", "example_out_nocov", **options)
 mean_cost_history = training_history["mean_cost"]
 cost_history_v = training_history["voxel_cost"]
 param_history_v = training_history["voxel_params"]
@@ -104,21 +112,21 @@ if "--show" in sys.argv:
         plt.suptitle("Model fit (No covariance)")
         ax1 = plt.subplot(sq_len, sq_len, idx+1)
         plt.plot(svb.data_model.data_flattened[idx],'rx')
-        plt.plot(clean_data[idx], 'r')
+        plt.plot(clean_data[idx], 'g')
         plt.plot(modelfit[idx],'b')
 
         plt.figure(5)
         plt.suptitle("Model fit (With covariance)")
         ax1 = plt.subplot(sq_len, sq_len, idx+1)
         plt.plot(svb.data_model.data_flattened[idx],'rx')
-        plt.plot(clean_data[idx], 'r')
+        plt.plot(clean_data[idx], 'g')
         plt.plot(modelfit_cov[idx],'b')
 
         plt.figure(6)
         plt.suptitle("Model fit (With covariance, pre-initialized)")
         ax1 = plt.subplot(sq_len, sq_len, idx+1)
         plt.plot(svb.data_model.data_flattened[idx],'rx')
-        plt.plot(clean_data[idx], 'r')
+        plt.plot(clean_data[idx], 'g')
         plt.plot(modelfit_cov_init[idx],'b')
 
     plt.show()
