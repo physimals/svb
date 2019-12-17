@@ -128,7 +128,7 @@ def boxplot(subplots, boxes, **kwargs):
             plt.ylim(ylim)
             
     plt.tight_layout()
-    plt.savefig("%s.png" % kwargs.get("savename", "fig"))
+    plt.savefig("plots/%s.png" % kwargs.get("savename", "fig"))
     print("Done box plot: %s" % title)
 
 def line(subplots, lines, **kwargs):
@@ -202,7 +202,7 @@ def line(subplots, lines, **kwargs):
             plt.legend()
 
     plt.tight_layout()
-    plt.savefig("%s.png" % kwargs.get("savename", "fig"))
+    plt.savefig("plots/%s.png" % kwargs.get("savename", "fig"))
     print("Done line plot: %s" % title)
 
 def conv_speed(subplots, **kwargs):
