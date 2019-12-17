@@ -16,8 +16,8 @@ class NoiseParameter(Parameter):
 
     def __init__(self, **kwargs):
         Parameter.__init__(self, "noise",
-                           prior=dist.LogNormal(1.0, 20.0),
-                           post=dist.LogNormal(1.0, 1.5),
+                           prior=dist.LogNormal(1.0, 1e6),
+                           post=dist.LogNormal(1.0, 1.0),
                            post_init=self._init_noise,
                            **kwargs)
 
