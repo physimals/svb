@@ -17,8 +17,8 @@ SAMPLE_SIZES = (2, 5, 10, 20, 50, 100, 200)
 NT = (10, 20, 50, 100)
 NUM = ("num", "analytic")
 COV = ("cov", "nocov")
-BASEDIR = "c:/Users/ctsu0221/dev/data/svb/biexp2"
-#BASEDIR = "/mnt/hgfs/win/data/svb/biexp1"
+BASEDIR = "c:/Users/ctsu0221/dev/data/svb/biexp"
+#BASEDIR = "/mnt/hgfs/win/data/svb/biexp"
 
 DEFAULTS = {
     "lr" : 0.1,
@@ -27,6 +27,18 @@ DEFAULTS = {
     "nt" : 100,
     "num" : "analytic",
     "cov" : "cov",
+}
+
+LABELS = {
+    "ss" : r"Sample size $L$",
+    "bs" : r"Batch size $B$",
+    "lr" : r"$\alpha$",
+    "num" : r"$N$",
+    "amp1" : r"$A_1$",
+    "amp2" : r"$A_2$",
+    "r1" : r"$R_1$",
+    "r2" : r"$R_2$",
+    "nt" : r"$N$",
 }
 
 def subdir(params):
@@ -38,8 +50,9 @@ def subdir(params):
     if fullparams["bs"] is None:
         # If batch size unspecified assume no mini-batch optimization
         fullparams["bs"] = fullparams["nt"]
-    subdir = os.path.join(BASEDIR, "nt_%(nt)i_lr_%(lr).3f_bs_%(bs)i_ss_%(ss)i_%(num)s_%(cov)s" % fullparams)
-    if not os.path.exists(os.path.join(subdir, "runtime")):
+    subdir_format = params.get("subdir_format", "nt_%(nt)i_lr_%(lr).3f_bs_%(bs)i_ss_%(ss)i_%(num)s_%(cov)s")
+    subdir = os.path.join(BASEDIR, subdir_format % fullparams)
+    if not os.path.exists(os.path.join(subdir, "logfile")):
         return None
     else:
         return subdir
@@ -98,7 +111,7 @@ def boxplot(subplots, boxes, **kwargs):
             data_file = os.path.join(subdir(params), "mean_%s.nii.gz" % param)
             if os.path.exists(data_file):
                 param_data = nib.load(data_file).get_data().flatten()
-                if param == "noise":
+                if param == "noise" and "fab" not in subdir(params):
                     param_data = np.exp(param_data)
                 data.append(param_data)
             else:
@@ -113,14 +126,15 @@ def boxplot(subplots, boxes, **kwargs):
         plt.title(title)
         #plt.yscale("symlog")
         plt.ylabel(kwargs.get("ylabel", param))
-        plt.xlabel(kwargs.get("xlabel", box_param))
+        plt.xlabel(kwargs.get("xlabel", LABELS[box_param]))
         if "ylim" in kwargs:
             ylim = kwargs["ylim"]
             if isinstance(ylim, list):
                 ylim = ylim[idx]
             plt.ylim(ylim)
 
-    plt.tight_layout()
+    if kwargs.get("tight", True):
+        plt.tight_layout()
     plt.savefig("%s.png" % kwargs.get("savename", "fig"))
     print("Done box plot: %s" % title)
 
@@ -145,9 +159,9 @@ def line(subplots, lines, **kwargs):
             if line_param:
                 params[line_param] = line_val
                 if isinstance(line_val, float):
-                    label = "%s: %.3f" % (line_param, line_val)
+                    label = "%s=%.3f" % (LABELS[line_param], line_val)
                 else:
-                    label = "%s: %s" % (line_param, str(line_val))
+                    label = "%s=%s" % (LABELS[line_param], str(line_val))
 
             if "points4d" in kwargs:
                 if subdir(params) is None:
@@ -236,9 +250,9 @@ def conv_speed(subplots, **kwargs):
             if best_cost < very_best_cost:
                 very_best_cost = best_cost
             
-        #print("Very best cost=", very_best_cost)
+        #print("Very best free energy=", very_best_cost)
         for percentage_factor in (1.02, 1.05, 1.1, 1.2):
-            label = "Within %i%% of best cost" % int((percentage_factor - 1)*100+0.4)
+            label = "Within %i%% of best free energy" % int((percentage_factor - 1)*100+0.4)
             points = []
            
             for idx, point_val in enumerate(kwargs["points_values"]):
@@ -335,11 +349,11 @@ def param_conv(subplots, samples, param, **kwargs):
     plt.savefig("%s.png" % kwargs.get("savename", "fig"))
     print("Done param conv plot: %s" % title)
 
-# Best cost by learning rate for various sample sizes
+# Best free energy by learning rate for various sample sizes
 line(
-    title="Best cost by learning rate (with covariance): NT=%(nt)i",
-    ylabel="Cost",
-    xlabel="Learning rate",
+    title="Best free energy by learning rate (with covariance): N=%(nt)i",
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
     ylim=[(10, 40), (20, 60), (30, 100), (60, 150)],
     subplots={"param" : ("nt", NT),},
     lines=("ss", SAMPLE_SIZES),
@@ -351,9 +365,9 @@ line(
 )
 
 line(
-    title="Best cost by learning rate (no covariance): NT=%(nt)i",
-    ylabel="Cost",
-    xlabel="Learning rate",
+    title="Best free energy by learning rate (no covariance): N=%(nt)i",
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
     ylim=[(10, 40), (20, 60), (30, 100), (60, 150)],
     subplots={"param" : ("nt", NT),},
     lines=("ss", SAMPLE_SIZES),
@@ -366,9 +380,9 @@ line(
 
 # Convergence speed by sample size
 conv_speed(
-    title="Convergence speed by sample size (with covariance): NT=%(nt)i",
-    ylabel="Time to convergence",
-    xlabel="Sample size",
+    title="Convergence by sample size (with covariance): N=%(nt)i",
+    ylabel=r"Time to convergence $s$",
+    xlabel=r"Sample size $L$",
     subplots={"param" : ("nt", NT),},
     points_param="ss",
     points_values=SAMPLE_SIZES,
@@ -378,9 +392,9 @@ conv_speed(
 )
 
 conv_speed(
-    title="Convergence speed by sample size (no covariance): NT=%(nt)i",
-    ylabel="Time to convergence",
-    xlabel="Sample size",
+    title="Convergence by sample size (no covariance): N=%(nt)i",
+    ylabel=r"Time to convergence $s$",
+    xlabel=r"Sample size $L$",
     subplots={"param" : ("nt", NT),},
     points_param="ss",
     points_values=SAMPLE_SIZES,
@@ -389,10 +403,10 @@ conv_speed(
     savename="conv_speed_ss_nocov",
 )
 
-# Convergence of cost by sample size
+# Convergence of free energy by sample size
 """line(
-    title="Convergence by sample size (with covariance): NT=%(nt)i",
-    ylabel="Cost",
+    title="Convergence by sample size (with covariance): N=%(nt)i",
+    ylabel="Free energy",
     xlabel="Runtime (s)",
     ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
     subplots={"param" : ("nt", NT),},
@@ -405,8 +419,8 @@ conv_speed(
 )
 
 line(
-    title="Convergence by sample size (no covariance): NT=%(nt)i",
-    ylabel="Cost",
+    title="Convergence by sample size (no covariance): N=%(nt)i",
+    ylabel="Free energy",
     xlabel="Runtime (s)",
     ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
     subplots={"param" : ("nt", NT),},
@@ -420,10 +434,10 @@ line(
 """
 
 """
-# Convergence of cost by learning rate
+# Convergence of free energy by learning rate
 line(
-    title="Convergence of cost (with covariance): NT=%(nt)i",
-    ylabel="Cost",
+    title="Convergence of free energy (with covariance): N=%(nt)i",
+    ylabel="Free energy",
     ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
     subplots={"param" : ("nt", NT),},
     lines=("lr", LEARNING_RATES),
@@ -434,8 +448,8 @@ line(
 )
 
 line(
-    title="Convergence of cost (no covariance): NT=%(nt)i",
-    ylabel="Cost",
+    title="Convergence of free energy (no covariance): N=%(nt)i",
+    ylabel="Free energy",
     ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
     subplots={"param" : ("nt", NT),},
     lines=("lr", LEARNING_RATES),
@@ -447,10 +461,10 @@ line(
 """
 
 """
-# Convergence of cost by batch size
+# Convergence of free energy by batch size
 line(
-    title="Convergence of cost by batch size (with covariance): NT=%(nt)i",
-    ylabel="Cost",
+    title="Convergence of free energy by batch size (with covariance): N=%(nt)i",
+    ylabel="Free energy",
     ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
     subplots={"param" : ("nt", NT),},
     lines=("bs", BATCH_SIZES),
@@ -462,8 +476,8 @@ line(
 )
 
 line(
-    title="Convergence of cost by batch size (no covariance): NT=%(nt)i",
-    ylabel="Cost",
+    title="Convergence of free energy by batch size (no covariance): N=%(nt)i",
+    ylabel="Free energy",
     ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
     subplots={"param" : ("nt", NT),},
     lines=("bs", BATCH_SIZES),
@@ -475,11 +489,11 @@ line(
 )
 """
 
-# Best cost by learning rate for various batch sizes
+# Best free energy by learning rate for various batch sizes
 line(
-    title="Best cost by batch size (with covariance): NT=%(nt)i",
-    ylabel="Cost",
-    xlabel="Batch size",
+    title="Best free energy by batch size (with covariance): N=%(nt)i",
+    ylabel="Free energy",
+    xlabel=r"Batch size $B$",
     ylim=[(10, 40), (20, 60), (30, 100), (60, 150)],
     subplots={"param" : ("nt", NT),},
     lines=("bs", BATCH_SIZES),
@@ -492,10 +506,10 @@ line(
 )
 
 line(
-    title="Best cost by batch size (no covariance): NT=%(nt)i",
-    ylabel="Cost",
-    xlabel="Batch size",
-    ylim=[(10, 40), (20, 60), (30, 100), (60, 150)],
+    title="Best free energy by batch size (no covariance): N=%(nt)i",
+    ylabel="Free energy",
+    xlabel=r"Batch size $B$",
+    ylim=[(15, 25), (22, 40), (39, 90), (60, 150)],
     subplots={"param" : ("nt", NT),},
     lines=("bs", BATCH_SIZES),
     ss=20,
@@ -508,9 +522,9 @@ line(
 
 # Convergence speed by batch size
 conv_speed(
-    title="Convergence speed by batch size (with covariance): NT=%(nt)i",
-    ylabel="Time to convergence",
-    xlabel="Batch size",
+    title="Convergence by batch size (with covariance): N=%(nt)i",
+    ylabel=r"Time to convergence $s$",
+    xlabel=r"Batch size $B$",
     subplots={"param" : ("nt", NT),},
     points_param="bs",
     ss=20,
@@ -521,9 +535,9 @@ conv_speed(
 )
 
 conv_speed(
-    title="Convergence speed by batch size (no covariance): NT=%(nt)i",
-    ylabel="Time to convergence",
-    xlabel="Batch size",
+    title="Convergence by batch size (no covariance): N=%(nt)i",
+    ylabel=r"Time to convergence $s$",
+    xlabel=r"Batch size $B$",
     subplots={"param" : ("nt", NT),},
     points_param="bs",
     ss=20,
@@ -535,9 +549,9 @@ conv_speed(
 
 """
 line(
-    title="Mini-batch convergence by sample size (with covariance): NT=%(nt)i",
-    ylabel="Cost",
-    xlabel="Sample size",
+    title="Mini-batch convergence by sample size (with covariance): N=%(nt)i",
+    ylabel="Free energy",
+    xlabel=r"Sample size $L$",
     ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
     subplots={"param" : ("nt", NT),},
     lines=("ss", SAMPLE_SIZES),
@@ -550,9 +564,9 @@ line(
 )
 
 line(
-    title="Mini-batch convergence by sample size (no covariance): NT=%(nt)i",
-    ylabel="Cost",
-    xlabel="Sample size",
+    title="Mini-batch convergence by sample size (no covariance): N=%(nt)i",
+    ylabel="Free energy",
+    xlabel=r"Sample size $L$",
     ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
     subplots={"param" : ("nt", NT),},
     lines=("ss", SAMPLE_SIZES),
@@ -567,8 +581,8 @@ line(
 
 # Numerical vs analytic approach
 line(
-    title="Best cost by sample size (with covariance): NT=%(nt)i",
-    ylabel="Cost",
+    title="Best free energy by sample size (with covariance): N=%(nt)i",
+    ylabel="Free energy",
     #ylim=[(10, 40), (20, 60), (30, 100), (60, 150)],
     subplots={"param" : ("nt", NT),},
     lines=("num", NUM),
@@ -582,8 +596,8 @@ line(
 )
 
 line(
-    title="Best cost by sample size (no covariance): NT=%(nt)i",
-    ylabel="Cost",
+    title="Best free energy by sample size (no covariance): N=%(nt)i",
+    ylabel="Free energy",
     #ylim=[(10, 40), (20, 60), (30, 100), (60, 150)],
     subplots={"param" : ("nt", NT),},
     lines=("num", NUM),
@@ -599,7 +613,7 @@ line(
 """
 for param in ("amp1", "amp2", "r1", "r2"):
     param_conv(
-        title="Convergence of " + param + " (with covariance): NT=%(nt)i" ,
+        title="Convergence of " + param + " (with covariance): N=%(nt)i" ,
         ylabel="Parameter value",
         subplots={"param" : ("nt", NT),},
         samples=10,
@@ -611,7 +625,7 @@ for param in ("amp1", "amp2", "r1", "r2"):
     )
 
     param_conv(
-        title="Convergence of " + param + " (no covariance): NT=%(nt)i",
+        title="Convergence of " + param + " (no covariance): N=%(nt)i",
         ylabel="Parameter value",
         subplots={"param" : ("nt", NT),},
         samples=10,
@@ -622,6 +636,156 @@ for param in ("amp1", "amp2", "r1", "r2"):
         savename="conv_%s_nocov" % param,
     )
 """
+boxplot(
+    title=r"$A_1$: %(method)s",
+    ylabel="Value",
+    ylim=(-10, 30),
+    subplots={
+        "items" : [
+            {
+                "method" : "sVB (no covariance)",
+                "cov" : "nocov",
+            },
+            {
+                "method" : "sVB (with covariance)",
+                "cov" : "cov",
+            },
+            {
+                "method" : "aVB",
+                "subdir_format" : "lfab2_nt_%(nt)i",
+            },
+        ],
+        "layout" : (3, 1),
+    },
+    figsize=(10, 5),
+    param="amp1",
+    boxes=("nt", NT),
+    lr=0.05,
+    ss=20,
+    savename="amp1_method",
+    showfliers=True,
+)
+
+boxplot(
+    title=r"$A_2$: %(method)s",
+    ylabel="Value",
+    ylim=(-10, 30),
+    subplots={
+        "items" : [
+            {
+                "method" : "sVB (no covariance)",
+                "cov" : "nocov",
+            },
+            {
+                "method" : "sVB (with covariance)",
+                "cov" : "cov",
+            },
+            {
+                "method" : "aVB",
+                "subdir_format" : "lfab2_nt_%(nt)i",
+            },
+        ],
+        "layout" : (3, 1),
+    },
+    figsize=(10, 5),
+    param="amp2",
+    boxes=("nt", NT),
+    lr=0.05,
+    ss=20,
+    savename="amp2_method",
+    showfliers=True,
+)
+
+boxplot(
+    title=r"$R_1$: %(method)s",
+    ylabel="Value",
+    ylim=(-5, 5),
+    subplots={
+        "items" : [
+            {
+                "method" : "sVB (no covariance)",
+                "cov" : "nocov",
+            },
+            {
+                "method" : "sVB (with covariance)",
+                "cov" : "cov",
+            },
+            {
+                "method" : "aVB",
+                "subdir_format" : "lfab2_nt_%(nt)i",
+            },
+        ],
+        "layout" : (3, 1),
+    },
+    figsize=(10, 5),
+    param="r1",
+    boxes=("nt", NT),
+    lr=0.05,
+    ss=20,
+    savename="r1_method",
+    showfliers=True,
+)
+
+boxplot(
+    title=r"$R_2$: %(method)s",
+    ylabel="Value",
+    ylim=(-10, 30),
+    subplots={
+        "items" : [
+            {
+                "method" : "sVB (no covariance)",
+                "cov" : "nocov",
+            },
+            {
+                "method" : "sVB (with covariance)",
+                "cov" : "cov",
+            },
+            {
+                "method" : "aVB",
+                "subdir_format" : "lfab2_nt_%(nt)i",
+            },
+        ],
+        "layout" : (3, 1),
+    },
+    figsize=(10, 5),
+    param="r2",
+    boxes=("nt", NT),
+    lr=0.05,
+    ss=20,
+    savename="r2_method",
+    showfliers=True,
+)
+
+boxplot(
+    title="noise: %(method)s",
+    ylabel="Value",
+    ylim=(-1, 3),
+    subplots={
+        "items" : [
+            {
+                "method" : "sVB (no covariance)",
+                "cov" : "nocov",
+            },
+            {
+                "method" : "sVB (with covariance)",
+                "cov" : "cov",
+            },
+            {
+                "method" : "aVB",
+                "subdir_format" : "lfab2_nt_%(nt)i",
+            },
+        ],
+        "layout" : (3, 1),
+    },
+    figsize=(10, 5),
+    param="noise",
+    boxes=("nt", NT),
+    lr=0.05,
+    ss=20,
+    savename="noise_method",
+    showfliers=True,
+)
+
 boxplot(
     title="%(param)s (with covariance)",
     ylabel="Value",
@@ -648,11 +812,23 @@ boxplot(
     showfliers=True,
 )
 
+boxplot(
+    title="%(param)s (VB with covariance)",
+    ylabel="Value",
+    ylim=[(-10, 30), (-10, 30), (-5, 5), (-10, 30), (-1, 3)],
+    subplots={"param" : ("param", ("amp1", "amp2", "r1", "r2", "noise")),},
+    boxes=("nt", NT),
+    cov="cov",
+    savename="params_vb_cov",
+    showfliers=True,
+    subdir_format="lfab_nt_%(nt)i",
+)
+
 """
 # Convergence of parameters by sample size
 boxplot(
-    title="amp1 by sample size (with covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="amp1 by sample size (with covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -664,8 +840,8 @@ boxplot(
 )
 
 boxplot(
-    title="amp1 by sample size (no covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="amp1 by sample size (no covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -677,8 +853,8 @@ boxplot(
 )
 
 boxplot(
-    title="amp2 by sample size (with covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="amp2 by sample size (with covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -690,8 +866,8 @@ boxplot(
 )
 
 boxplot(
-    title="amp2 by sample size (no covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="amp2 by sample size (no covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -703,8 +879,8 @@ boxplot(
 )
 
 boxplot(
-    title="r1 by sample size (with covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="r1 by sample size (with covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-1, 2),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -716,8 +892,8 @@ boxplot(
 )
 
 boxplot(
-    title="r1 by sample size (no covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="r1 by sample size (no covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-1, 2),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -729,8 +905,8 @@ boxplot(
 )
 
 boxplot(
-    title="r2 by sample size (with covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="r2 by sample size (with covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -742,8 +918,8 @@ boxplot(
 )
 
 boxplot(
-    title="r2 by sample size (no covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="r2 by sample size (no covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -758,8 +934,8 @@ boxplot(
 """
 
 boxplot(
-    title="amp1 by sample size (analytic with covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="amp1 by sample size (analytic with covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -772,8 +948,8 @@ boxplot(
 )
 
 boxplot(
-    title="amp1 by sample size (numerical with covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="amp1 by sample size (numerical with covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -786,8 +962,8 @@ boxplot(
 )
 
 boxplot(
-    title="amp1 by sample size (analytic no covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="amp1 by sample size (analytic no covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -800,8 +976,8 @@ boxplot(
 )
 
 boxplot(
-    title="amp1 by sample size (numerical no covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="amp1 by sample size (numerical no covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-10, 30),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -814,8 +990,8 @@ boxplot(
 )
 
 boxplot(
-    title="r1 by sample size (analytic with covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="r1 by sample size (analytic with covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-1, 3),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -828,8 +1004,8 @@ boxplot(
 )
 
 boxplot(
-    title="r1 by sample size (numerical with covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="r1 by sample size (numerical with covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-1, 3),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -842,8 +1018,8 @@ boxplot(
 )
 
 boxplot(
-    title="r1 by sample size (analytic no covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="r1 by sample size (analytic no covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-1, 3),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
@@ -856,8 +1032,8 @@ boxplot(
 )
 
 boxplot(
-    title="r1 by sample size (numerical no covariance): NT=%(nt)i",
-    ylabel="Sample size",
+    title="r1 by sample size (numerical no covariance): N=%(nt)i",
+    ylabel=r"Sample size $L$",
     ylim=(-1, 3),
     subplots={"param" : ("nt", NT),},
     boxes=("ss", SAMPLE_SIZES),
