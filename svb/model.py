@@ -1,7 +1,11 @@
 """
 Base class for a forward model whose parameters are to be fitted
 """
-import tensorflow as tf
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
+   
 import numpy as np
 
 from .utils import LogBase
@@ -104,6 +108,8 @@ class Model(LogBase):
         Generate test data by evaluating the model on known parameter values
         with optional added noise
 
+        FIXME this is non-functional at present.
+
         :param tpts: 1xN or MxN tensor of time values (possibly varying by voxel)
         :param params_map: Mapping from parameter name either a single parameter
                            value or a sequence of M parameter values. The special
@@ -115,24 +121,29 @@ class Model(LogBase):
                 contains the noisy data. If noise is not present, only a single
                 array is returned.
         """
-        param_values = None
+        param_values = {}
         for idx, param in enumerate(self.params):
             if param.name not in params_map:
                 raise IndexError("Required parameter not found: %s" % param.name)
             elif isinstance(params_map[param.name], (float, int)):
                 value_sequence = np.reshape([params_map[param.name]], (1, 1))
-            else:
-                # FIXME check if sequence type
+            elif isinstance(params_map[param.name], collections.Sequence):
                 value_sequence = np.reshape(params_map[param.name], (-1, 1))
-
-            if param_values is None:
-                param_values = np.zeros((len(self.params), len(value_sequence), len(tpts)))
-
-            if len(value_sequence) != param_values.shape[1]:
-                raise ValueError("Parameter %s has wrong number of values: %i (expected %i)" %
-                                 (param.name, len(value_sequence), param_values.shape[1]))
             else:
-                param_values[idx, :, :] = value_sequence
+                raise ValueError("Unsupported value for parameter '%s': %s" % (param.name, params_map[param.name]))
+
+            param_values[param.name] = value_sequence
+
+        max_num_values = max([len(param_values[name]) for name in param_values.keys()])
+
+        param_values_array = np.zeros((len(self.params), max_num_values, len(tpts)))
+        for name, values in param_values.items():
+
+            if len(values) != 1 and len(values) != max_num_values:
+                raise ValueError("Parameter %s has wrong number of values: %i (expected %i)" %
+                                 (param.name, len(values), max_num_values))
+            else:
+                param_values[idx, :, :] = values
 
         with tf.Session():
             clean = self.evaluate(param_values, tpts).eval()
@@ -142,3 +153,15 @@ class Model(LogBase):
                 return clean, noisy
             else:
                 return clean
+
+    def log_config(self, log=None):
+        """
+        Write model configuration to a log stream
+        
+        :param: log Optional logger to use - defaults to class instance logger
+        """
+        if log is None:
+            log = self.log
+        log.info("Model: %s", str(self))
+        for option in self.OPTIONS:
+            log.info(" - %s: %s", option.desc, str(getattr(self, option.attr_name)))

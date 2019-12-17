@@ -24,8 +24,13 @@ V and W are currently identical but may not be in the future. For example
 we may want to estimate parameters on a surface (W=number of surface 
 vertices) using data defined on a volume (V=number of voxels).
 """
+import six
+
 import numpy as np
-import tensorflow as tf
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
 
 from .noise import NoiseParameter
 from .prior import NormalPrior, FactorisedPrior, get_prior
@@ -133,7 +138,7 @@ class SvbFit(LogBase):
 
         # Optional increase in the sample size - to disable set factor to 1.0
         self.ss_increase_factor = tf.placeholder(tf.float32, shape=[])
-        self.num_samples = tf.cast(tf.round(tf.train.exponential_decay(
+        self.sample_size = tf.cast(tf.round(tf.train.exponential_decay(
             tf.to_float(self.initial_ss),
             self.global_step,
             self.num_steps,
@@ -169,7 +174,7 @@ class SvbFit(LogBase):
         # Create posterior distribution - note this can be initialized using the actual data
         gaussian_posts, nongaussian_posts, all_posts = [], [], []
         for idx, param in enumerate(self.params):    
-            post = get_posterior(param, self.tpts_train, self.data_full, **kwargs)
+            post = get_posterior(idx, param, self.tpts_train, self.data_full, init=self.data_model.post_init, **kwargs)
             if isinstance(post, NormalPosterior):
                 gaussian_posts.append(post)
                 # FIXME Noise parameter hack
@@ -183,10 +188,11 @@ class SvbFit(LogBase):
 
         if self._infer_covar:
             self.log.info(" - Inferring covariances (correlation) between %i Gaussian parameters" % len(gaussian_posts))
-            self.post = MVNPosterior(gaussian_posts, name="post", **kwargs)
             if nongaussian_posts:
                 self.log.info(" - Adding %i non-Gaussian parameters" % len(nongaussian_posts))
-                self.post = FactorisedPosterior([self.post,] + nongaussian_posts, name="post", **kwargs)
+                self.post = FactorisedPosterior([MVNPosterior(gaussian_posts, **kwargs)] + nongaussian_posts, name="post", **kwargs)
+            else:
+                self.post = MVNPosterior(gaussian_posts, name="post", init=self.data_model.post_init, **kwargs)
 
             # Depending on whether the noise is gaussian or not it may appear in 
             # a different position in the parameter lists
@@ -235,10 +241,11 @@ class SvbFit(LogBase):
         :return Tensor [V x S x B]. B is the batch size, so for each voxel and sample
                 we return a prediction which can be compared with the data batch
         """
-        sample_params, mean_params = [], []
+        model_samples, model_means, model_vars = [], [], []
         for idx, param in enumerate(self.params):
-            int_sample_params = samples[:, idx, :]
-            int_mean_params = self.post.mean[:, idx]
+            int_samples = samples[:, idx, :]
+            int_means = self.post.mean[:, idx]
+            int_vars = self.post.var[:, idx]
             
             # Transform the underlying Gaussian samples into the values required by the model
             # This depends on each model parameter's underlying distribution
@@ -249,26 +256,36 @@ class SvbFit(LogBase):
             if idx != self.noise_idx:
                 # Skip the noise parameter for now as the model expects to be passed its own parameters
                 # in order
-                sample_params.append(tf.expand_dims(param.post_dist.transform.ext_values(int_sample_params), -1))
-                mean_params.append(param.post_dist.transform.ext_values(int_mean_params))
+                model_samples.append(tf.expand_dims(param.post_dist.transform.ext_values(int_samples), -1))
+                ext_means, ext_vars = param.post_dist.transform.ext_moments(int_means, int_vars)
+                model_means.append(ext_means)
+                model_vars.append(ext_vars)
 
         # Put the noise parameter at the end
-        sample_params.append(tf.expand_dims(param.post_dist.transform.ext_values(samples[:, self.noise_idx, :]), -1))
-        mean_params.append(param.post_dist.transform.ext_values(self.post.mean[:, self.noise_idx]))
-
-        sample_params = self.log_tf(tf.identity(sample_params, name="sample_params"), shape=True)
-        mean_params = self.log_tf(tf.identity(mean_params, name="model_params"), shape=True)
+        param = self.params[self.noise_idx]
+        int_samples = samples[:, self.noise_idx, :]
+        int_means = self.post.mean[:, self.noise_idx]
+        int_vars = self.post.var[:, self.noise_idx]
+        model_samples.append(tf.expand_dims(param.post_dist.transform.ext_values(int_samples), -1))
+        ext_means, ext_vars = param.post_dist.transform.ext_moments(int_means, int_vars)
+        model_means.append(ext_means)
+        model_vars.append(ext_vars)
+        
+        # Define convenience tensors for querying the model-space sample, means and prediction
+        self.model_samples = self.log_tf(tf.identity(model_samples, name="model_samples"))
+        self.model_means = self.log_tf(tf.identity(model_means, name="model_means"))
+        self.model_vars = self.log_tf(tf.identity(model_vars, name="model_vars"))
+        self.modelfit = self.log_tf(tf.identity(self.model.evaluate(tf.expand_dims(self.model_means, -1), self.tpts_train), "modelfit"))
 
         # The timepoints tensor has shape [V x B] or [1 x B]. It needs to be reshaped
         # to [V x 1 x B] or [1 x 1 x B] so it can be broadcast across each of the S samples
-        tpts = tf.reshape(self.tpts_train, [tf.shape(self.tpts_train)[0], 1, tf.shape(self.tpts_train)[1]])
+        sample_tpts = self.log_tf(tf.expand_dims(self.tpts_train, 1), name="sample_tpts")
 
         # Evaluate the model using the transformed values
         # Model prediction has shape [W x S x B]
-        sample_prediction = self.log_tf(tf.identity(self.model.evaluate(sample_params, tpts),
-                                                    "model_prediction"), shape=True)
-        self.log_tf(tf.identity(self.model.evaluate(mean_params, tpts), "modelfit"), shape=True)
-        return sample_prediction
+        self.sample_predictions = self.log_tf(tf.identity(self.model.evaluate(model_samples, sample_tpts),
+                                                          "sample_predictions"), shape=True)
+        return self.sample_predictions
 
     def _create_loss_optimizer(self):
         """
@@ -284,7 +301,7 @@ class SvbFit(LogBase):
            prior
         """
         # Generate a set of samples from the posterior [W x P x B]
-        samples = self.post.sample(self.num_samples)
+        samples = self.post.sample(self.sample_size)
 
         #samples = tf.boolean_mask(samples, self.voxel_mask)
         #data = tf.boolean_mask(self.data_train, self.voxel_mask)
@@ -343,35 +360,33 @@ class SvbFit(LogBase):
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.optimize = self.optimizer.minimize(self.mean_cost, global_step=self.global_step)
 
-    def initialize(self):
-        """
-        Initialize global variables - i.e. initial values of posterior which
-        may depend on the full data
-        """
-        self.sess.run(self.init, feed_dict=self.feed_dict)
-        # Save the initial posterior
-        #self.mean_1 = self.output("post_mean")
-        #self.covar_1 = self.output("post_cov")
-
     def fit_batch(self):
         """
         Train model based on mini-batch of input data.
 
         :return: Tuple of total cost of mini-batch, latent cost and reconstruction cost
         """
-        _, cost, latent, reconstr = self.sess.run([self.optimize,
-                                                   self.cost,
-                                                   self.latent_loss,
-                                                   self.reconstr_loss], feed_dict=self.feed_dict)
+        _, cost, latent, reconstr = self.evaluate(self.optimize, self.cost, self.latent_loss, self.reconstr_loss)
         return cost, latent, reconstr
 
-    def output(self, name):
+    def evaluate(self, *tensors):
         """
-        Evaluate an output tensor
+        Evaluate tensor values
 
-        e.g. ``output("mean")`` returns the current posterior means
+        :param tensors: Sequence of tensors or names of tensors
+        :return: If single tensor requested, it's value as Numpy array. Otherwise tuple of Numpy arrays
         """
-        return self.sess.run((self.sess.graph.get_tensor_by_name("%s:0" % name),), feed_dict=self.feed_dict)[0]
+        actual_tensors = []
+        for t in tensors:
+            if isinstance(t, six.string_types):
+                t = self.sess.graph.get_tensor_by_name("%s:0" % t)
+            actual_tensors.append(t)
+
+        out = self.sess.run(actual_tensors, feed_dict=self.feed_dict)
+        if len(out) == 1:
+            return out[0]
+        else:
+            return tuple(out)
 
     def state(self):
         """
@@ -379,18 +394,16 @@ class SvbFit(LogBase):
 
         This can be used to restart from a previous state if a numerical error occurs
         """
-        tensors = self.post.state()
-        return self.sess.run(tensors, feed_dict=self.feed_dict)
-
+        return self.evaluate(self.post.state())
+        
     def set_state(self, state):
         """
         Set the state of the optimization
 
         :param state: State as returned by the ``state()`` method
         """
-        ops = self.post.set_state(state)
-        self.sess.run(ops, feed_dict=self.feed_dict)
-
+        self.evaluate(self.post.set_state(state))
+        
     def train(self, tpts, data,
               batch_size=None, sequential_batches=False,
               epochs=100, fit_only_epochs=0, display_step=1,
@@ -441,10 +454,12 @@ class SvbFit(LogBase):
             sample_size = batch_size
 
         # Cost and parameter histories, mean and voxelwise
-        mean_cost_history = np.zeros([epochs+1])
-        voxel_cost_history = np.zeros([n_voxels, epochs+1])
-        mean_param_history = np.zeros([epochs+1, self._nparams])
-        voxel_param_history = np.zeros([n_voxels, epochs+1, self._nparams])
+        training_history = {
+            "mean_cost" : np.zeros([epochs+1]),
+            "voxel_cost" : np.zeros([n_voxels, epochs+1]),
+            "mean_params" : np.zeros([epochs+1, self._nparams]),
+            "voxel_params" : np.zeros([n_voxels, epochs+1, self._nparams]),
+        }
 
         # Training cycle
         self.feed_dict = {
@@ -454,8 +469,11 @@ class SvbFit(LogBase):
             self.lr_decay_rate : lr_decay_rate,
             self.initial_ss : sample_size,
             self.ss_increase_factor : ss_increase_factor,
+            self.data_train: data,
+            self.tpts_train : tpts,
+            self.latent_weight : 1.0,
         }
-        self.initialize()
+        self.evaluate(self.init)
 
         trials, best_cost, best_state = 0, 1e12, None
         latent_weight = 0
@@ -469,13 +487,20 @@ class SvbFit(LogBase):
         self.log.info(" - Initial sample size: %i (increase factor %.3f)", sample_size, ss_increase_factor)
         if revert_post_trials > 0:
             self.log.info(" - Posterior reversion after %i trials", revert_post_trials)
-            
+
+        initial_means = np.mean(self.evaluate(self.model_means), axis=1)
+        initial_vars = np.mean(self.evaluate(self.post.var), axis=0)
+        initial_cost = np.mean(self.evaluate(self.cost))
+        initial_latent = np.mean(self.evaluate(self.latent_loss))
+        initial_reconstr = np.mean(self.evaluate(self.reconstr_loss))
+        self.log.info(" - Start 0000: mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s", 
+                      initial_cost, initial_latent, initial_reconstr, initial_means, initial_vars)
         for epoch in range(epochs):
             try:
+                err = False
                 total_cost = np.zeros([n_voxels])
                 total_latent = np.zeros([n_voxels])
                 total_reconstr = np.zeros([n_voxels])
-                err, index = False, 0
 
                 if epoch == fit_only_epochs:
                     # Once we have completed fit_only_epochs of training we will allow the latent cost to have
@@ -488,13 +513,13 @@ class SvbFit(LogBase):
                     #print(i)
                     if sequential_batches:
                         # Batches are defined by sequential data time points
+                        index = i*batch_size
                         if i == n_batches - 1:
                             # Batch size may not be an exact factor of the number of time points
                             # so make the last batch the right size so all of the data is used
                             batch_size += n_timepoints - n_batches * batch_size
                         batch_data = data[:, index:index+batch_size]
                         batch_tpts = tpts[:, index:index+batch_size]
-                        index = index + batch_size
                     else:
                         # Batches are defined by constant strides through the data time points
                         # This automatically handles case where number of time point does not
@@ -509,10 +534,6 @@ class SvbFit(LogBase):
                         self.latent_weight : latent_weight,
                     })
                     batch_cost, batch_latent, batch_reconstr = self.fit_batch()
-
-                    # Add contribution to mean cost over all batches (i.e. the whole data set)
-                    # Note that batches are equally weighted which might not be quite right
-                    # if they are different sizes
                     total_cost += batch_cost / n_batches
                     total_latent += batch_latent / n_batches
                     total_reconstr += batch_reconstr / n_batches
@@ -521,22 +542,21 @@ class SvbFit(LogBase):
                 self.log.exception("Numerical error fitting batch")
                 err = True
 
-            # Record the cost and parameter values at the end of each epoch. We do
-            # this voxelwise and the mean over voxels
-            params = self.output("model_params") # [P, W]
-            var = self.output("post_var") # [W, P]
-            current_lr, global_step = self.sess.run((self.learning_rate, self.global_step), feed_dict=self.feed_dict)
+            # Record the cost and parameter values at the end of each epoch.
+            params = self.evaluate(self.model_means) # [P, W]
+            var = self.evaluate(self.post.var) # [W, P]
+            current_lr, current_ss = self.evaluate(self.learning_rate, self.sample_size)
             mean_params = np.mean(params, axis=1)
             mean_var = np.mean(var, axis=0)
 
             mean_total_cost = np.mean(total_cost)
             mean_total_latent = np.mean(total_latent)
             mean_total_reconst = np.mean(total_reconstr)
-
-            mean_cost_history[epoch] = mean_total_cost
-            voxel_cost_history[:, epoch] = total_cost
-            mean_param_history[epoch, :] = mean_params
-            voxel_param_history[:, epoch, :] = params.transpose()
+            
+            training_history["mean_cost"][epoch] = mean_total_cost
+            training_history["voxel_cost"][:, epoch] = total_cost
+            training_history["mean_params"][epoch, :] = mean_params
+            training_history["voxel_params"][:, epoch, :] = params.transpose()
 
             if err or np.isnan(mean_total_cost) or np.any(np.isnan(mean_params)):
                 # Numerical errors while processing this epoch. Revert to best saved params if possible
@@ -567,9 +587,9 @@ class SvbFit(LogBase):
                     outcome = "Not saving"
 
             if epoch % display_step == 0:
-                state_str = "mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s lr=%f, step=%i" % (
-                    mean_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var, current_lr, global_step)
-                self.log.info("Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
+                state_str = "mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s lr=%f, ss=%i" % (
+                    mean_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var, current_lr, current_ss)
+                self.log.info(" - Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
                 
         # At the end of training we revert to the state with best mean cost and write a final history step
         # with these values. Note that the cost may not be as reported earlier as this was based on a
@@ -577,30 +597,17 @@ class SvbFit(LogBase):
         self.set_state(best_state)
         self.feed_dict[self.data_train] = data
         self.feed_dict[self.tpts_train] = tpts
-        cost = self.output("cost") # [W]
-        params = self.output("model_params") # [P, W]
-        self.log.info("Best mean cost=%f / %f\n", best_cost, np.mean(cost))
-        self.log.info("Final params: %s", np.mean(params, axis=1))
+        cost = self.evaluate(self.cost) # [W]
+        params = self.evaluate(self.model_means) # [P, W]
+        
+        self.log.info(" - Best batch-averaged cost: %f", best_cost)
+        self.log.info(" - Final cost across full data: %f", np.mean(cost))
+        self.log.info(" - Final params: %s", np.mean(params, axis=1))
 
-        cost = self.output("cost") # [W]
-        params = self.output("model_params") # [P, W]
-        self.log.info("Best mean cost=%f / %f\n", best_cost, np.mean(cost))
-        self.log.info("Final params: %s", np.mean(params, axis=1))
+        training_history["mean_cost"][-1] = np.mean(cost)
+        training_history["voxel_cost"][:, -1] = cost
+        training_history["mean_params"][-1, :] = np.mean(params, axis=1)
+        training_history["voxel_params"][:, -1, :] = params.transpose()
 
-        mean_cost_history[-1] = best_cost
-        mean_param_history[-1, :] = np.mean(params, axis=1)
-        voxel_cost_history[:, -1] = cost
-        voxel_param_history[:, -1, :] = params.transpose()
-
-        # Return cost and parameter history and model fit
-        tiled_params = np.reshape(params, list(params.shape) + [1])
-        fit = self.model.ievaluate(tiled_params, tpts)
-        return mean_cost_history, mean_param_history, voxel_cost_history, voxel_param_history, fit
-
-    def modelfit(self, model_params, tpts):
-        """
-        Get the model fit using the current mean model parametes
-        """
-        model_params = self.output("model_params")
-        model_params = np.reshape(model_params, list(model_params.shape) + [1])
-        return self.model.ievaluate(model_params, tpts)
+        # Return training history
+        return training_history

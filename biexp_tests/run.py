@@ -51,12 +51,14 @@ def test_biexp(fname, outdir=".", **kwargs):
         "save_param_history" : True,
         "save_cost" : True,
         "save_cost_history" : True,
+        "save_log" : True,
+        "save_runtime" : True,
     })
     
-    _runtime, mean_cost_history = svb.main.run(data_fname=fname, model_name="biexp", tee=sys.stdout, **kwargs)
+    _runtime, _svb, training_history = svb.main.run(data=fname, model_name="biexp", log_stream=sys.stdout, **kwargs)
 
     normalize_exps(kwargs["output"])
-    return mean_cost_history
+    return training_history["mean_cost"]
 
 def normalize_exps(outdir):
     """
@@ -111,7 +113,7 @@ def generate_test_data(num_voxels, num_times, dt, m1, m2, l1, l2, noise):
 
 def run_fabber():
     for nt, dt in zip(NT, DT):
-        outdir=os.path.join(BASEDIR, "fab_nt_%i" % nt)
+        outdir=os.path.join(BASEDIR, "lfab2_nt_%i" % nt)
         if os.path.exists(os.path.join(outdir, "logfile")):
             print("Skipping %s" % outdir)
             continue

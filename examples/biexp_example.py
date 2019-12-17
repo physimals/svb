@@ -1,123 +1,132 @@
+# Example fitting of biexponential model
+#
+# This example runs SVB on a set of instances of biexponential data
+# (by default just 4, to make it possible to display the results
+# graphically, but you can up this number and not plot the output
+# if you want a bigger data set)
+#
+# Usage: python biexp_exam
 import sys
-import logging
+import math
 
 import numpy as np
 import matplotlib.pyplot as plt
+import nibabel as nib
 
-from svb import SvbFit, dist
-from svb.models.exp import BiExpModel
+from svb.main import run
 
-log = logging.getLogger(__name__)
-handler = logging.StreamHandler(sys.stdout)
-handler.setLevel(logging.INFO)
-handler.setFormatter(logging.Formatter('%(levelname)s : %(message)s'))
-root = logging.getLogger()
-root.setLevel(logging.INFO)
-root.addHandler(handler)
-
-# set the properties of the simulated data
-n_samples=100
+# Set the properties of the simulated data
+num_times=200
+num_examples = 4
+name = "example_data"
 true_params = {
     "amp1" : 10.0, # the true amplitude of the model
     "amp2" : 10.0,
-    "r1" : 1.0, # the true decay rate
+    "r1" : 1.0,    # the true decay rate
     "r2" : 10.0,
     "noise_sd" : 1.0,
 }
 true_var = true_params["noise_sd"]**2
 
 # For time being, make sure we have a good range of samples based on the choice of R1
-dt = 5.0/(true_params["r1"] * n_samples)
+dt = 5.0/(true_params["r1"] * num_times)
 
-model = BiExpModel(dt=dt)
-log.info("Created model: %s", str(model))
+# Generate test data and write to filenames
+sq_len = int(math.sqrt(num_examples))
+shape = (sq_len, sq_len, 1, num_times)
+data = np.zeros(shape)
+for t_idx in range(num_times):
+    t = t_idx*dt
+    data[..., t_idx] = true_params["amp1"]*math.exp(-true_params["r1"]*t) + \
+                       true_params["amp2"]*math.exp(-true_params["r2"]*t)
+nii = nib.Nifti1Image(data, np.identity(4))
+nii.to_filename(name + ".nii.gz")
+data_noisy = data + np.random.normal(0, true_params["noise_sd"], size=shape)
+nii_noisy = nib.Nifti1Image(data_noisy, np.identity(4))
+nii_noisy.to_filename(name + "_noisy.nii.gz")
 
-tpts = model.tpts(n_tpts=n_samples, shape=[1])
-clean, test_data = model.test_data(tpts, true_params)
-
-# Train model
-kwargs = {
-    "learning_rate" : 0.02,
+# Train model without covariance
+options = {
+    "learning_rate" : 0.005,
     "batch_size" : 10,
     "sample_size" : 10,
-    "epochs" : 1000,
+    "epochs" : 500,
+    "log_stream" : sys.stdout,
+    "save_mean" : True,
+    "save_var" : True,
+    "save_param_history" : True,
+    "save_cost" : True,
+    "save_cost_history" : True,
+    "save_model_fit" : True,
+    "save_log" : True,
 }
-kwargs["param_overrides"] = {
-    "amp1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e1), "initialise" : None},
-    "r1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e1)},
-    "amp2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e1), "initialise" : None},
-    "r2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e1)},
-}
 
-svb = SvbFit(model, **kwargs)
-log.info("Training model...")
-ret = svb.train(tpts, test_data, **kwargs)
+runtime, svb, training_history = run(data_noisy, "biexp", "example_out_nocov", **options)
+mean_cost_history = training_history["mean_cost"]
+cost_history_v = training_history["voxel_cost"]
+param_history_v = training_history["voxel_params"]
+modelfit = svb.evaluate(svb.modelfit)
+means = svb.evaluate(svb.model_means)
+variances = svb.evaluate(svb.model_vars)
+post_mean = svb.evaluate(svb.post.mean)
+post_cov = svb.evaluate(svb.post.cov)
 
-# Get output, transposing as required so first index is by parameter
-mean_cost_history = ret[0]
-cost_history_v = ret[2]
-param_history_v = ret[3]
-modelfit = ret[4]
-means = svb.output("model_params")
-variances = np.transpose(np.diagonal(svb.output("post_cov"), axis1=1, axis2=2))
+runtime, svb, training_history = run(data_noisy, "biexp", "example_out_cov", infer_covar=True, **options)
+mean_cost_history_cov = training_history["mean_cost"]
+cost_history_v_cov = training_history["voxel_cost"]
+param_history_v_cov = training_history["voxel_params"]
+modelfit_cov = svb.evaluate(svb.modelfit)
+means_cov = svb.evaluate(svb.model_means)
+variances_cov = svb.evaluate(svb.model_vars)
 
-svb = SvbFit(model, infer_covar=True, **kwargs)
-log.info("Training model (with covariance)...")
-ret = svb.train(tpts, test_data, **kwargs)
+runtime, svb, training_history = run(data_noisy, "biexp", "example_out_cov_init", infer_covar=True, 
+                                     initial_posterior=(post_mean, post_cov), **options)
+mean_cost_history_cov_init = training_history["mean_cost"]
+cost_history_v_cov_init = training_history["voxel_cost"]
+param_history_v_cov_init = training_history["voxel_params"]
+modelfit_cov_init = svb.evaluate(svb.modelfit)
+means_cov_init = svb.evaluate(svb.model_means)
+variances_cov_init = svb.evaluate(svb.model_vars)
 
-# Get output, transposing as required so first index is by parameter
-mean_cost_history_cov = ret[0]
-cost_history_v_cov = ret[2]
-param_history_v_cov = ret[3]
-modelfit_cov = ret[4]
-means_cov = svb.output("model_params")
-variances_cov = np.transpose(np.diagonal(svb.output("post_cov"), axis1=1, axis2=2))
+if "--show" in sys.argv:
+    # Plot some results
+    clean_data = data.reshape((-1, num_times))
 
+    for idx in range(num_examples):
+        plt.figure(1)
+        plt.suptitle("Cost history (No covariance)")
+        ax1 = plt.subplot(sq_len, sq_len, idx+1)
+        plt.plot(cost_history_v[idx])
 
-#%% plot cost history
-plt.figure(3)
+        plt.figure(2)
+        plt.suptitle("Cost history (With covariance)")
+        ax1 = plt.subplot(sq_len, sq_len, idx+1)
+        plt.plot(cost_history_v_cov[idx])
 
-ax1 = plt.subplot(1,2,1)
-plt.cla()
+        plt.figure(3)
+        plt.suptitle("Cost history (With covariance, pre-initialized)")
+        ax1 = plt.subplot(sq_len, sq_len, idx+1)
+        plt.plot(cost_history_v_cov_init[idx])
 
-plt.subplots_adjust(hspace=2)
-plt.subplots_adjust(wspace=0.8)
+        plt.figure(4)
+        plt.suptitle("Model fit (No covariance)")
+        ax1 = plt.subplot(sq_len, sq_len, idx+1)
+        plt.plot(svb.data_model.data_flattened[idx],'rx')
+        plt.plot(clean_data[idx], 'g')
+        plt.plot(modelfit[idx],'b')
 
-plt.plot(mean_cost_history)
-plt.ylabel('cost')
-plt.xlabel('epochs')
-plt.title('No post correlation')
+        plt.figure(5)
+        plt.suptitle("Model fit (With covariance)")
+        ax1 = plt.subplot(sq_len, sq_len, idx+1)
+        plt.plot(svb.data_model.data_flattened[idx],'rx')
+        plt.plot(clean_data[idx], 'g')
+        plt.plot(modelfit_cov[idx],'b')
 
-ax2 = plt.subplot(1,2,2)
-plt.cla()
+        plt.figure(6)
+        plt.suptitle("Model fit (With covariance, pre-initialized)")
+        ax1 = plt.subplot(sq_len, sq_len, idx+1)
+        plt.plot(svb.data_model.data_flattened[idx],'rx')
+        plt.plot(clean_data[idx], 'g')
+        plt.plot(modelfit_cov_init[idx],'b')
 
-plt.plot(mean_cost_history_cov)
-plt.ylabel('cost')
-plt.xlabel('epochs')
-plt.title('Infer post correlation')
-
-#%% plot the estimated functions overlaid on data
-
-plt.figure(4)
-
-ax1 = plt.subplot(1,2,1)
-plt.cla()
-
-# plot the data
-plt.plot(tpts,test_data[0],'rx')
-# plot the ground truth
-plt.plot(tpts,clean[0],'r')
-plt.plot(tpts,modelfit[0],'b')
-
-plt.figure(4)
-
-ax1 = plt.subplot(1,2,2)
-plt.cla()
-
-# plot the data
-plt.plot(tpts,test_data[0],'rx')
-# plot the ground truth
-plt.plot(tpts,clean[0],'r')
-plt.plot(tpts,modelfit_cov[0],'b')
-
-plt.show()
+    plt.show()

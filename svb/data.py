@@ -1,6 +1,10 @@
 """
 SVB - Data model
 """
+import math
+import collections
+
+import six
 import numpy as np
 import nibabel as nib
 
@@ -14,23 +18,22 @@ class DataModel(LogBase):
     and neighbouring voxel lists
     """
 
-    def __init__(self, data_fname, mask_fname=None):
+    def __init__(self, data, mask=None, **kwargs):
         LogBase.__init__(self)
 
-        self.nii = nib.load(data_fname)
-        self.data_vol = self.nii.get_data()
+        self.nii, self.data_vol = self._get_data(data)
+        while self.data_vol.ndim < 4:
+            self.data_vol = self.data_vol[np.newaxis, ...]
+
         self.shape = list(self.data_vol.shape)[:3]
         self.n_tpts = self.data_vol.shape[3]
         self.data_flattened = self.data_vol.reshape(-1, self.n_tpts)
-        self.log.info("Loaded data from %s", data_fname)
 
         # If there is a mask load it and use it to mask the data
-        if mask_fname:
-            mask_nii = nib.load(mask_fname)
-            self.mask_vol = mask_nii.get_data()
+        if mask:
+            mask_nii, self.mask_vol = self._get_data(mask)
             self.mask_flattened = self.mask_vol.flatten()
             self.data_flattened = self.data_flattened[self.mask_flattened > 0]
-            self.log.info("Loaded mask from %s", mask_fname)
         else:
             self.mask_vol = np.ones(self.shape)
             self.mask_flattened = self.mask_vol.flatten()
@@ -39,6 +42,11 @@ class DataModel(LogBase):
         
         # FIXME By default parameter space is same as data space
         self.n_vertices = self.n_unmasked_voxels
+
+        if kwargs.get("initial_posterior", None):
+            self.post_init = self._get_posterior_data(kwargs["initial_posterior"])
+        else:
+            self.post_init = None
 
         self._calc_neighbours()
     
@@ -72,7 +80,92 @@ class DataModel(LogBase):
         ndata = np.zeros(shape, dtype=np.float)
         ndata[self.mask_vol > 0] = data
         return nib.Nifti1Image(ndata, None, header=self.nii.header)
-       
+            
+    def posterior_data(self, mean, cov):
+        """
+        Get voxelwise data for the full posterior
+
+        We use the Fabber method of saving the upper triangle of the
+        covariance matrix concatentated with a column of means and
+        an additional 1.0 value to make it square.
+
+        Note that if some of the posterior is factorized or 
+        covariance is not being inferred some or all of the covariances
+        will be zero.
+        """
+        if cov.shape[0] != self.n_unmasked_voxels or mean.shape[0] != self.n_unmasked_voxels:
+            raise ValueError("Posterior data has %i voxels - inconsistent with data model containing %i unmasked voxels" % (cov.shape[0], self.n_unmasked_voxels))
+
+        num_params = mean.shape[1]
+        vols = []
+        for row in range(num_params):
+            for col in range(row+1):
+                vols.append(cov[:, row, col])
+        for row in range(num_params):
+            vols.append(mean[:, row])
+        vols.append(np.ones(mean.shape[0]))
+        return np.array(vols).transpose((1, 0))
+
+    def _get_data(self, data):
+        if isinstance(data, six.string_types):
+            nii = nib.load(data)
+            data_vol = nii.get_data()
+            self.log.info("Loaded data from %s", data)
+        else:
+            nii = nib.Nifti1Image(data, np.identity(4))
+            data_vol = data
+        return nii, data_vol
+
+    def _get_posterior_data(self, post_data):
+        if isinstance(post_data, six.string_types):
+            return self._posterior_from_file(post_data)
+        elif isinstance(post_data, collections.Sequence):
+            return tuple(post_data)
+        else:
+            raise TypeError("Invalid data type for initial posterior: should be filename or tuple of mean, covariance")
+
+    def _posterior_from_file(self, fname):
+        """
+        Read a Nifti file containing the posterior saved using --save-post
+        and extract the covariance matrix and the means
+        
+        This can then be used to initialize a new run - note that
+        no checking is performed on the validity of the data in the MVN
+        other than it is the right size.
+        """
+        post_data = nib.load(fname).get_data()
+        if post_data.ndim !=4:
+            raise ValueError("Posterior input file '%s' is not 4D" % fname)
+        if list(post_data.shape[:3]) != list(self.shape):
+            raise ValueError("Posterior input file '%s' has shape %s - inconsistent with mask shape %s" % (fname, post_data.shape[:3], self.shape))
+
+        post_data = post_data[self.mask_vol > 0]
+        nvols = post_data.shape[1]
+        self.log.info("Posterior image contains %i volumes" % nvols)
+
+        n_params = int((math.sqrt(1+8*float(nvols)) - 3) / 2)
+        nvols_recov = (n_params+1)*(n_params+2) / 2
+        if nvols != nvols_recov:
+            raise ValueError("Posterior input file '%s' has %i volumes - not consistent with upper triangle of square matrix" % (fname, nvols))
+        self.log.info("Posterior image contains %i parameters", n_params)
+        
+        cov = np.zeros((self.n_unmasked_voxels, n_params, n_params), dtype=np.float32)
+        mean = np.zeros((self.n_unmasked_voxels, n_params), dtype=np.float32)
+        vol_idx = 0
+        for row in range(n_params):
+            for col in range(row+1):
+                cov[:, row, col] = post_data[:, vol_idx]
+                cov[:, col, row] = post_data[:, vol_idx]
+                vol_idx += 1
+        for row in range(n_params):
+            mean[:, row] = post_data[:, vol_idx]
+            vol_idx += 1
+        if not np.all(post_data[:, vol_idx] == 1):
+            raise ValueError("Posterior input file '%s' - last volume does not contain 1.0", fname)
+
+        self.log.info("Posterior mean shape: %s, cov shape: %s", mean.shape, cov.shape)
+        return mean, cov
+
     def _calc_neighbours(self):
         """
         Generate nearest neighbour and second nearest neighbour lists

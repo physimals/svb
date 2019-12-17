@@ -1,12 +1,17 @@
 """
 Definition of the posterior distribution
 """
-import tensorflow as tf
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
+
+import numpy as np
 
 from .utils import LogBase
 from . import dist
 
-def get_posterior(param, t, data, **kwargs):
+def get_posterior(idx, param, t, data, **kwargs):
     """
     Factory method to return a posterior
 
@@ -29,10 +34,10 @@ def get_posterior(param, t, data, **kwargs):
         initial_var = param.post_dist.transform.int_values(initial_var)
 
     if param.post_type == "vertexwise" and isinstance(param.post_dist, dist.Normal):
-        return NormalPosterior(initial_mean, initial_var, name=param.name, **kwargs)
+        return NormalPosterior(idx, initial_mean, initial_var, name=param.name, **kwargs)
     
     if param.post_type == "global" and isinstance(param.post_dist, dist.Normal):
-        return GaussianGlobalPosterior(initial_mean, initial_var, name=param.name, **kwargs)
+        return GaussianGlobalPosterior(idx, initial_mean, initial_var, name=param.name, **kwargs)
 
     raise ValueError("Can't create %s posterior for distribution: %s" % (param.post_type, param.post_dist))
         
@@ -40,6 +45,27 @@ class Posterior(LogBase):
     """
     Posterior distribution
     """
+    def __init__(self, idx, **kwargs):
+        LogBase.__init__(self, **kwargs)
+        self._idx = idx
+
+    def _get_mean_var(self, mean, var, init_post):
+        if init_post is not None:
+            mean, cov = init_post
+            #if mean.shape[0] != self.nvertices:
+            #    raise ValueError("Initializing posterior with %i vertices but input contains %i vertices" % (self.nvertices, mean.shape[0]))
+            if self._idx >= mean.shape[1]:
+                raise ValueError("Initializing posterior for parameter %i but input contains %i parameters" % (self._idx+1, mean.shape[1]))
+            
+            # We have been provided with an initialization posterior. Extract the mean and diagonal of the
+            # covariance and use that as the initial values of the mean and variance. Note that the covariance
+            # initialization is only used if this parameter is embedded in an MVN
+            mean = mean[:, self._idx]
+            var = cov[:, self._idx, self._idx]
+            self.log.info(" - Initializing posterior mean and variance from input posterior")
+            self.log.info("     means=%s", np.mean(mean))
+            self.log.info("     vars=%s", np.mean(var))
+        return mean, var
 
     def sample(self, nsamples):
         """
@@ -90,14 +116,17 @@ class NormalPosterior(Posterior):
     distribution
     """
 
-    def __init__(self, mean, var, **kwargs):
+    def __init__(self, idx, mean, var, **kwargs):
         """
         :param mean: Tensor of shape [W] containing the mean at each parameter vertex
         :param var: Tensor of shape [W] containing the variance at each parameter vertex
         """
-        Posterior.__init__(self, **kwargs)
+        Posterior.__init__(self, idx, **kwargs)
         self.nvertices = tf.shape(mean)[0]
         self.name = kwargs.get("name", "NormPost")
+        
+        mean, var = self._get_mean_var(mean, var, kwargs.get("init", None))
+
         self.mean_variable = self.log_tf(tf.Variable(mean, dtype=tf.float32, validate_shape=False,
                                                      name="%s_mean" % self.name))
         self.log_var = tf.Variable(tf.log(tf.cast(var, dtype=tf.float32)), validate_shape=False,
@@ -141,14 +170,16 @@ class GaussianGlobalPosterior(Posterior):
     Posterior which has the same value at every parameter vertex
     """
 
-    def __init__(self, mean, var, **kwargs):
+    def __init__(self, idx, mean, var, **kwargs):
         """
         :param mean: Tensor of shape [W] containing the mean at each parameter vertex
         :param var: Tensor of shape [W] containing the variance at each parameter vertex
         """
-        Posterior.__init__(self, **kwargs)
+        Posterior.__init__(self, idx, **kwargs)
         self.nvertices = tf.shape(mean)[0]
         self.name = kwargs.get("name", "GlobalPost")
+
+        mean, var = self._get_mean_var(mean, var, kwargs.get("init", None))
         
         # Take the mean of the mean and variance across vertices as the initial value
         # in case there is a vertexwise initialization function
@@ -203,27 +234,15 @@ class FactorisedPosterior(Posterior):
     """
 
     def __init__(self, posts, **kwargs):
-        Posterior.__init__(self, **kwargs)
+        Posterior.__init__(self, -1, **kwargs)
         self.posts = posts
         self.nparams = len(self.posts)
         self.name = kwargs.get("name", "FactPost")
 
-        if "init" in kwargs:
-            # We have been provided with an initialization posterior. Extract the mean and diagonal of the
-            # covariance and use that as the initial values of the mean and variance variable tensors
-            mean, cov = kwargs["init"]
-            # Check initialisation posterior has correct number of parameters and vertices
-            if mean.shape[1] != len(self.posts):
-                raise ValueError("Initializing posterior with %i parameters using posterior with %i parameters" % (mean.shape[1], len(self.posts)))
-            #if mean.shape[0] != posts[0].nvertices:
-            #    raise ValueError("Initializing posterior with %i vertices using posterior with %i vertices" % (mean.shape[0], posts[0].nvertices))
-            mean = tf.Variable(mean, dtype=tf.float32, validate_shape=False)
-            var = tf.Variable(tf.matrix_diag_part(cov), dtype=tf.float32, validate_shape=False)
-        else:
-            means = [post.mean for post in self.posts]
-            variances = [post.var for post in self.posts]
-            mean = tf.stack(means, axis=-1, name="%s_mean" % self.name)
-            var = tf.stack(variances, axis=-1, name="%s_var" % self.name)
+        means = [post.mean for post in self.posts]
+        variances = [post.var for post in self.posts]
+        mean = tf.stack(means, axis=-1, name="%s_mean" % self.name)
+        var = tf.stack(variances, axis=-1, name="%s_var" % self.name)
 
         self.mean = self.log_tf(tf.identity(mean, name="%s_mean" % self.name))
         self.var = self.log_tf(tf.identity(var, name="%s_var" % self.name))
@@ -303,13 +322,14 @@ class MVNPosterior(FactorisedPosterior):
         # each parameter vertex, but we then extract only the lower triangular
         # elements and train only on these. The diagonal elements
         # are constructed by the FactorisedPosterior
-        if "init" in kwargs:
+        if kwargs.get("init", None):
             # We are initializing from an existing posterior.
             # The FactorizedPosterior will already have extracted the mean and
             # diagonal of the covariance matrix - we need the Cholesky decomposition
             # of the covariance to initialize the off-diagonal terms
+            self.log.info(" - Initializing posterior covariance from input posterior")
             _mean, cov = kwargs["init"]
-            covar_init = tf.cholesky(cov, dtype=tf.float32)
+            covar_init = tf.cholesky(cov)
         else:
             covar_init = tf.zeros([self.nvertices, self.nparams, self.nparams], dtype=tf.float32)
 

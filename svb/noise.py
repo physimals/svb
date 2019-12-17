@@ -1,8 +1,11 @@
 """
 Noise model
 """
-import tensorflow as tf
-
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
+   
 from .parameter import Parameter
 from . import dist
 
@@ -13,17 +16,16 @@ class NoiseParameter(Parameter):
 
     def __init__(self, **kwargs):
         Parameter.__init__(self, "noise",
-                           prior=dist.Normal(0.0, 10.0),
-                           post=dist.Normal(0.0, 0.02),
+                           prior=dist.LogNormal(1.0, 20.0),
+                           post=dist.LogNormal(1.0, 1.5),
                            post_init=self._init_noise,
                            **kwargs)
 
     def _init_noise(self, _param, _t, data):
         data_mean, data_var = tf.nn.moments(data, axes=1)
+        return tf.where(tf.equal(data_var, 0), tf.ones_like(data_var), data_var), None
 
-        return tf.log(tf.where(tf.equal(data_var, 0), tf.ones_like(data_var), data_var)), None
-
-    def log_likelihood(self, data, pred, noise, nt):
+    def log_likelihood(self, data, pred, noise_var, nt):
         """
         Calculate the log-likelihood of the data
 
@@ -32,31 +34,28 @@ class NoiseParameter(Parameter):
         :param noise: Noise parameter samples tensor with shape [V, S]
         :return: Tensor of shape [V] containing mean log likelihood of the 
                  data at each voxel with respect to the noise parameters
-                 
-        Note that we are using the log of the noise Gaussian variance as the noise parameter
-        here.
         """
         nvoxels = tf.shape(data)[0]
         batch_size = tf.shape(data)[1]
-        draw_size = tf.shape(pred)[1]
+        sample_size = tf.shape(pred)[1]
 
-        log_noise = noise # for clarity
-        #log_noise = tf.fill([nvoxels, draw_size], 0.0)
-        data = self.log_tf(tf.tile(tf.reshape(data, [nvoxels, 1, batch_size]), [1, draw_size, 1], name="data"))
-        pred = self.log_tf(pred)
+        log_noise_var = self.log_tf(tf.log(noise_var, name="log_noise_var"), force=False)
+        data = self.log_tf(tf.tile(tf.reshape(data, [nvoxels, 1, batch_size]), [1, sample_size, 1], name="data"), force=False)
+        pred = self.log_tf(pred, force=False)
 
-        # Square_diff has shape [NV, D, B]
-        square_diff = self.log_tf(tf.square(data - pred, name="square_diff"))
+        # Square_diff has shape [NV, S, B]
+        square_diff = self.log_tf(tf.square(data - pred, name="square_diff"), force=False)
+        sum_square_diff = self.log_tf(tf.reduce_sum(square_diff, axis=-1), name="ssq", force=False)
 
-        # Since we are processing only a batch of the data at a time, we need to scale this term
-        # correctly to the latent loss
+        # Since we are processing only a batch of the data at a time, we need to scale the 
+        # sum of squared differences term correctly. Note that 'nt' is already the full data
+        # size
         scale = self.log_tf(tf.divide(tf.to_float(nt), tf.to_float(batch_size), name="scale"))
 
-        # Log likelihood has shape [NV, D]
-        noise_var = self.log_tf(tf.exp(log_noise, name="noise_var"))
-        log_likelihood = 0.5 * (log_noise * tf.to_float(nt) +
-                                scale * tf.reduce_sum(square_diff, axis=-1) / noise_var)
-        log_likelihood = self.log_tf(tf.identity(log_likelihood, name="log_likelihood"))
+        # Log likelihood has shape [NV, S]
+        log_likelihood = 0.5 * (log_noise_var * tf.to_float(nt) +
+                                scale * sum_square_diff / noise_var)
+        log_likelihood = self.log_tf(tf.identity(log_likelihood, name="log_likelihood"), force=False)
 
         # Mean over samples - reconstr_loss has shape [NV]
         return self.log_tf(tf.reduce_mean(log_likelihood, axis=1, name="mean_log_likelihood"))

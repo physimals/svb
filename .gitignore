@@ -5,6 +5,7 @@ graphs
 doc/html
 asl_tests/*.png
 biexp_tests/*.png
+examples/example_out*
 dist/
 *.egg-info
 _version.py
