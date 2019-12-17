@@ -30,7 +30,7 @@ NT = (10, 20, 50, 100)
 NOISE = 1.0
 
 # Output options
-BASEDIR = "/mnt/hgfs/win/data/svb/biexp2"
+BASEDIR = "/mnt/hgfs/win/data/svb/biexp"
 
 def test_biexp(fname, outdir=".", **kwargs):
     """
@@ -182,101 +182,108 @@ def priors_posteriors(suffix="", **kwargs):
     cases = {
         # Non-informative prior and initial posterior
         "prior_ni_post_ni" : {
-            "amp1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e6), "initialise" : None},
-            "r1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e6)},
-            "amp2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e6), "initialise" : None},
-            "r2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e6)},
+            "amp1" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 1e6, "post_init" : None},
+            "r1" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 1e6, "post_init" : None},
+            "amp2" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 1e6, "post_init" : None},
+            "r2" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 1e6, "post_init" : None},
         },
         # Non-informative prior and initial posterior with data-driven initialisation of mean for amp1 and amp2
         "prior_ni_post_ni_init" : {
-            "amp1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e6)},
-            "r1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e6)},
-            "amp2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e6)},
-            "r2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 1e6)},
+            "amp1" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 1e6},
+            "r1" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 1e6},
+            "amp2" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 1e6},
+            "r2" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 1e6},
         },
         # Non-informative prior, informative posterior
         "prior_ni_post_i" : {
-            "amp1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0), "initialise" : None},
-            "r1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0)},
-            "amp2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0), "initialise" : None},
-            "r2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0)},
+            "amp1" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 2.0, "post_init" : None},
+            "r1" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 2.0, "post_init" : None},
+            "amp2" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 2.0, "post_init" : None},
+            "r2" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 2.0, "post_init" : None},
         },
         # Non-informative prior, informative posterior with data-driven initialisation of mean for amp1 and amp2
         "prior_ni_post_i_init" : {
-            "amp1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0)},
-            "r1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0)},
-            "amp2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0)},
-            "r2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0)},
+            "amp1" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 2.0},
+            "r1" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 2.0},
+            "amp2" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 2.0},
+            "r2" : {"mean" : 1.0, "prior_var" : 1e6, "post_var" : 2.0},
         },
         # Non-informative prior, informative posterior set close to true solution
         "prior_ni_post_i_true" : {
-            "amp1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(10.0, 2.0), "initialise" : None},
-            "r1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(10.0, 2.0)},
-            "amp2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(10.0, 2.0), "initialise" : None},
-            "r2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0)},
+            "amp1" : {"prior_mean" : 1.0, "prior_var" : 1e6, "post_mean" : 10.0, "post_var" : 2.0, "post_init" : None},
+            "r1" : {"prior_mean" : 1.0, "prior_var" : 1e6, "post_mean" : 10.0, "post_var" : 2.0, "post_init" : None},
+            "amp2" : {"prior_mean" : 1.0, "prior_var" : 1e6, "post_mean" : 10.0, "post_var" : 2.0, "post_init" : None},
+            "r2" : {"prior_mean" : 1.0, "prior_var" : 1e6, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
         },
         # Non-informative prior, informative posterior set far from true solution
         "prior_ni_post_i_wrong" : {
-            "amp1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(100.0, 2.0), "initialise" : None},
-            "r1" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0)},
-            "amp2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(100.0, 2.0), "initialise" : None},
-            "r2" : {"prior" : dist.LogNormal(1.0, 1e6), "post" : dist.LogNormal(1.0, 2.0)},
+            "amp1" : {"prior_mean" : 1.0, "prior_var" : 1e6, "post_mean" : 100.0, "post_var" : 2.0, "post_init" : None},
+            "r1" : {"prior_mean" : 1.0, "prior_var" : 1e6, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
+            "amp2" : {"prior_mean" : 1.0, "prior_var" : 1e6, "post_mean" : 100.0, "post_var" : 2.0, "post_init" : None},
+            "r2" : {"prior_mean" : 1.0, "prior_var" : 1e6, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
         },
         # Informative prior, non-informative posterior
         "prior_i_post_ni" : {
-            "amp1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 1e6), "initialise" : None},
-            "r1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 1e6)},
-            "amp2" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 1e6), "initialise" : None},
-            "r2" : {"prior" : dist.LogNormal(1.0, 2.0), "post" : dist.LogNormal(1.0, 1e6)},
+            "amp1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 1e6, "post_init" : None},
+            "r1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 1e6, "post_init" : None},
+            "amp2" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 1e6, "post_init" : None},
+            "r2" : {"prior_mean" : 1.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 1e6, "post_init" : None},
         },
         # Informative prior, non-informative posterior with data-driven initialisation of mean for amp1 and amp2
         "prior_i_post_ni_init" : {
-            "amp1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 1e6)},
-            "r1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 1e6)},
-            "amp2" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 1e6)},
-            "r2" : {"prior" : dist.LogNormal(1.0, 2.0), "post" : dist.LogNormal(1.0, 1e6)},
+            "amp1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 1e6},
+            "r1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 1e6},
+            "amp2" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 1e6},
+            "r2" : {"prior_mean" : 1.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 1e6},
         },
         # Informative prior, informative posterior
         "prior_i_post_i" : {
-            "amp1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0), "initialise" : None},
-            "r1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
-            "amp2" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0), "initialise" : None},
-            "r2" : {"prior" : dist.LogNormal(1.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
+            "amp1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
+            "r1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
+            "amp2" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
+            "r2" : {"prior_mean" : 1.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
         },
         # Informative prior, informative posterior with data-driven initialisation of mean for amp1 and amp2
         "prior_i_post_i_init" : {
-            "amp1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
-            "r1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
-            "amp2" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
-            "r2" : {"prior" : dist.LogNormal(1.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
+            "amp1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0},
+            "r1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0},
+            "amp2" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0},
+            "r2" : {"prior_mean" : 1.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0},
         },
         # Informative prior, informative posterior set close to true solution
         "prior_i_post_i_true" : {
-            "amp1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(10.0, 2.0)},
-            "r1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(10.0, 2.0)},
-            "amp2" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(10.0, 2.0)},
-            "r2" : {"prior" : dist.LogNormal(1.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
+            "amp1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 10.0, "post_var" : 2.0, "post_init" : None},
+            "r1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 10.0, "post_var" : 2.0, "post_init" : None},
+            "amp2" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 10.0, "post_var" : 2.0, "post_init" : None},
+            "r2" : {"prior_mean" : 1.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
         },
         # Informative prior, informative posterior set far from true solution
         "prior_i_post_i_wrong" : {
-            "amp1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(100.0, 2.0)},
-            "r1" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
-            "amp2" : {"prior" : dist.LogNormal(10.0, 2.0), "post" : dist.LogNormal(100.0, 2.0)},
-            "r2" : {"prior" : dist.LogNormal(1.0, 2.0), "post" : dist.LogNormal(1.0, 2.0)},
+            "amp1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 100.0, "post_var" : 2.0, "post_init" : None},
+            "r1" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
+            "amp2" : {"prior_mean" : 10.0, "prior_var" : 2.0, "post_mean" : 100.0, "post_var" : 2.0, "post_init" : None},
+            "r2" : {"prior_mean" : 1.0, "prior_var" : 2.0, "post_mean" : 1.0, "post_var" : 2.0, "post_init" : None},
         },
     }
 
     bs = 10
     lr = 0.1
+    ss=10
     for name, param_overrides in cases.items():
         name = "%s%s" % (name, suffix)
-        print(name)
-        mean_cost_history = test_biexp(test_data, t0=0, dt=dt,
+        if os.path.exists(os.path.join(BASEDIR, name, "runtime")):
+            print("Skipping %s" % name)
+            continue
+        else:
+            print("Running %s" % name)
+        mean_cost_history = test_biexp(test_data,
+                                       t0=0, 
+                                       dt=dt,
                                        outdir=name,
                                        epochs=1000,
                                        batch_size=bs,
                                        learning_rate=lr,
-                                       lr_quench=0.95,
+                                       sample_size=ss,
                                        param_overrides=param_overrides,
                                        **kwargs)
         print(name, mean_cost_history[-1])
@@ -293,9 +300,10 @@ if __name__ == "__main__":
     #    generate_test_data(num_voxels=NV, num_times=nt, dt=dt, m1=M1, m2=M2, l1=L1, l2=L2, noise=NOISE)
 
     #redo_normalize()
-    run_combinations()
+    #run_combinations()
     #run_fabber()
-    #priors_posteriors("_num", infer_covar=False, force_num_latent_loss=True)
-    #priors_posteriors("_analytic", infer_covar=False)
-    #priors_posteriors("_num_corr", infer_covar=True, force_num_latent_loss=True)
-    #priors_posteriors("_analytic_corr", infer_covar=True)
+    priors_posteriors("_analytic", infer_covar=False)
+    priors_posteriors("_analytic_corr", infer_covar=True)
+    priors_posteriors("_num", infer_covar=False, force_num_latent_loss=True)
+    priors_posteriors("_num_corr", infer_covar=True, force_num_latent_loss=True)
+    
