@@ -1,5 +1,5 @@
 """
-Figure 1: Comparison of prior/posterior
+Convergence speed by prior/posterior
 """
 
 import os
@@ -12,13 +12,37 @@ LEARNING_RATES = (1.0, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01)
 BATCH_SIZES = (5, 10, 15, 25, 50)
 NT = 20
 
+BASEDIR="c:/Users/ctsu0221/dev/data/svb/biexp/"
+
+readable_labels = {
+#    "i_i" : "Inf/True",
+    "i_i_init" : "Inf/Data",
+    "i_i_true" : "Inf/True",
+    "i_i_wrong" : "Inf/Wrong",
+#    "i_ni" : "Inf/Noninf",
+#    "i_ni_init" : "Inf/Noninf-Data",
+#    "ni_i" : "Noninf/True",
+    "ni_i_init" : "Noninf/Data",
+    "ni_i_true" : "Noninf/True",
+    "ni_i_wrong" : "Noninf/Wrong",
+#    "ni_ni" : "Noninf/Noninf",
+#    "ni_ni_init" : "Noninf/Noninf-Data",
+}
+
 epochs_converged = []
 labels = []
 plt.figure(figsize=(12, 8))
 for prior in ("i", "ni"):
     for post in ("ni", "ni_init", "i_true", "i_init", "i", "i_wrong"):
-        subdir = "prior_%s_post_%s_analytic" % (prior, post)
+        subdir = os.path.join(BASEDIR, "prior_%s_post_%s_analytic" % (prior, post))
         label = "%s_%s" % (prior, post)
+        if not os.path.exists(os.path.join(subdir, "cost_history.nii.gz")):
+            print("%s: skipping as not found" % subdir)
+            continue
+        if label not in readable_labels:
+            print("%s: skipping as not included in label list" % subdir)
+            continue
+
         cost_history = nib.load(os.path.join(subdir, "cost_history.nii.gz")).get_data()
         mean_cost_history = np.mean(cost_history, axis=(0, 1, 2))
         if mean_cost_history[-1] > 80:
@@ -31,7 +55,7 @@ for prior in ("i", "ni"):
         slow_converged = np.count_nonzero(epoch_converged > 200)
         print("%s: Non-converged voxels=%i, slow convergers=%i" % (subdir, non_converged, slow_converged))
         epochs_converged.append(epoch_converged[epoch_converged > 0])
-        labels.append(label)
+        labels.append(readable_labels[label])
 
 plt.boxplot(epochs_converged, labels=labels)
 plt.title("Epoch converged by prior/posterior options")
