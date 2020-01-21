@@ -7,6 +7,7 @@ import collections
 import six
 import numpy as np
 import nibabel as nib
+import tensorflow as tf
 
 from .utils import LogBase
 
@@ -39,9 +40,30 @@ class DataModel(LogBase):
             self.mask_flattened = self.mask_vol.flatten()
 
         self.n_unmasked_voxels = self.data_flattened.shape[0]
+        print("Data voxels: %i" % self.n_unmasked_voxels)
         
-        # FIXME By default parameter space is same as data space
-        self.n_vertices = self.n_unmasked_voxels
+        # See if we have a vertex-to-voxel linear mapping
+        v2w = kwargs.get("v2w", None)
+        if v2w is not None:
+            self.v2w = None
+            if isinstance(v2w, six.string_types):
+                # For the moment the v2w data is stored as a Numpy savez of a SCIPY CSR sparse matrix
+                self.v2w_data = np.load(v2w)
+                print("v2w shape=%s (%i indices, %i values)" % (str(self.v2w_data["shape"]), self.v2w_data["indices"].shape[0], self.v2w_data["data"].shape[0]))
+                #self.v2w = scipy.sparse.csr_matrix((v2w_data["data"], v2w_data["indices"], v2w_data["indptr"]), shape=v2w_data["shape"])
+                #self.v2w = tf.SparseTensor(indices=v2w_data["indices"], values=v2w_data["data"], dense_shape=v2w_data["shape"])
+            else:
+                self.v2w_data = v2w # FIXME assumes dict with indices, data and shape
+
+            if len(self.v2w_data["shape"]) != 2:
+                raise ValueError("Vertex-to-voxel mapping must be a matrix")
+            if self.v2w_data["shape"][0] != self.n_unmasked_voxels:
+                raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
+            self.n_vertices = self.v2w_data["shape"][1]
+        else:
+            # By default parameter space is same as data space
+            self.v2w_data = None
+            self.n_vertices = self.n_unmasked_voxels
 
         if kwargs.get("initial_posterior", None):
             self.post_init = self._get_posterior_data(kwargs["initial_posterior"])
@@ -50,15 +72,13 @@ class DataModel(LogBase):
 
         self._calc_neighbours()
     
-    def vertices_to_voxels(self, tensor, vertex_axis=0):
+    def vertices_to_voxels_ts(self, tensor, vertex_axis=0):
         """
         Map parameter vertex-based data to data voxels
 
         This is for the use case where data is defined in a different space to the
         parameter estimation space. For example we may be estimating parameters on
         a surface mesh, but using volumetric data to train this model.
-
-        FIXME For now we simply have a default case where the two spaces are identical.
 
         :param tensor: TensorFlow tensor of which one axis represents indexing over
                        parameter vertices
@@ -68,8 +88,45 @@ class DataModel(LogBase):
                  axis and other tensor entries transformed appropriately to the 
                  data space
         """
-        return tensor
+        if self.v2w_data is None:
+            # Default case where the two spaces are identical.
+            return tensor
+        else:
+            # FIXME matrix multiplication must take into account vertex/voxel axis
+            # FIXME 6 is a magic number for ASL data...
+            if self.v2w is None:
+                self.v2w = tf.SparseTensor(indices=self.v2w_data["indices"], values=self.v2w_data["data"], dense_shape=self.v2w_data["shape"])
+            results = []
+            for t in range(6):
+                results.append(tf.sparse.sparse_dense_matmul(self.v2w, tensor[..., t]))
+            result = tf.reshape(tf.concat(results, -1), (self.n_unmasked_voxels, -1, 6))
+            return result
+            
+    def vertices_to_voxels(self, tensor, vertex_axis=0):
+        """
+        Map parameter vertex-based data to data voxels
 
+        This is for the use case where data is defined in a different space to the
+        parameter estimation space. For example we may be estimating parameters on
+        a surface mesh, but using volumetric data to train this model.
+
+        :param tensor: TensorFlow tensor of which one axis represents indexing over
+                       parameter vertices
+        :param vertex_axis: Index of axis of tensor which corresponds to parameter vertices
+
+        :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
+                 axis and other tensor entries transformed appropriately to the 
+                 data space
+        """
+        if self.v2w_data is None:
+            # Default case where the two spaces are identical.
+            return tensor
+        else:
+            # FIXME matrix multiplication must take into account vertex/voxel axis
+            if self.v2w is None:
+                self.v2w = tf.SparseTensor(indices=self.v2w_data["indices"], values=self.v2w_data["data"], dense_shape=self.v2w_data["shape"])
+            return tf.sparse.sparse_dense_matmul(self.v2w, tensor)
+            
     def nifti_image(self, data):
         """
         :return: A nibabel.Nifti1Image for some, potentially masked, output data
@@ -80,7 +137,7 @@ class DataModel(LogBase):
         ndata = np.zeros(shape, dtype=np.float)
         ndata[self.mask_vol > 0] = data
         return nib.Nifti1Image(ndata, None, header=self.nii.header)
-            
+
     def posterior_data(self, mean, cov):
         """
         Get voxelwise data for the full posterior
@@ -109,7 +166,11 @@ class DataModel(LogBase):
     def _get_data(self, data):
         if isinstance(data, six.string_types):
             nii = nib.load(data)
-            data_vol = nii.get_data()
+            if data.endswith(".nii") or data.endswith(".nii.gz"):
+                data_vol = nii.get_data()
+            elif data.endswith(".gii"):
+                # FIXME
+                raise NotImplementedError()
             self.log.info("Loaded data from %s", data)
         else:
             nii = nib.Nifti1Image(data, np.identity(4))

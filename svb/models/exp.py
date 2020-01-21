@@ -16,8 +16,8 @@ class MultiExpModel(Model):
     Exponential decay with multiple independent decay rates and amplitudes
     """
 
-    def __init__(self, **options):
-        Model.__init__(self, **options)
+    def __init__(self, data_model, **options):
+        Model.__init__(self, data_model, **options)
         self._num_exps = options.get("num_exps", 1)
         for idx in range(self._num_exps):
             self.params += [
@@ -55,8 +55,8 @@ class ExpModel(MultiExpModel):
     """
     Simple exponential decay model
     """
-    def __init__(self, **options):
-        MultiExpModel.__init__(self, num_exps=1, **options)
+    def __init__(self, data_model, **options):
+        MultiExpModel.__init__(self, data_model, num_exps=1, **options)
 
     def __str__(self):
         return "Exponential model: %s" % __version__
@@ -70,8 +70,8 @@ class BiExpModel(MultiExpModel):
         group = parser.add_argument_group("Biexponential model options")
         group.add_argument("--dt", help="Time separation between volumes", type=float, default=1.0)
 
-    def __init__(self, **options):
-        MultiExpModel.__init__(self, num_exps=2, **options)
+    def __init__(self, data_model, **options):
+        MultiExpModel.__init__(self, data_model, num_exps=2, **options)
 
     def __str__(self):
         return "Bi-Exponential model: %s" % __version__

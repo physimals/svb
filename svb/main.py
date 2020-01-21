@@ -33,6 +33,7 @@ class SvbArgumentParser(argparse.ArgumentParser):
         "prior_var" : float,
         "prior_dist" : str,
         "prior_type" : str,
+        "post_mean" : float,
         "post_type" : str,
     }
 
@@ -44,6 +45,8 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          help="Timeseries input data")
         group.add_argument("--mask",
                          help="Optional voxel mask")
+        group.add_argument("--v2w",
+                         help="Mapping from model vertices to data voxels")
         group.add_argument("--post-init", dest="post_init_fname",
                          help="Initialize posterior from data file saved using --output-post")
         group.add_argument("--model", dest="model_name",
@@ -207,7 +210,7 @@ def main():
         welcome = "Welcome to SVB %s" % __version__
         print(welcome)
         print("=" * len(welcome))
-        runtime, _ = run(log_stream=sys.stdout, **vars(options))
+        runtime, _, _ = run(log_stream=sys.stdout, **vars(options))
         print("FINISHED - runtime %.3fs" % runtime)
     except (RuntimeError, ValueError) as exc:
         sys.stderr.write("ERROR: %s\n" % str(exc))
@@ -238,11 +241,11 @@ def run(data, model_name, output, mask=None, **kwargs):
     data_model = DataModel(data, mask, **kwargs)
     
     # Create the generative model
-    fwd_model = get_model_class(model_name)(**kwargs)
+    fwd_model = get_model_class(model_name)(data_model, **kwargs)
     fwd_model.log_config()
 
     # Get the time points from the model
-    tpts = fwd_model.tpts(data_model)
+    tpts = fwd_model.tpts()
     if tpts.ndim > 1 and tpts.shape[0] > 1:
         tpts = tpts[data_model.mask_flattened > 0]
 
