@@ -315,12 +315,12 @@ class SvbFit(LogBase):
         # from the model prediction to the data are within the noise model (with its current
         # parameters)
 
-        # Unpack noise parameter. The noise model knows how to interpret this - typically it is the
-        # log of a Gaussian variance but this is not required
-        noise_samples = self.log_tf(tf.identity(samples[:, self.noise_idx, :], name="noise_samples"))
-
         # Get the model prediction for the current set of parameters
         model_prediction = self._get_model_prediction(samples)
+
+        # Unpack noise parameter - this is placed at the end of the list of parameters when
+        # they are converted from internal (transformed) values to real values
+        noise_samples = self.log_tf(tf.identity(tf.squeeze(self.model_samples[-1]), name="noise_samples"))
 
         # Note that we pass the total number of time points as we need to scale this term correctly
         # when the batch size is not the full data size
