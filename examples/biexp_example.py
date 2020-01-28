@@ -10,10 +10,15 @@ import sys
 import math
 
 import numpy as np
+import tensorflow as tf
 import matplotlib.pyplot as plt
 import nibabel as nib
 
 from svb.main import run
+
+# To make tests repeatable
+tf.set_random_seed(1)
+np.random.seed(1)
 
 # Set the properties of the simulated data
 num_times=200
