@@ -161,7 +161,7 @@ def run_combinations(**kwargs):
                         continue
                     for lr in learning_rates:
                         for ss in sample_sizes:
-                            outdir="nt_%i_lr_%.3f_bs_%i_ss_%i_%s_%s" % (nt, lr, bs, ss, num, cov)
+                            outdir="nt_%i_noise_%.1f_lr_%.3f_bs_%i_ss_%i_%s_%s" % (nt, noise, lr, bs, ss, num, cov)
                             if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
                                 print("Skipping %s" % outdir)
                                 continue
