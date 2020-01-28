@@ -23,11 +23,11 @@ L2 = 10
 
 # Properties of the test data
 FNAME_TRUTH = "sim_data_biexp_%i_truth.nii.gz"
-FNAME_NOISY = "sim_data_biexp_%i_noisy.nii.gz"
+FNAME_NOISY = "sim_data_biexp_%i_noise_%.1f.nii.gz"
 NV = 1000
 DT = (0.5, 0.25, 0.1, 0.05)
 NT = (10, 20, 50, 100)
-NOISE = 1.0
+NOISE = (1.0, 2.0, 5.0, 10.0, )
 
 # Output options
 BASEDIR = "/mnt/hgfs/win/data/svb/biexp"
@@ -56,9 +56,11 @@ def test_biexp(fname, outdir=".", **kwargs):
     })
     
     _runtime, _svb, training_history = svb.main.run(data=fname, model_name="biexp", log_stream=sys.stdout, **kwargs)
+    #_runtime, mean_cost_history = svb.main.run(data_fname=fname, model_name="biexp", log_stream=sys.stdout, **kwargs)
 
     normalize_exps(kwargs["output"])
     return training_history["mean_cost"]
+    #return mean_cost_history
 
 def normalize_exps(outdir):
     """
@@ -94,22 +96,24 @@ def redo_normalize():
         if os.path.isdir(output_dir) and os.path.exists(os.path.join(output_dir, "runtime")):
             normalize_exps(output_dir)
 
-def generate_test_data(num_voxels, num_times, dt, m1, m2, l1, l2, noise):
+def generate_test_data():
     """
     Create Nifti files containing instances of biexponential data
     with and without noise
     """
-    sq_len = int(math.sqrt(num_voxels))
-    shape = (sq_len, sq_len, 1, num_times)
-    data = np.zeros(shape)
-    for t_idx in range(num_times):
-        t = t_idx*dt
-        data[..., t_idx] = m1*math.exp(-l1*t) + m2*math.exp(-l2*t)
-    nii = nib.Nifti1Image(data, np.identity(4))
-    nii.to_filename(os.path.join(BASEDIR, FNAME_TRUTH % num_times))
-    data_noisy = data + np.random.normal(0, noise, size=shape)
-    nii_noisy = nib.Nifti1Image(data_noisy, np.identity(4))
-    nii_noisy.to_filename(os.path.join(BASEDIR, FNAME_NOISY % num_times))
+    for nt, dt in zip(NT, DT):
+        sq_len = int(math.sqrt(NV))
+        shape = (sq_len, sq_len, 1, nt)
+        data = np.zeros(shape)
+        for t_idx in range(nt):
+            t = t_idx*dt
+            data[..., t_idx] = M1*math.exp(-L1*t) + M2*math.exp(-L2*t)
+        nii = nib.Nifti1Image(data, np.identity(4))
+        nii.to_filename(os.path.join(BASEDIR, FNAME_TRUTH % nt))
+        for noise in NOISE:
+            data_noisy = data + np.random.normal(0, noise, size=shape)
+            nii_noisy = nib.Nifti1Image(data_noisy, np.identity(4))
+            nii_noisy.to_filename(os.path.join(BASEDIR, FNAME_NOISY % (nt, noise)))
 
 def run_fabber():
     for nt, dt in zip(NT, DT):
@@ -123,7 +127,7 @@ def run_fabber():
             "model" : "exp",
             "num-exps" : 2,
             "dt" : dt,
-            "data" : os.path.join(BASEDIR, FNAME_NOISY % nt),
+            "data" : os.path.join(BASEDIR, FNAME_NOISY % (nt, 1.0)),
             "max-iterations" : 100,
             "save-mean" : True,
             "save-var" : True,
@@ -147,7 +151,8 @@ def run_combinations(**kwargs):
     learning_rates = (0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005)
     batch_sizes = (5, 10, 20, 50, 100)
     sample_sizes = (1, 2, 5, 10, 20, 50, 100, 200)
-    
+    noise = 1.0
+
     for infer_covar, cov in zip((True, False), ("cov", "nocov")):
         for num_ll, num in zip((False, True), ("analytic", "num")):
             for nt, dt in zip(NT, DT):
@@ -160,7 +165,7 @@ def run_combinations(**kwargs):
                             if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
                                 print("Skipping %s" % outdir)
                                 continue
-                            mean_cost_history = test_biexp(os.path.join(BASEDIR, FNAME_NOISY % nt),
+                            mean_cost_history = test_biexp(os.path.join(BASEDIR, FNAME_NOISY % (nt, noise)),
                                                            t0=0,
                                                            dt=dt,
                                                            outdir=outdir,
@@ -172,13 +177,49 @@ def run_combinations(**kwargs):
                                                            infer_covar=infer_covar,
                                                            **kwargs)
                             print(nt, lr, bs, ss, num, cov, mean_cost_history[-1])
+                        
+def run_snr(**kwargs):
+    """
+    Run tests varying SNR
 
-def priors_posteriors(suffix="", **kwargs):
+    (excluding prior/posterior tests)
+    """
+    learning_rates = (0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005)
+    sample_sizes = (1, 2, 5, 10, 20, 50, 100, 200)
+    
+    for infer_covar, cov in zip((True, False), ("cov", "nocov")):
+        for num_ll, num in zip((False, True), ("analytic", )):
+            for nt, dt in zip(NT, DT):
+                for bs in (nt,):
+                    if bs > nt:
+                        continue
+                    for lr in learning_rates:
+                        for ss in sample_sizes:
+                            for noise in NOISE:
+                                outdir="nt_%i_noise_%.1f_lr_%.3f_bs_%i_ss_%i_%s_%s" % (nt, noise, lr, bs, ss, num, cov)
+                                if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
+                                    print("Skipping %s" % outdir)
+                                    continue
+                                mean_cost_history = test_biexp(os.path.join(BASEDIR, FNAME_NOISY % (nt, noise)),
+                                                            t0=0,
+                                                            dt=dt,
+                                                            outdir=outdir,
+                                                            epochs=500,
+                                                            batch_size=bs,
+                                                            learning_rate=lr,
+                                                            sample_size=ss,
+                                                            force_num_latent_loss=num_ll,
+                                                            infer_covar=infer_covar,
+                                                            **kwargs)
+                                print(nt, noise, lr, bs, ss, num, cov, mean_cost_history[-1])
+
+def priors_posteriors():
     """
     Run tests on various combinations of prior and posterior
     """
     nt, dt = NT[-1], DT[-1]
-    test_data = os.path.join(BASEDIR, FNAME_NOISY % nt)
+    noise = 1.0
+    test_data = os.path.join(BASEDIR, FNAME_NOISY % (nt, noise))
     cases = {
         # Non-informative prior and initial posterior
         "prior_ni_post_ni" : {
@@ -269,24 +310,27 @@ def priors_posteriors(suffix="", **kwargs):
     bs = 10
     lr = 0.1
     ss=10
-    for name, param_overrides in cases.items():
-        name = "%s%s" % (name, suffix)
-        if os.path.exists(os.path.join(BASEDIR, name, "runtime")):
-            print("Skipping %s" % name)
-            continue
-        else:
-            print("Running %s" % name)
-        mean_cost_history = test_biexp(test_data,
-                                       t0=0, 
-                                       dt=dt,
-                                       outdir=name,
-                                       epochs=1000,
-                                       batch_size=bs,
-                                       learning_rate=lr,
-                                       sample_size=ss,
-                                       param_overrides=param_overrides,
-                                       **kwargs)
-        print(name, mean_cost_history[-1])
+    for infer_covar, cov in zip((True, False), ("cov", "nocov")):
+        for num_ll, num in zip((False, True), ("analytic", )):
+            for name, param_overrides in cases.items():
+                name = "%s_%s_%s" % (name, num, cov)
+                if os.path.exists(os.path.join(BASEDIR, name, "runtime")):
+                    print("Skipping %s" % name)
+                    continue
+                else:
+                    print("Running %s" % name)
+                mean_cost_history = test_biexp(test_data,
+                                            t0=0, 
+                                            dt=dt,
+                                            outdir=name,
+                                            epochs=1000,
+                                            batch_size=bs,
+                                            learning_rate=lr,
+                                            sample_size=ss,
+                                            param_overrides=param_overrides,
+                                            force_num_latent_loss=num_ll,
+                                            infer_covar=infer_covar)
+                print(name, mean_cost_history[-1])
 
 if __name__ == "__main__":
     # MC needs this it would appear!
@@ -296,14 +340,16 @@ if __name__ == "__main__":
     tf.set_random_seed(1)
     np.random.seed(1)
 
-    #for nt, dt in zip(NT, DT):
-    #    generate_test_data(num_voxels=NV, num_times=nt, dt=dt, m1=M1, m2=M2, l1=L1, l2=L2, noise=NOISE)
-
-    #redo_normalize()
-    #run_combinations()
-    #run_fabber()
-    priors_posteriors("_analytic", infer_covar=False)
-    priors_posteriors("_analytic_corr", infer_covar=True)
-    priors_posteriors("_num", infer_covar=False, force_num_latent_loss=True)
-    priors_posteriors("_num_corr", infer_covar=True, force_num_latent_loss=True)
+    if "--generate-data" in sys.argv:
+        generate_test_data()
+    if "--redo-normalize" in sys.argv:
+        redo_normalize()
+    if "--snr" in sys.argv:
+        run_snr()
+    if "--combinations" in sys.argv:
+        run_combinations()
+    if "--fabber" in sys.argv:
+        run_fabber()
+    if "--prior-post" in sys.argv:
+        priors_posteriors()
     
