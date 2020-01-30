@@ -409,7 +409,7 @@ class SvbFit(LogBase):
               epochs=100, fit_only_epochs=0, display_step=1,
               learning_rate=0.1, lr_decay_rate=1.0,
               sample_size=None, ss_increase_factor=1.0,
-              revert_post_trials=50,
+              revert_post_trials=50, revert_post_final=True,
               **kwargs):
         """
         Train the graph to infer the posterior distribution given timeseries data
@@ -431,9 +431,11 @@ class SvbFit(LogBase):
         :param display_step: How many steps to execute for each display line
         :param learning_rate: Initial learning rate
         :param lr_decay_rate: When adjusting the learning rate, the factor to reduce it by
+        :param sample_size: Number of samples to use when estimating expectations over the posterior
+        :param ss_increase_factor: Factor to increase the sample size by over the epochs
         :param revert_post_trials: How many epoch to continue for without an improvement in the mean cost before
                                    reverting the posterior to the previous best parameters
-        :param sample_size: Number of samples to use when estimating expectations over the posterior
+        :param revert_post_final: If True, revert to the state giving the best cost achieved after the final epoch
         """
         # Expect tpts to have a dimension for voxelwise variation even if it is the same for all voxels
         if tpts.ndim == 1:
@@ -591,10 +593,13 @@ class SvbFit(LogBase):
                     mean_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var, current_lr, current_ss)
                 self.log.info(" - Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
                 
-        # At the end of training we revert to the state with best mean cost and write a final history step
-        # with these values. Note that the cost may not be as reported earlier as this was based on a
-        # mean over the training batches whereas here we recalculate the cost for the whole data set.
-        self.set_state(best_state)
+        if revert_post_final and best_state is not None:
+            # At the end of training we revert to the state with best mean cost and write a final history step
+            # with these values. Note that the cost may not be as reported earlier as this was based on a
+            # mean over the training batches whereas here we recalculate the cost for the whole data set.
+            self.log.info("Reverting to best batch-averaged cost")
+            self.set_state(best_state)
+
         self.feed_dict[self.data_train] = data
         self.feed_dict[self.tpts_train] = tpts
         cost = self.evaluate(self.cost) # [W]
