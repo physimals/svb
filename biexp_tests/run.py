@@ -177,7 +177,7 @@ def run_combinations(**kwargs):
                                                            infer_covar=infer_covar,
                                                            **kwargs)
                             print(nt, lr, bs, ss, num, cov, mean_cost_history[-1])
-                        
+
 def run_snr(**kwargs):
     """
     Run tests varying SNR
@@ -212,6 +212,43 @@ def run_snr(**kwargs):
                                                             infer_covar=infer_covar,
                                                             **kwargs)
                                 print(nt, noise, lr, bs, ss, num, cov, mean_cost_history[-1])
+
+def run_sample_size_increase_tests():
+    """
+    Run tests of sample size annealing
+    """
+    lr = 0.05
+    infer_covar = True
+    num_ll = False
+    bs = 10
+    noise = 1.0
+    epochs = 500
+    initial_sample_sizes = (1, 2, 4, 8, 16, 32, 64, 128, 256)
+    increase_factors = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0)
+
+    for ssi in initial_sample_sizes:
+        for ssf in increase_factors:
+            ssfinal = int(ssi * ssf)
+            if ssfinal > 256:
+                continue
+
+            for nt, dt in zip(NT, DT):
+                outdir="nt_%i_noise_%.1f_lr_%.3f_bs_%i_ssi_%i_ssf_%i" % (nt, noise, lr, bs, ssi, ssfinal)
+                if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
+                    print("Skipping %s" % outdir)
+                    continue
+                mean_cost_history = test_biexp(os.path.join(BASEDIR, FNAME_NOISY % (nt, noise)),
+                                               t0=0,
+                                               dt=dt,
+                                               outdir=outdir,
+                                               epochs=epochs,
+                                               batch_size=bs,
+                                               learning_rate=lr,
+                                               sample_size=ssi,
+                                               ss_increase_factor=ssf,
+                                               force_num_latent_loss=num_ll,
+                                               infer_covar=infer_covar)
+                print(outdir, mean_cost_history[-1])
 
 def priors_posteriors():
     """
@@ -352,4 +389,6 @@ if __name__ == "__main__":
         run_fabber()
     if "--prior-post" in sys.argv:
         priors_posteriors()
-    
+    if "--ss-increase" in sys.argv:
+        run_sample_size_increase_tests()
+
