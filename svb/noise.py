@@ -23,7 +23,7 @@ class NoiseParameter(Parameter):
 
     def _init_noise(self, _param, _t, data):
         data_mean, data_var = tf.nn.moments(data, axes=1)
-        return tf.log(tf.where(tf.equal(data_var, 0), tf.ones_like(data_var), data_var)), None
+        return tf.where(tf.equal(data_var, 0), tf.ones_like(data_var), data_var), None
 
     def log_likelihood(self, data, pred, noise_var, nt):
         """
@@ -39,7 +39,10 @@ class NoiseParameter(Parameter):
         batch_size = tf.shape(data)[1]
         sample_size = tf.shape(pred)[1]
 
-        log_noise_var = self.log_tf(tf.log(noise_var, name="log_noise_var"), force=False)
+        # Possible to get zeros when using surface projection
+        noise_var = tf.where(tf.equal(noise_var, 0), tf.ones_like(noise_var), noise_var)
+        log_noise_var = self.log_tf(tf.log(noise_var, name="log_noise_var"))
+
         data = self.log_tf(tf.tile(tf.reshape(data, [nvoxels, 1, batch_size]), [1, sample_size, 1], name="data"), force=False)
         pred = self.log_tf(pred, force=False)
 
