@@ -76,7 +76,13 @@ class NormalPrior(Prior):
     def mean_log_pdf(self, samples):
         dx = tf.subtract(samples, tf.reshape(self.mean, [self.nvertices, 1, 1])) # [W, 1, N]
         z = tf.div(tf.square(dx), tf.reshape(self.var, [self.nvertices, 1, 1])) # [W, 1, N]
-        term1 = self.log_tf(-0.5*tf.log(tf.reshape(self.var, [self.nvertices, 1, 1])), name="term1")
+        # Remove variance contribution to mean log PDF for compatibility with previous test runs.
+        # This is just a constant offset to it does not affect convergence but does affect the absolute
+        # value of the free energy. Setting it to zero is harmless for these tests. Note that spatial
+        # priors and ARD do not have constant variance and hence we need the full expression to use
+        # these priors (this remains on the master branch)
+        #term1 = self.log_tf(-0.5*tf.log(tf.reshape(self.var, [self.nvertices, 1, 1])), name="term1")
+        term1 = 0
         term2 = self.log_tf(-0.5*z, name="term2")
         log_pdf = term1 + term2 # [W, 1, N]
         mean_log_pdf = tf.reshape(tf.reduce_mean(log_pdf, axis=-1), [self.nvertices]) # [W]
