@@ -13,7 +13,8 @@ import matplotlib
 
 LEARNING_RATES = (0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005)
 BATCH_SIZES = (5, 10, 20, 50, 100)
-SAMPLE_SIZES = (2, 5, 10, 20, 50, 100, 200)
+SAMPLE_SIZES = (1, 2, 5, 10, 20, 50, 100, 200)
+NOISE = (1.0, 2.0, 5.0, 10.0)
 NT = (10, 20, 50, 100)
 NUM = ("num", "analytic")
 COV = ("cov", "nocov")
@@ -27,6 +28,7 @@ DEFAULTS = {
     "nt" : 100,
     "num" : "analytic",
     "cov" : "cov",
+    "noise" : 1.0,
 }
 
 LABELS = {
@@ -50,7 +52,8 @@ def subdir(params):
     if fullparams["bs"] is None:
         # If batch size unspecified assume no mini-batch optimization
         fullparams["bs"] = fullparams["nt"]
-    subdir_format = params.get("subdir_format", "nt_%(nt)i_lr_%(lr).3f_bs_%(bs)i_ss_%(ss)i_%(num)s_%(cov)s")
+    subdir_format = params.get("subdir_format", "nt_%(nt)i_noise_%(noise).1f_lr_%(lr).3f_bs_%(bs)i_ss_%(ss)i_%(num)s_%(cov)s")
+    #subdir_format = params.get("subdir_format", "nt_%(nt)i_lr_%(lr).3f_bs_%(bs)i_ss_%(ss)i_%(num)s_%(cov)s")
     subdir = os.path.join(BASEDIR, subdir_format % fullparams)
     if not os.path.exists(os.path.join(subdir, "logfile")):
         return None
@@ -378,6 +381,137 @@ line(
     savename="best_cost_lr_ss_nocov",
 )
 
+# Best free energy by learning rate for various sample sizes at different SNRs
+
+line(
+    title="Best free energy by learning rate (with covariance): NT=10, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
+    ylim=[(10, 40), (20, 50), (25, 55), (30, 60)],
+    subplots={"param" : ("noise", NOISE),},
+    lines=("ss", SAMPLE_SIZES),
+    points_param="lr",
+    points_values=LEARNING_RATES,
+    points3d="cost_history",
+    nt=10,
+    cov="cov",
+    savename="best_cost_lr_ss_nt_10_snr_cov",
+)
+
+line(
+    title="Best free energy by learning rate (no covariance): NT=10, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
+    ylim=[(10, 40), (15, 45), (20, 50), (30, 60)],
+    subplots={"param" : ("noise", NOISE),},
+    lines=("ss", SAMPLE_SIZES),
+    points_param="lr",
+    points_values=LEARNING_RATES,
+    points3d="cost_history",
+    nt=10,
+    cov="nocov",
+    savename="best_cost_lr_ss_nt_10_snr_nocov",
+)
+
+line(
+    title="Best free energy by learning rate (with covariance): NT=%(nt)i, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
+    ylim=[(20, 50), (30, 60), (45, 75), (60, 90)],
+    subplots={"param" : ("noise", NOISE),},
+    lines=("ss", SAMPLE_SIZES),
+    points_param="lr",
+    points_values=LEARNING_RATES,
+    points3d="cost_history",
+    nt=20,
+    cov="cov",
+    savename="best_cost_lr_ss_nt_20_snr_cov",
+)
+
+line(
+    title="Best free energy by learning rate (no covariance): NT=%(nt)i, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
+    ylim=[(20, 50), (30, 60), (45, 75), (60, 90)],
+    subplots={"param" : ("noise", NOISE),},
+    lines=("ss", SAMPLE_SIZES),
+    points_param="lr",
+    points_values=LEARNING_RATES,
+    points3d="cost_history",
+    nt=20,
+    cov="nocov",
+    savename="best_cost_lr_ss_nt_20_snr_nocov",
+)
+
+line(
+    title="Best free energy by learning rate (with covariance): NT=50, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
+    ylim=[(30, 100), (60, 130), (110, 180), (140, 210)],
+    subplots={"param" : ("noise", NOISE),},
+    lines=("ss", SAMPLE_SIZES),
+    points_param="lr",
+    points_values=LEARNING_RATES,
+    points3d="cost_history",
+    nt=50,
+    cov="cov",
+    savename="best_cost_lr_ss_nt_50_snr_cov",
+)
+
+line(
+    title="Best free energy by learning rate (no covariance): NT=50, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
+    ylim=[(40, 90), (70, 120), (110, 160), (140, 190)],
+    subplots={"param" : ("noise", NOISE),},
+    lines=("ss", SAMPLE_SIZES),
+    points_param="lr",
+    points_values=LEARNING_RATES,
+    points3d="cost_history",
+    nt=50,
+    cov="nocov",
+    savename="best_cost_lr_ss_nt_50_snr_nocov",
+)
+
+line(
+    title="Best free energy by learning rate (with covariance): NT=%(nt)i, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
+    ylim=[(50, 110), (130, 190), (210, 270), (280, 340)],
+    subplots={"param" : ("noise", NOISE),},
+    lines=("ss", SAMPLE_SIZES),
+    points_param="lr",
+    points_values=LEARNING_RATES,
+    points3d="cost_history",
+    nt=100,
+    cov="cov",
+    savename="best_cost_lr_ss_nt_100_snr_cov",
+)
+
+line(
+    title="Best free energy by learning rate (no covariance): NT=%(nt)i, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel="Free energy",
+    xlabel=r"Learning rate $\alpha$",
+    ylim=[(50, 110), (130, 190), (210, 270), (280, 340)],
+    subplots={"param" : ("noise", NOISE),},
+    lines=("ss", SAMPLE_SIZES),
+    points_param="lr",
+    points_values=LEARNING_RATES,
+    points3d="cost_history",
+    nt=100,
+    cov="nocov",
+    savename="best_cost_lr_ss_nt_100_snr_nocov",
+)
+
+
 # Convergence speed by sample size
 conv_speed(
     title="Convergence by sample size (with covariance): N=%(nt)i",
@@ -402,6 +536,64 @@ conv_speed(
     cov="nocov",
     savename="conv_speed_ss_nocov",
 )
+
+# Convergence speed by sample size and SNR
+conv_speed(
+    title="Convergence by sample size (with covariance): NT=%(nt)i, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel=r"Time to convergence $s$",
+    xlabel=r"Sample size $L$",
+    subplots={"param" : ("noise", NOISE),},
+    points_param="ss",
+    nt=50,
+    points_values=SAMPLE_SIZES,
+    lr=0.05,
+    cov="cov",
+    savename="conv_speed_ss_nt_50_snr_cov",
+)
+
+conv_speed(
+    title="Convergence by sample size (no covariance): NT=%(nt)i, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel=r"Time to convergence $s$",
+    xlabel=r"Sample size $L$",
+    subplots={"param" : ("noise", NOISE),},
+    points_param="ss",
+    nt=50,
+    points_values=SAMPLE_SIZES,
+    lr=0.05,
+    cov="nocov",
+    savename="conv_speed_ss_nt_50_snr_nocov",
+)
+
+conv_speed(
+    title="Convergence by sample size (with covariance): NT=%(nt)i, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel=r"Time to convergence $s$",
+    xlabel=r"Sample size $L$",
+    subplots={"param" : ("noise", NOISE),},
+    points_param="ss",
+    nt=10,
+    points_values=SAMPLE_SIZES,
+    lr=0.05,
+    cov="cov",
+    savename="conv_speed_ss_nt_10_snr_cov",
+)
+
+conv_speed(
+    title="Convergence by sample size (no covariance): NT=%(nt)i, noise=%(noise).1f",
+    figsize=(13, 10),
+    ylabel=r"Time to convergence $s$",
+    xlabel=r"Sample size $L$",
+    subplots={"param" : ("noise", NOISE),},
+    points_param="ss",
+    nt=10,
+    points_values=SAMPLE_SIZES,
+    lr=0.05,
+    cov="nocov",
+    savename="conv_speed_ss_nt_10_snr_nocov",
+)
+
 
 # Convergence of free energy by sample size
 """line(
@@ -433,33 +625,35 @@ line(
 )
 """
 
-"""
 # Convergence of free energy by learning rate
 line(
     title="Convergence of free energy (with covariance): N=%(nt)i",
     ylabel="Free energy",
-    ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
+    ylim=[(10, 40), (20, 60), (30, 100), (60, 150)],
     subplots={"param" : ("nt", NT),},
-    lines=("lr", LEARNING_RATES),
+    lines=("lr", LEARNING_RATES[2:]),
     points4d="cost_history",
     runtime=True,
     cov="cov",
+    ss=10,
     savename="conv_lr_cov",
 )
 
 line(
     title="Convergence of free energy (no covariance): N=%(nt)i",
     ylabel="Free energy",
-    ylim=[(10, 60), (20, 90), (30, 150), (60, 250)],
+    ylim=[(10, 40), (20, 60), (30, 100), (60, 150)],
     subplots={"param" : ("nt", NT),},
-    lines=("lr", LEARNING_RATES),
+    lines=("lr", LEARNING_RATES[1:]),
     points4d="cost_history",
     runtime=True,
     cov="nocov",
+    ss=10,
     savename="conv_lr_nocov",
 )
-"""
 
+plt.show()
+sys.exit(0)
 """
 # Convergence of free energy by batch size
 line(

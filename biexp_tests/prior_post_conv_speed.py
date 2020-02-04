@@ -15,18 +15,18 @@ NT = 20
 BASEDIR="c:/Users/ctsu0221/dev/data/svb/biexp/"
 
 readable_labels = {
-#    "i_i" : "Inf/True",
-    "i_i_init" : "Inf/Data",
-    "i_i_true" : "Inf/True",
-    "i_i_wrong" : "Inf/Wrong",
-#    "i_ni" : "Inf/Noninf",
-#    "i_ni_init" : "Inf/Noninf-Data",
-#    "ni_i" : "Noninf/True",
-    "ni_i_init" : "Noninf/Data",
-    "ni_i_true" : "Noninf/True",
-    "ni_i_wrong" : "Noninf/Wrong",
-#    "ni_ni" : "Noninf/Noninf",
-#    "ni_ni_init" : "Noninf/Noninf-Data",
+#    "i_i" : "Informative\nDefault",
+    "i_i_init" : "Informative\nData initialized",
+    "i_i_true" : "Informative\nTrue",
+    "i_i_wrong" : "Informative\nWrong",
+#    "i_ni" : "Informative\nNon-informative",
+#    "i_ni_init" : "Informative\nNon-informative\nData initialized",
+#    "ni_i" : "Non-informative\nDefault",
+    "ni_i_init" : "Non-informative\nData initialized",
+    "ni_i_true" : "Non-informative\nTrue",
+    "ni_i_wrong" : "Non-informative\nWrong",
+#    "ni_ni" : "Non-informative\nNon-informative",
+#    "ni_ni_init" : "Non-informative\nNon-informative\nData initialized",
 }
 
 epochs_converged = []
