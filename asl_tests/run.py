@@ -95,6 +95,158 @@ def run_fabber_test(fname, outdir, **kwargs):
     for idx, pld in enumerate(PLDS):
         options["ti%i" % (idx+1)] = pld + TAU
 
+def run_art_tests():
+    SS = 5
+    cases = {
+        "SpatialMRFArt" : {
+            "ftiss" : {
+                "prior_type" : "M",
+            }
+        },
+        "NonSpatialArt" : {
+        },
+    }
+    for outdir, param_overrides in cases.items():
+        _runtime, _svb, training_history = run_svb_test(
+            FNAME_RPTS,
+            repeats=[8],
+            attsd=0.5,
+            inferart=True,
+            outdir=outdir,
+            param_overrides=param_overrides,
+            epochs=500,
+            sample_size=SS,
+            batch_size=10,
+            learrning_rate=0.1,
+            revert_post_trials=10,
+        )
+        print("%s: %f, %f" % (outdir, training_history["mean_cost"][-1], training_history["ak"][-1]))
+        with open(os.path.join(BASEDIR, outdir, "ak.txt"), "w") as f:
+            for ak in training_history["ak"]:
+                f.write("%f\n" % ak)
+
+def plot_spatial_ak():
+    from matplotlib import pyplot as plt
+    plt.figure(1)
+    for outdir in ("SpatialMRF", "SpatialMRF2", "SpatialFabberMRF", "fab_rpts_8_spatial"):
+        if outdir.startswith("fab"):
+            ak = []
+            with open(os.path.join(BASEDIR, outdir, "logfile")) as f:
+                for line in f.readlines():
+                    idx = line.find("New aK:")
+                    if idx >= 0:
+                        ak.append(float(line[idx+7:]))
+        else:
+            with open(os.path.join(BASEDIR, outdir, "ak.txt")) as f:
+                ak = [float(ak) for ak in f.readlines()]
+        plt.plot(ak, label=outdir)
+    plt.legend()
+    plt.show()
+
+def run_decay_rate_tests(**kwargs):
+    """
+    Run tests of decay_rateed vs non-decay_rateed optimization
+    """
+    learning_rates = (0.25, 0.1, 0.05, 0.02, 0.01, 0.005)
+    decay_rates = (1.0, 0.1, 0.5)
+    fname, rpts = FNAME_RPTS, 8
+    infer_covar = True
+    num_ll = False
+    bs = 9
+    ss = 10
+
+    for lr in learning_rates:
+        for lr_decay_rate in decay_rates:
+            outdir="qtests4_lr_%.3f_bs_%i_ss_%i_dr_%.3f" % (lr, bs, ss, lr_decay_rate)
+            
+            if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
+                print("Skipping %s" % outdir)
+                continue
+            _runtime, _svb, training_history = run_svb_test(
+                fname,
+                repeats=rpts,
+                outdir=outdir,
+                epochs=EPOCHS,
+                batch_size=bs,
+                learning_rate=lr,
+                sample_size=ss,
+                lr_decay_rate=lr_decay_rate,
+                force_num_latent_loss=num_ll,
+                infer_covar=infer_covar,
+                **kwargs
+            )
+            print(rpts, lr, bs, ss, training_history["mean_cost"][-1])
+  
+def run_sample_size_increase_tests():
+    """
+    Run tests of sample size annealing
+    """
+    fname, rpts = FNAME_RPTS, 8
+    lr = 0.1
+    infer_covar = True
+    num_ll = False
+    bs = 10
+    epochs = 500
+    initial_sample_sizes = (2, 4, 8, 16, 32, 64)
+    increase_factors = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
+    
+    for ssi in initial_sample_sizes:
+        for ssf in increase_factors:
+            ssfinal = int(ssi * ssf)
+            if ssfinal > 64:
+                continue
+
+            outdir="lr_%.3f_bs_%i_ssi_%i_ssf_%i" % (lr, bs, ssi, ssfinal)
+            if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
+                print("Skipping %s" % outdir)
+                continue
+
+            _runtime, _svb, training_history = run_svb_test(
+                fname,
+                repeats=[rpts],
+                outdir=outdir,
+                epochs=EPOCHS,
+                batch_size=bs,
+                learning_rate=lr,
+                sample_size=ssi,
+                ss_increase_factor=ssf,
+                force_num_latent_loss=num_ll,
+                infer_covar=infer_covar,
+            )
+            print(outdir, training_history["mean_cost"][-1])
+
+def run_fabber(**kwargs):
+    cases = {
+        "spatial" : {
+            "method" : "spatialvb",
+            "param-spatial-priors" : "MN+",
+        },
+        "nonspatial" : {
+        },
+        "spatial_art" : {
+            "method" : "spatialvb",
+            "param-spatial-priors" : "MN+",
+            "inferart" : True,
+        },
+        "nonspatial_art" : {
+            "inferart" : True,
+        },
+    }
+
+    for outname, options in cases.items():
+        for fname, rpts in zip((FNAME_MEAN, FNAME_RPTS), (1, 8)):
+            outdir=os.path.join(BASEDIR, "fab_rpts_%i_%s" % (rpts, outname))
+            if os.path.exists(os.path.join(outdir, "logfile")):
+                print("Skipping %s" % outdir)
+                continue
+            run_fabber_test(
+                fname, 
+                outdir,
+                repeats=rpts,
+                **options  
+            )
+            print("Done fabber run: rpts=%i" % rpts)
+
     options.update(kwargs)
 
     fab = fabber.Fabber()
@@ -221,40 +373,6 @@ def run_decay_rate_tests(**kwargs):
             )
             print(rpts, lr, bs, ss, training_history["mean_cost"][-1])
 
-def run_sample_size_increase_tests(**kwargs):
-    """
-    Run tests of decay_rateed vs non-decay_rateed optimization
-    """
-    learning_rate = 0.1
-    fname, rpts = FNAME_RPTS, 8
-    infer_covar = True
-    num_ll = False
-    bs = 9
-    sample_sizes = (2, 5, 10, 20, 50, 100)
-    increase_factors = (1.0, 1.5, 2.0, 5.0)
-    
-    for ss in sample_sizes:
-        for ss_increase_factor in increase_factors:
-            outdir="sstests_lr_%.3f_bs_%i_ss_%i_if_%.3f" % (lr, bs, ss, increase_factors)
-            
-            if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
-                print("Skipping %s" % outdir)
-                continue
-            _runtime, _svb, training_history = run_svb_test(
-                fname,
-                repeats=[rpts],
-                outdir=outdir,
-                epochs=EPOCHS,
-                batch_size=bs,
-                learning_rate=lr,
-                sample_size=ss,
-                ss_increase_factor=ss_increase_factor,
-                force_num_latent_loss=num_ll,
-                infer_covar=infer_covar,
-                **kwargs
-            )
-            print(rpts, lr, bs, ss, training_history["mean_cost"][-1])
-
 def run_fabber(**kwargs):
     cases = {
         "spatial" : {
@@ -338,7 +456,7 @@ def _run():
         run_combinations()
     if "--decay-rate" in sys.argv:
         run_decay_rate_tests()
-    if "--sample-size" in sys.argv:
+    if "--ss-increase" in sys.argv:
         run_sample_size_increase_tests()
     if "--spatial" in sys.argv:
         run_spatial_tests()
