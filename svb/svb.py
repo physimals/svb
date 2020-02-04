@@ -20,10 +20,37 @@ to be able to index input by parameter. For this reason we transpose
 when calling the model's ``evaluate`` function to put the P dimension
 first.
 
+The parameter vertices, W, are the set of points on which parameters are defined
+and will be output. They may be voxel centres, or surface element vertices. The
+data voxels, V, on the other hand are the points on which the data to be fitted to
+is defined. Typically this will be volumetric voxels as that is what most
+imaging experiments output as raw data.
+
+In many cases, W will be the same as V since we are inferring volumetric parameter
+maps from volumetric data. However we might alternatively want to infer surface
+based parameter maps but keep the comparison to the measured volumetric data. In
+this case V and W will be different. The key point at which this difference is handled
+is the model evaluation which takes parameters defined on W and outputs a prediction
+defined on V.
+
 V and W are currently identical but may not be in the future. For example
 we may want to estimate parameters on a surface (W=number of surface 
 vertices) using data defined on a volume (V=number of voxels).
+
+Ideas for per voxel/vertex convergence:
+
+    - Maintain vertex_mask as member. Initially all ones
+    - Mask vertices when generating samples and evaluating model. The
+      latent cost will be over unmasked vertices only.
+    - PROBLEM: need reconstruction cost defined over full voxel set
+      hence need to project model evaluation onto all voxels. So
+      masked vertices still need to keep their previous model evaluation
+      output
+    - Define criteria for masking vertices after each epoch
+    - PROBLEM: spatial interactions make per-voxel convergence difficult.
+      Maybe only do full set convergence in this case (like Fabber)
 """
+import time
 import six
 
 import numpy as np
@@ -138,12 +165,12 @@ class SvbFit(LogBase):
 
         # Optional increase in the sample size - to disable set factor to 1.0
         self.ss_increase_factor = tf.placeholder(tf.float32, shape=[])
-        self.sample_size = tf.cast(tf.round(tf.train.exponential_decay(
+        self.sample_size = tf.cast(tf.round(tf.train.polynomial_decay(
             tf.to_float(self.initial_ss),
             self.global_step,
             self.num_steps,
-            self.ss_increase_factor,
-            staircase=False,
+            tf.to_float(self.initial_ss) * self.ss_increase_factor,
+            power=1.0,
         )), tf.int32)
 
         # Number of voxels in full data (V) - known at runtime
@@ -461,6 +488,7 @@ class SvbFit(LogBase):
             "voxel_cost" : np.zeros([n_voxels, epochs+1]),
             "mean_params" : np.zeros([epochs+1, self._nparams]),
             "voxel_params" : np.zeros([n_voxels, epochs+1, self._nparams]),
+            "runtime" : np.zeros([epochs+1]),
         }
 
         # Training cycle
@@ -495,6 +523,7 @@ class SvbFit(LogBase):
         initial_cost = np.mean(self.evaluate(self.cost))
         initial_latent = np.mean(self.evaluate(self.latent_loss))
         initial_reconstr = np.mean(self.evaluate(self.reconstr_loss))
+        start_time = time.time()
         self.log.info(" - Start 0000: mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s", 
                       initial_cost, initial_latent, initial_reconstr, initial_means, initial_vars)
         for epoch in range(epochs):
@@ -592,7 +621,10 @@ class SvbFit(LogBase):
                 state_str = "mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s lr=%f, ss=%i" % (
                     mean_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var, current_lr, current_ss)
                 self.log.info(" - Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
-                
+
+            epoch_end_time = time.time()
+            training_history["runtime"][epoch] = float(epoch_end_time - start_time)
+
         if revert_post_final and best_state is not None:
             # At the end of training we revert to the state with best mean cost and write a final history step
             # with these values. Note that the cost may not be as reported earlier as this was based on a
