@@ -74,6 +74,14 @@ class NormalPrior(Prior):
         self.std = tf.sqrt(self.var, name="%s_std" % self.name)
 
     def mean_log_pdf(self, samples):
+        """
+        Mean log PDF for normal distribution
+
+        Note that ``term1`` is a constant offset when the prior variance is fixed and hence
+        in earlier versions of the code this was neglected, along with other constant offsets
+        such as factors of pi. However when this code is inherited by spatial priors and ARD
+        the variance is no longer fixed and this term must be included.
+        """
         dx = tf.subtract(samples, tf.reshape(self.mean, [self.nvertices, 1, 1])) # [W, 1, N]
         z = tf.div(tf.square(dx), tf.reshape(self.var, [self.nvertices, 1, 1])) # [W, 1, N]
         term1 = self.log_tf(-0.5*tf.log(tf.reshape(self.var, [self.nvertices, 1, 1])), name="term1")
