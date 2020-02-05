@@ -8,6 +8,9 @@ unknown additive noise.
 The description below is a highly abbreviated account of the theory behind SVB.
 For more detailed derivations, see the references cited.
 
+For interactive tutorials implementing variational Bayesian inference on simple
+examples, see the `Variational Bayes tutorial <https://vb-tutorial.readthedocs.io>`_
+
 Bayesian inference
 ------------------
 
@@ -77,7 +80,7 @@ Gamma distribution.
 
 One form of variational Bayes uses the calculus of variations to derive a set of
 update equations for the model and noise parameters which can then be iterated 
-until convergence. However this method requires particular choices of the prior
+until convergence [1]_. However this method requires particular choices of the prior
 and posterior distributions, and the noise model, and thus lacks flexibility.
 Any change to these distributions requires the update equations to be 
 re-derived.
@@ -134,7 +137,7 @@ dependence on the choice of sample to some degree.
 
 If both the prior and posterior are multivariate Gaussian distributions, we can 
 go further and obtain a fully analytic expression for the latent loss using the known
-result for the KL divergence of two MVNs:
+result for the KL divergence of two MVNs [2]_:
 
 .. math::
 
@@ -173,4 +176,13 @@ and the actual data. Although we can take advantage of analytic results for
 Gaussian distribution, the actual forms of the distributions are not 
 constrained by the method (apart from the limitation of not always being able to use
 the reparameterization trick).
+
+References
+----------
+
+.. [1] *Chappell, M.A., Groves, A.R., Woolrich, M.W., "Variational Bayesian
+   inference for a non-linear forward model", IEEE Trans. Sig. Proc., 2009,
+   57(1), 223–236.*
+
+.. [2] http://web.stanford.edu/~jduchi/projects/general_notes.pdf
 
