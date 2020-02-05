@@ -16,5 +16,6 @@ optimisation of the model parameters given an experimental data set.
    implementation
    tests/biexp
    tests/asl
+   tests/sample_size_increase
    api
 
