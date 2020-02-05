@@ -186,34 +186,35 @@ def run_sample_size_increase_tests():
     infer_covar = True
     num_ll = False
     bs = 10
-    epochs = 500
+    num_epochs = (100, 200, 500)
     initial_sample_sizes = (2, 4, 8, 16, 32, 64)
     increase_factors = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
-    
-    for ssi in initial_sample_sizes:
-        for ssf in increase_factors:
-            ssfinal = int(ssi * ssf)
-            if ssfinal > 64:
-                continue
 
-            outdir="lr_%.3f_bs_%i_ssi_%i_ssf_%i" % (lr, bs, ssi, ssfinal)
-            if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
-                print("Skipping %s" % outdir)
-                continue
+    for epochs in num_epochs:    
+        for ssi in initial_sample_sizes:
+            for ssf in increase_factors:
+                ssfinal = int(ssi * ssf)
+                if ssfinal > 64:
+                    continue
 
-            _runtime, _svb, training_history = run_svb_test(
-                fname,
-                repeats=[rpts],
-                outdir=outdir,
-                epochs=EPOCHS,
-                batch_size=bs,
-                learning_rate=lr,
-                sample_size=ssi,
-                ss_increase_factor=ssf,
-                force_num_latent_loss=num_ll,
-                infer_covar=infer_covar,
-            )
-            print(outdir, training_history["mean_cost"][-1])
+                outdir="ss_increase_lr_%.3f_bs_%i_epochs_%i_ssi_%i_ssf_%i" % (lr, bs, epochs, ssi, ssfinal)
+                if os.path.exists(os.path.join(BASEDIR, outdir, "runtime")):
+                    print("Skipping %s" % outdir)
+                    continue
+
+                _runtime, _svb, training_history = run_svb_test(
+                    fname,
+                    repeats=[rpts],
+                    outdir=outdir,
+                    epochs=epochs,
+                    batch_size=bs,
+                    learning_rate=lr,
+                    sample_size=ssi,
+                    ss_increase_factor=ssf,
+                    force_num_latent_loss=num_ll,
+                    infer_covar=infer_covar,
+                )
+                print(outdir, training_history["mean_cost"][-1])
 
 def run_fabber(**kwargs):
     cases = {
