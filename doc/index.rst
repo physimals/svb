@@ -17,5 +17,6 @@ optimisation of the model parameters given an experimental data set.
    tests/biexp
    tests/asl
    tests/sample_size_increase
+   tests/learning_rate_quench
    api
 
