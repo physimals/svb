@@ -24,8 +24,10 @@ Tests using ASL data
 --------------------
 
 These tests were performed using the multi-repeat ASL data described :doc:`here <asl>`.
-We compared initial sample sizes of 2, 4, 8, 16, 32 and 64 growing to final sample sizes
-of 2, 4, 8, 16, 32 and 64 over 100, 200 and 500 epochs respectively.
+We compared initial learning rates of 0.8, 0.4, 0.2, 0.1, 0.05, 0.025 and 0.0125 with reduction
+over the training cycle to final learning rates from the same set (but only running
+examples where the final learning rate was less than the initial. The training cycle
+was performed over 100, 200 and 500 epochs.
 
 The following plot show the minimum cost achieved for each combination of initial and final
 learning rate at each number of epochs (the two plots show the same data but one is focused on
