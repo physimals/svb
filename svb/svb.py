@@ -165,12 +165,14 @@ class SvbFit(LogBase):
 
         # Optional increase in the sample size - to disable set factor to 1.0
         self.ss_increase_factor = tf.placeholder(tf.float32, shape=[])
-        self.sample_size = tf.cast(tf.round(tf.train.polynomial_decay(
+        self.sample_size = tf.cast(tf.round(tf.train.exponential_decay(
             tf.to_float(self.initial_ss),
             self.global_step,
             self.num_steps,
-            tf.to_float(self.initial_ss) * self.ss_increase_factor,
-            power=1.0,
+            self.ss_increase_factor,
+            staircase=False,
+            #tf.to_float(self.initial_ss) * self.ss_increase_factor,
+            #power=1.0,
         )), tf.int32)
 
         # Number of voxels in full data (V) - known at runtime
