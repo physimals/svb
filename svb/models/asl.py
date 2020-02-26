@@ -30,7 +30,7 @@ class AslRestModel(Model):
         ModelOption("t1b", "Blood T1 value", units="s", type=float, default=1.65),
         ModelOption("tis", "Inversion times", units="s", type=ValueList(float)),
         ModelOption("plds", "Post-labelling delays (for CASL instead of TIs)", units="s", type=ValueList(float)),
-        ModelOption("repeats", "Number of repeats - single value or one per TI/PLD", units="s", type=ValueList(int), default=1),
+        ModelOption("repeats", "Number of repeats - single value or one per TI/PLD", units="s", type=ValueList(int), default=[1]),
         ModelOption("slicedt", "Increase in TI/PLD per slice", units="s", type=float, default=0),
         ModelOption("inferart", "Infer arterial component", type=bool),
         ModelOption("infert1", "Infer T1 value", type=bool),
