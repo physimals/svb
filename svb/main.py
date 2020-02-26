@@ -208,7 +208,7 @@ def main():
         welcome = "Welcome to SVB %s" % __version__
         print(welcome)
         print("=" * len(welcome))
-        runtime, _ = run(log_stream=sys.stdout, **vars(options))
+        runtime, _, _ = run(log_stream=sys.stdout, **vars(options))
         print("FINISHED - runtime %.3fs" % runtime)
     except (RuntimeError, ValueError) as exc:
         sys.stderr.write("ERROR: %s\n" % str(exc))
