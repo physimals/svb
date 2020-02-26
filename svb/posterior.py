@@ -11,17 +11,17 @@ import numpy as np
 from .utils import LogBase
 from . import dist
 
-def get_posterior(idx, param, t, data, **kwargs):
+def get_posterior(idx, param, t, data_model, **kwargs):
     """
     Factory method to return a posterior
 
     :param param: svb.parameter.Parameter instance
     :
     """
-    nvertices = tf.shape(data)[0]
+    nvertices = data_model.n_vertices
     initial_mean, initial_var = None, None
     if param.post_init is not None:
-        initial_mean, initial_var = param.post_init(param, t, data)
+        initial_mean, initial_var = param.post_init(param, t, data_model.data_flattened)
 
     if initial_mean is None:
         initial_mean = tf.fill([nvertices], param.post_dist.mean)

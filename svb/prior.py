@@ -12,22 +12,22 @@ from .dist import Normal
 PRIOR_TYPE_NONSPATIAL = "N"
 PRIOR_TYPE_SPATIAL_MRF = "M"
 
-def get_prior(param, nvertices, **kwargs):
+def get_prior(param, data_model, **kwargs):
     """
     Factory method to return a vertexwise prior
     """
     prior = None
     if isinstance(param.prior_dist, Normal):
         if param.prior_type == "N":
-            prior = NormalPrior(nvertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = NormalPrior(data_model.n_vertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
         elif param.prior_type == "M":
-            prior = MRFSpatialPrior(nvertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = MRFSpatialPrior(data_model.n_vertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
         elif param.prior_type == "M2":
-            prior = MRF2SpatialPrior(nvertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = MRF2SpatialPrior(data_model.n_vertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
         elif param.prior_type == "Mfab":
-            prior = FabberMRFSpatialPrior(nvertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = FabberMRFSpatialPrior(data_model.n_vertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
         elif param.prior_type == "A":
-            prior = ARDPrior(nvertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = ARDPrior(data_model.n_vertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
 
     if prior is not None:
         return prior

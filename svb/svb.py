@@ -203,7 +203,7 @@ class SvbFit(LogBase):
         # Create posterior distribution - note this can be initialized using the actual data
         gaussian_posts, nongaussian_posts, all_posts = [], [], []
         for idx, param in enumerate(self.params):    
-            post = get_posterior(idx, param, self.tpts_train, self.data_full, init=self.data_model.post_init, **kwargs)
+            post = get_posterior(idx, param, self.tpts_train, self.data_model, init=self.data_model.post_init, **kwargs)
             if isinstance(post, NormalPosterior):
                 gaussian_posts.append(post)
                 # FIXME Noise parameter hack
@@ -238,7 +238,7 @@ class SvbFit(LogBase):
         # for spatial regularization
         all_priors = []
         for idx, param in enumerate(self.params):            
-            all_priors.append(get_prior(param, self.nvoxels, idx=idx, post=self.post, nn=self.nn, n2=self.n2))
+            all_priors.append(get_prior(param, self.data_model, idx=idx, post=self.post, nn=self.nn, n2=self.n2))
         self.prior = FactorisedPrior(all_priors, name="prior", **kwargs)
 
         # If all of our priors and posteriors are Gaussian we can use an analytic expression for
