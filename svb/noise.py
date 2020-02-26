@@ -16,13 +16,8 @@ class NoiseParameter(Parameter):
 
     def __init__(self, **kwargs):
         Parameter.__init__(self, "noise",
-<<<<<<< HEAD
-                           prior=dist.LogNormal(1.0, 1e6),
-                           post=dist.LogNormal(1.0, 1.5),
-=======
                            prior=dist.LogNormal(1.0, 2e5),
                            post=dist.LogNormal(1.0, 1.02),
->>>>>>> master
                            post_init=self._init_noise,
                            **kwargs)
 
@@ -46,12 +41,8 @@ class NoiseParameter(Parameter):
 
         # Possible to get zeros when using surface projection
         noise_var = tf.where(tf.equal(noise_var, 0), tf.ones_like(noise_var), noise_var)
-<<<<<<< HEAD
-        log_noise_var = self.log_tf(tf.log(noise_var, name="log_noise_var"), force=False)
-=======
         log_noise_var = self.log_tf(tf.log(noise_var, name="log_noise_var"))
 
->>>>>>> master
         data = self.log_tf(tf.tile(tf.reshape(data, [nvoxels, 1, batch_size]), [1, sample_size, 1], name="data"), force=False)
         pred = self.log_tf(pred, force=False)
 
