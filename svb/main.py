@@ -300,6 +300,11 @@ def run(data, model_name, output, mask=None, **kwargs):
         with open(os.path.join(output, "runtime"), "w") as runtime_f:
             runtime_f.write("%f\n" % runtime)
 
+        runtime_history = training_history["runtime"]
+        with open(os.path.join(output, "runtime_history"), "w") as runtime_f:
+            for epoch_time in runtime_history:
+                runtime_f.write("%f\n" % epoch_time)
+
     # Write out input data
     if kwargs.get("save_input_data", False):
         data_model.nifti_image(data_model.data_flattened).to_filename(os.path.join(output, "input_data.nii.gz"))

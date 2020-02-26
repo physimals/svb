@@ -36,6 +36,7 @@ def get_posterior(idx, param, t, data_model, **kwargs):
     if initial_var is None:
         initial_var = tf.fill([nvertices], param.post_dist.var)
     else:
+        # FIXME variance not value?
         initial_var = param.post_dist.transform.int_values(initial_var)
 
     if param.post_type == "vertexwise" and isinstance(param.post_dist, dist.Normal):
