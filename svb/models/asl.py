@@ -38,10 +38,14 @@ class AslRestModel(Model):
         ModelOption("fcalib", "Perfusion value to use in estimation of effective T1", type=float, default=0.01),
     ]
 
-    def __init__(self, **options):
-        Model.__init__(self, **options)
+    def __init__(self, data_model, **options):
+        Model.__init__(self, data_model, **options)
         if self.plds is not None:
             self.tis = [self.tau + pld for pld in self.plds]
+
+        if self.tis is None and self.plds is None:
+            raise ValueError("Either TIs or PLDs must be given")
+
         if self.attsd is None:
             self.attsd = 1.0 if len(self.tis) > 1 else 0.1
         if len(self.repeats) == 1:
@@ -192,20 +196,20 @@ class AslRestModel(Model):
 
         return fblood*signal
 
-    def tpts(self, data_model):
-        if data_model.n_tpts != len(self.tis) * self.repeats:
-            raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis)*self.repeats, data_model.n_tpts))
+    def tpts(self):
+        if self.data_model.n_tpts != len(self.tis) * self.repeats:
+            raise ValueError("ASL model configured with %i time points, but data has %i" % (len(self.tis)*self.repeats, self.data_model.n_tpts))
 
         # FIXME assuming grouped by TIs/PLDs
         if self.slicedt > 0:
             # Generate voxelwise timings array using the slicedt value
-            t = np.zeros(list(data_model.shape) + [data_model.n_tpts])
-            for z in range(data_model.shape[2]):
+            t = np.zeros(list(self.data_model.shape) + [self.data_model.n_tpts])
+            for z in range(self.data_model.shape[2]):
                 t[:, :, z, :] = np.array(sum([[ti + z*self.slicedt] * self.repeats for ti in self.tis], []))
         else:
             # Timings are the same for all voxels
             t = np.array(sum([[ti] * self.repeats for ti in self.tis], []))
-        return t.reshape(-1, data_model.n_tpts)
+        return t.reshape(-1, self.data_model.n_tpts)
 
     def __str__(self):
         return "ASL resting state model: %s" % __version__

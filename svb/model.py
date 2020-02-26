@@ -36,8 +36,9 @@ class Model(LogBase):
         ModelOption("t0", "Time offset for first volume", type=float, default=0.0),
     ]
 
-    def __init__(self, **options):
+    def __init__(self, data_model, **options):
         LogBase.__init__(self)
+        self.data_model = data_model
         self.params = []
         for option in self.OPTIONS:
             setattr(self, option.attr_name, options.get(option.attr_name, option.default))
@@ -58,7 +59,7 @@ class Model(LogBase):
                 return idx
         raise ValueError("Parameter not found in model: %s" % name)
 
-    def tpts(self, data_model):
+    def tpts(self):
         """
         Get the full set of timeseries time values
 
@@ -73,7 +74,7 @@ class Model(LogBase):
         :return: Either a Numpy array of shape [n_tpts] or a Numpy array of shape
                  shape + [n_tpts] for voxelwise timepoints
         """
-        return np.linspace(self.t0, self.t0+data_model.n_tpts*self.dt, num=data_model.n_tpts, endpoint=False)
+        return np.linspace(self.t0, self.t0+self.data_model.n_tpts*self.dt, num=self.data_model.n_tpts, endpoint=False)
 
     def evaluate(self, params, tpts):
         """

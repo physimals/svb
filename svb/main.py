@@ -33,6 +33,7 @@ class SvbArgumentParser(argparse.ArgumentParser):
         "prior_var" : float,
         "prior_dist" : str,
         "prior_type" : str,
+        "post_mean" : float,
         "post_type" : str,
     }
 
@@ -238,11 +239,11 @@ def run(data, model_name, output, mask=None, **kwargs):
     data_model = DataModel(data, mask, **kwargs)
     
     # Create the generative model
-    fwd_model = get_model_class(model_name)(**kwargs)
+    fwd_model = get_model_class(model_name)(data_model, **kwargs)
     fwd_model.log_config()
 
     # Get the time points from the model
-    tpts = fwd_model.tpts(data_model)
+    tpts = fwd_model.tpts()
     if tpts.ndim > 1 and tpts.shape[0] > 1:
         tpts = tpts[data_model.mask_flattened > 0]
 

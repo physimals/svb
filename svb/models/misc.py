@@ -15,8 +15,8 @@ class ConstantModel(Model):
     Model which generates a constant signal
     """
 
-    def __init__(self, **options):
-        Model.__init__(self, **options)
+    def __init__(self, data_model, **options):
+        Model.__init__(self, data_model, **options)
         self.params += [
             get_parameter("mu", dist="Normal", mean=0.0,
                           prior_var=1e6, post_var=1.0, 
@@ -34,8 +34,8 @@ class PolyModel(Model):
     Model which generates a signal from a polynomial
     """
 
-    def __init__(self, **options):
-        Model.__init__(self, **options)
+    def __init__(self, data_model, **options):
+        Model.__init__(self, data_model, **options)
         self._degree = options.get("degree", 2)
         for idx in range(self._degree+1):
             self.params.append(
