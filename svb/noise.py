@@ -22,7 +22,7 @@ class NoiseParameter(Parameter):
                            **kwargs)
 
     def _init_noise(self, _param, _t, data):
-        data_mean, data_var = tf.nn.moments(data, axes=1)
+        data_mean, data_var = tf.nn.moments(tf.constant(data), axes=1)
         return tf.where(tf.equal(data_var, 0), tf.ones_like(data_var), data_var), None
 
     def log_likelihood(self, data, pred, noise_var, nt):
