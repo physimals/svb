@@ -127,10 +127,12 @@ class NormalPosterior(Posterior):
         self.name = kwargs.get("name", "NormPost")
         
         mean, var = self._get_mean_var(mean, var, kwargs.get("init", None))
+        mean = tf.cast(mean, tf.float32)
+        var = tf.cast(var, tf.float32)
 
-        self.mean_variable = self.log_tf(tf.Variable(mean, dtype=tf.float32, validate_shape=False,
+        self.mean_variable = self.log_tf(tf.Variable(mean, validate_shape=False,
                                                      name="%s_mean" % self.name))
-        self.log_var = tf.Variable(tf.log(tf.cast(var, dtype=tf.float32)), validate_shape=False,
+        self.log_var = tf.Variable(tf.log(var), validate_shape=False,
                                    name="%s_log_var" % self.name)
         self.var_variable = self.log_tf(tf.exp(self.log_var, name="%s_var" % self.name))
         if kwargs.get("suppress_nan", True):
