@@ -2,6 +2,7 @@
 Base class for a forward model whose parameters are to be fitted
 """
 import pkg_resources
+import collections
 
 import numpy as np
 
@@ -10,7 +11,7 @@ try:
 except ImportError:
     import tensorflow as tf
    
-from .utils import LogBase
+from .utils import LogBase, ValueList
 
 MODELS = {
 }
@@ -32,11 +33,6 @@ def get_model_class(model_name):
         raise ValueError("No such model: %s" % model_name)
 
     return model_class
-
-def ValueList(value_type):
-    def _call(value):
-        return [value_type(v) for v in value.replace(",", " ").split()]
-    return _call
 
 class ModelOption:
     def __init__(self, attr_name, desc, **kwargs):

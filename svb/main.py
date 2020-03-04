@@ -16,7 +16,8 @@ import re
 import numpy as np
 import nibabel as nib
 
-from . import __version__, DataModel, SvbFit, ValueList, get_model_class
+from . import __version__, DataModel, SvbFit, get_model_class
+from .utils import ValueList
 
 USAGE = "svb <options>"
 

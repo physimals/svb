@@ -8,6 +8,14 @@ try:
 except ImportError:
     import tensorflow as tf
 
+def ValueList(value_type):
+    """
+    Class used with argparse for options which can be given as a comma separated list
+    """
+    def _call(value):
+        return [value_type(v) for v in value.replace(",", " ").split()]
+    return _call
+
 class LogBase(object):
     """
     Base class that provides a named log and the ability to log tensors easily
