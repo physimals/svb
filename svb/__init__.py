@@ -9,11 +9,9 @@ except ImportError:
 
 from .svb import SvbFit
 from .data import DataModel
-from .model import Model
-from .models import get_model_class
+from .model import Model, get_model_class
 
-__all__ = [
-    "__version__",
+__all__ = [   "__version__",
     "__timestamp__",
     "SvbFit",
     "DataModel",

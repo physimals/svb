@@ -1,19 +1,38 @@
 """
 Base class for a forward model whose parameters are to be fitted
 """
+import pkg_resources
+import collections
+
+import numpy as np
+
 try:
     import tensorflow.compat.v1 as tf
 except ImportError:
     import tensorflow as tf
    
-import numpy as np
+from .utils import LogBase, ValueList
 
-from .utils import LogBase
+MODELS = {
+}
 
-def ValueList(value_type):
-    def _call(value):
-        return [value_type(v) for v in value.replace(",", " ").split()]
-    return _call
+_models_loaded = False
+
+def get_model_class(model_name):
+    """
+    Get a model class by name
+    """
+    global _models_loaded
+    if not _models_loaded:
+        for model in pkg_resources.iter_entry_points('svb.models'):
+            MODELS[model.name] = model.load()
+        _models_loaded = True
+
+    model_class = MODELS.get(model_name, None)
+    if model_class is None:
+        raise ValueError("No such model: %s" % model_name)
+
+    return model_class
 
 class ModelOption:
     def __init__(self, attr_name, desc, **kwargs):

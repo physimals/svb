@@ -1,6 +1,8 @@
 """
 Definition of prior distribution
 """
+import numpy as np
+
 try:
     import tensorflow.compat.v1 as tf
 except ImportError:

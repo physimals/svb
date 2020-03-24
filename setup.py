@@ -90,6 +90,12 @@ KWARGS = {
         'console_scripts' : [
             "svb=svb.main:main",
         ],
+        'svb.models' : [
+            "exp=svb.models.exp:ExpModel",
+            "biexp=svb.models.exp:BiExpModel",
+            "constant=svb.models.misc:ConstantModel",
+            "poly=svb.models.misc:PolyModel",
+        ],
     },
     'classifiers' : [
         'Development Status :: 3 - Alpha',
