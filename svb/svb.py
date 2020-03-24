@@ -7,7 +7,7 @@ Infers:
       positive-definite matrix)
 
 The general order for tensor dimensions is:
-    - Voxel indexing (V=number of voxels / W=number of parameter vertices)
+    - Voxel indexing (V=number of voxels / W=number of parameter nodes)
     - Parameter indexing (P=number of parameters)
     - Sample indexing (S=number of samples)
     - Data point indexing (B=batch size, i.e. number of time points
@@ -20,8 +20,8 @@ to be able to index input by parameter. For this reason we transpose
 when calling the model's ``evaluate`` function to put the P dimension
 first.
 
-The parameter vertices, W, are the set of points on which parameters are defined
-and will be output. They may be voxel centres, or surface element vertices. The
+The parameter nodes, W, are the set of points on which parameters are defined
+and will be output. They may be voxel centres, or surface element nodes. The
 data voxels, V, on the other hand are the points on which the data to be fitted to
 is defined. Typically this will be volumetric voxels as that is what most
 imaging experiments output as raw data.
@@ -35,18 +35,18 @@ defined on V.
 
 V and W are currently identical but may not be in the future. For example
 we may want to estimate parameters on a surface (W=number of surface 
-vertices) using data defined on a volume (V=number of voxels).
+nodes) using data defined on a volume (V=number of voxels).
 
 Ideas for per voxel/vertex convergence:
 
     - Maintain vertex_mask as member. Initially all ones
-    - Mask vertices when generating samples and evaluating model. The
-      latent cost will be over unmasked vertices only.
+    - Mask nodes when generating samples and evaluating model. The
+      latent cost will be over unmasked nodes only.
     - PROBLEM: need reconstruction cost defined over full voxel set
       hence need to project model evaluation onto all voxels. So
-      masked vertices still need to keep their previous model evaluation
+      masked nodes still need to keep their previous model evaluation
       output
-    - Define criteria for masking vertices after each epoch
+    - Define criteria for masking nodes after each epoch
     - PROBLEM: spatial interactions make per-voxel convergence difficult.
       Maybe only do full set convergence in this case (like Fabber)
 """
@@ -179,9 +179,9 @@ class SvbFit(LogBase):
         #self.nvoxels = tf.shape(self.data_full)[0]
         self.nvoxels = self.data_model.n_unmasked_voxels
 
-        # Number of parameter vertices (W) - known at runtime. Currently equal
+        # Number of parameter nodes (W) - known at runtime. Currently equal
         # to number of voxels. In future this will be defined by the data model.
-        self.nvertices = self.data_model.n_vertices
+        self.nnodes = self.data_model.n_nodes
 
         # Represent neighbour lists as sparse tensors
         self.nn = tf.SparseTensor(
@@ -301,14 +301,14 @@ class SvbFit(LogBase):
         model_vars.append(ext_vars)
         
         # Define convenience tensors for querying the model-space sample, means and prediction
-        # modelfit_vertices has shape [W x B]
+        # modelfit_nodes has shape [W x B]
         self.model_samples = self.log_tf(tf.identity(model_samples, name="model_samples"))
         self.model_means = self.log_tf(tf.identity(model_means, name="model_means"))
         self.model_vars = self.log_tf(tf.identity(model_vars, name="model_vars"))
-        self.modelfit_vertices = self.log_tf(tf.identity(self.model.evaluate(tf.expand_dims(self.model_means, -1), self.tpts_train), "modelfit_vertices"))
+        self.modelfit_nodes = self.log_tf(tf.identity(self.model.evaluate(tf.expand_dims(self.model_means, -1), self.tpts_train), "modelfit_nodes"))
         
         # FIXME compatibility
-        self.modelfit = self.log_tf(self.modelfit_vertices, name="modelfit")
+        self.modelfit = self.log_tf(self.modelfit_nodes, name="modelfit")
 
         # The timepoints tensor has shape [V x B] or [1 x B]. It needs to be reshaped
         # to [V x 1 x B] or [1 x 1 x B] so it can be broadcast across each of the S samples
@@ -359,8 +359,8 @@ class SvbFit(LogBase):
 
         # Note that we pass the total number of time points as we need to scale this term correctly
         # when the batch size is not the full data size
-        model_prediction_voxels = self.log_tf(self.data_model.vertices_to_voxels_ts(model_prediction), name="model_prediction_voxels", shape=True, force=False)
-        noise_samples_voxels = self.log_tf(self.data_model.vertices_to_voxels(noise_samples), name="noise_samples_voxels", shape=True, force=False)
+        model_prediction_voxels = self.log_tf(self.data_model.nodes_to_voxels_ts(model_prediction), name="model_prediction_voxels", shape=True, force=False)
+        noise_samples_voxels = self.log_tf(self.data_model.nodes_to_voxels(noise_samples), name="noise_samples_voxels", shape=True, force=False)
         reconstr_loss = self.noise.log_likelihood(self.data_train, model_prediction_voxels, noise_samples_voxels, self.nt_full)
         self.reconstr_loss = self.log_tf(tf.identity(reconstr_loss, name="reconstr_loss"), shape=True, force=False)
 
@@ -387,7 +387,7 @@ class SvbFit(LogBase):
             #self.cost = tf.identity(self.reconstr_loss, name="cost")
             raise NotImplementedError()
         else:
-            # FIXME can't add reconstr and latent costs as one defined on voxels the other on vertices
+            # FIXME can't add reconstr and latent costs as one defined on voxels the other on nodes
             #self.cost = tf.add(self.reconstr_loss, self.latent_weight * self.latent_loss, name="cost")
             self.cost = self.log_tf(tf.identity(self.reconstr_loss, name="cost"), force=False, shape=True)
             self.mean_reconstr_cost = tf.reduce_mean(self.reconstr_loss, name="mean_reconstr_cost")
@@ -484,9 +484,9 @@ class SvbFit(LogBase):
 
         # Determine number of voxels and timepoints and check consistent
         n_voxels, n_timepoints = tuple(data.shape)
-        n_vertices = self.data_model.n_vertices
-        if tpts.shape[0] > 1 and tpts.shape[0] != n_vertices:
-            raise ValueError("Time points has %i vertices, but data has %i" % (tpts.shape[0], n_vertices))
+        n_nodes = self.data_model.n_nodes
+        if tpts.shape[0] > 1 and tpts.shape[0] != n_nodes:
+            raise ValueError("Time points has %i nodes, but data has %i" % (tpts.shape[0], n_nodes))
         if tpts.shape[1] != n_timepoints:
             raise ValueError("Time points has length %i, but data has %i volumes" % (tpts.shape[1], n_timepoints))
 
@@ -502,7 +502,7 @@ class SvbFit(LogBase):
             "mean_cost" : np.zeros([epochs+1]),
             "voxel_cost" : np.zeros([n_voxels, epochs+1]),
             "mean_params" : np.zeros([epochs+1, self._nparams]),
-            "voxel_params" : np.zeros([n_vertices, epochs+1, self._nparams]),
+            "voxel_params" : np.zeros([n_nodes, epochs+1, self._nparams]),
             "ak" : np.zeros([epochs+1]),
             "runtime" : np.zeros([epochs+1]),
         }
@@ -546,7 +546,7 @@ class SvbFit(LogBase):
             try:
                 err = False
                 total_cost = np.zeros([n_voxels])
-                total_latent = np.zeros([n_vertices])
+                total_latent = np.zeros([n_nodes])
                 total_reconstr = np.zeros([n_voxels])
 
                 if epoch == fit_only_epochs:

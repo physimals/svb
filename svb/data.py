@@ -59,11 +59,11 @@ class DataModel(LogBase):
                 raise ValueError("Vertex-to-voxel mapping must be a matrix")
             if self.v2w_data["shape"][0] != self.n_unmasked_voxels:
                 raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
-            self.n_vertices = self.v2w_data["shape"][1]
+            self.n_nodes = self.v2w_data["shape"][1]
         else:
             # By default parameter space is same as data space
             self.v2w_data = None
-            self.n_vertices = self.n_unmasked_voxels
+            self.n_nodes = self.n_unmasked_voxels
 
         if kwargs.get("initial_posterior", None):
             self.post_init = self._get_posterior_data(kwargs["initial_posterior"])
@@ -72,7 +72,7 @@ class DataModel(LogBase):
 
         self._calc_neighbours()
     
-    def vertices_to_voxels_ts(self, tensor, vertex_axis=0):
+    def nodes_to_voxels_ts(self, tensor, vertex_axis=0):
         """
         Map parameter vertex-based data to data voxels
 
@@ -81,8 +81,8 @@ class DataModel(LogBase):
         a surface mesh, but using volumetric data to train this model.
 
         :param tensor: TensorFlow tensor of which one axis represents indexing over
-                       parameter vertices
-        :param vertex_axis: Index of axis of tensor which corresponds to parameter vertices
+                       parameter nodes
+        :param vertex_axis: Index of axis of tensor which corresponds to parameter nodes
 
         :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
                  axis and other tensor entries transformed appropriately to the 
@@ -102,7 +102,7 @@ class DataModel(LogBase):
             result = tf.reshape(tf.concat(results, -1), (self.n_unmasked_voxels, -1, 6))
             return result
             
-    def vertices_to_voxels(self, tensor, vertex_axis=0):
+    def nodes_to_voxels(self, tensor, vertex_axis=0):
         """
         Map parameter vertex-based data to data voxels
 
@@ -111,8 +111,8 @@ class DataModel(LogBase):
         a surface mesh, but using volumetric data to train this model.
 
         :param tensor: TensorFlow tensor of which one axis represents indexing over
-                       parameter vertices
-        :param vertex_axis: Index of axis of tensor which corresponds to parameter vertices
+                       parameter nodes
+        :param vertex_axis: Index of axis of tensor which corresponds to parameter nodes
 
         :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
                  axis and other tensor entries transformed appropriately to the 

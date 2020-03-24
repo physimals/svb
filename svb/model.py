@@ -103,12 +103,12 @@ class Model(LogBase):
                   [1x1xB] (if time values at each voxel are identical) or [Vx1xB]
                   otherwise.
         :param params Sequence of parameter values arrays, one for each parameter.
-                      Each array is WxSx1 tensor where W is the number of parameter vertices and
+                      Each array is WxSx1 tensor where W is the number of parameter nodes and
                       S is the number of samples per parameter. This
-                      may be supplied as a PxVxSx1 tensor where P is the number of
+                      may be supplied as a PxWWxSx1 tensor where P is the number of
                       parameters.
 
-        :return: [VxSxB] tensor containing model output at the specified time values
+        :return: [WxSxB] tensor containing model output at the specified time values
                  for each voxel, and each sample (set of parameter values).
         """
         raise NotImplementedError("evaluate")

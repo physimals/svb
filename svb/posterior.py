@@ -18,23 +18,23 @@ def get_posterior(idx, param, t, data_model, **kwargs):
     :param param: svb.parameter.Parameter instance
     :
     """
-    nvertices = data_model.n_vertices
+    nnodes = data_model.n_nodes
     initial_mean, initial_var = None, None
     if param.post_init is not None:
-        if data_model.n_vertices != data_model.n_unmasked_voxels:
-            # FIXME we don't have voxels_to_vertices currently...
-            #initial_mean, initial_var = data_model.voxels_to_vertices(param.post_init(param, t, data_model.data_flattened))
+        if data_model.n_nodes != data_model.n_unmasked_voxels:
+            # FIXME we don't have voxels_to_nodes currently...
+            #initial_mean, initial_var = data_model.voxels_to_nodes(param.post_init(param, t, data_model.data_flattened))
             pass
         else:
             initial_mean, initial_var = param.post_init(param, t, data_model.data_flattened)
 
     if initial_mean is None:
-        initial_mean = tf.fill([nvertices], param.post_dist.mean)
+        initial_mean = tf.fill([nnodes], param.post_dist.mean)
     else:
         initial_mean = param.post_dist.transform.int_values(initial_mean)
 
     if initial_var is None:
-        initial_var = tf.fill([nvertices], param.post_dist.var)
+        initial_var = tf.fill([nnodes], param.post_dist.var)
     else:
         # FIXME variance not value?
         initial_var = param.post_dist.transform.int_values(initial_var)
@@ -58,8 +58,8 @@ class Posterior(LogBase):
     def _get_mean_var(self, mean, var, init_post):
         if init_post is not None:
             mean, cov = init_post
-            #if mean.shape[0] != self.nvertices:
-            #    raise ValueError("Initializing posterior with %i vertices but input contains %i vertices" % (self.nvertices, mean.shape[0]))
+            #if mean.shape[0] != self.nnodes:
+            #    raise ValueError("Initializing posterior with %i nodes but input contains %i nodes" % (self.nnodes, mean.shape[0]))
             if self._idx >= mean.shape[1]:
                 raise ValueError("Initializing posterior for parameter %i but input contains %i parameters" % (self._idx+1, mean.shape[1]))
             
@@ -78,7 +78,7 @@ class Posterior(LogBase):
         :param nsamples: Number of samples to return per parameter vertex / parameter
 
         :return: A tensor of shape [W, P, S] where W is the number
-                 of parameter vertices, P is the number of parameters in the distribution
+                 of parameter nodes, P is the number of parameters in the distribution
                  (possibly 1) and S is the number of samples
         """
         raise NotImplementedError()
@@ -86,7 +86,7 @@ class Posterior(LogBase):
     def entropy(self, samples=None):
         """
         :param samples: A tensor of shape [W, P, S] where W is the number
-                        of parameter vertices, P is the number of parameters in the prior
+                        of parameter nodes, P is the number of parameters in the prior
                         (possibly 1) and S is the number of samples.
                         This parameter may or may not be used in the calculation.
                         If it is required, the implementation class must check
@@ -128,7 +128,7 @@ class NormalPosterior(Posterior):
         :param var: Tensor of shape [W] containing the variance at each parameter vertex
         """
         Posterior.__init__(self, idx, **kwargs)
-        self.nvertices = tf.shape(mean)[0]
+        self.nnodes = tf.shape(mean)[0]
         self.name = kwargs.get("name", "NormPost")
         
         mean, var = self._get_mean_var(mean, var, kwargs.get("init", None))
@@ -153,9 +153,9 @@ class NormalPosterior(Posterior):
         self.std = self.log_tf(tf.sqrt(self.var, name="%s_std" % self.name))
 
     def sample(self, nsamples):
-        eps = tf.random_normal((self.nvertices, 1, nsamples), 0, 1, dtype=tf.float32)
-        tiled_mean = tf.tile(tf.reshape(self.mean, [self.nvertices, 1, 1]), [1, 1, nsamples])
-        sample = self.log_tf(tf.add(tiled_mean, tf.multiply(tf.reshape(self.std, [self.nvertices, 1, 1]), eps),
+        eps = tf.random_normal((self.nnodes, 1, nsamples), 0, 1, dtype=tf.float32)
+        tiled_mean = tf.tile(tf.reshape(self.mean, [self.nnodes, 1, 1]), [1, 1, nsamples])
+        sample = self.log_tf(tf.add(tiled_mean, tf.multiply(tf.reshape(self.std, [self.nnodes, 1, 1]), eps),
                                     name="%s_sample" % self.name))
         return sample
 
@@ -186,12 +186,12 @@ class GaussianGlobalPosterior(Posterior):
         :param var: Tensor of shape [W] containing the variance at each parameter vertex
         """
         Posterior.__init__(self, idx, **kwargs)
-        self.nvertices = tf.shape(mean)[0]
+        self.nnodes = tf.shape(mean)[0]
         self.name = kwargs.get("name", "GlobalPost")
 
         mean, var = self._get_mean_var(mean, var, kwargs.get("init", None))
         
-        # Take the mean of the mean and variance across vertices as the initial value
+        # Take the mean of the mean and variance across nodes as the initial value
         # in case there is a vertexwise initialization function
         initial_mean_global = tf.reshape(tf.reduce_mean(mean), [1])
         initial_var_global = tf.reshape(tf.reduce_mean(var), [1])
@@ -208,8 +208,8 @@ class GaussianGlobalPosterior(Posterior):
             self.mean_global = self.mean_variable
             self.var_global = self.var_variable
 
-        self.mean = self.log_tf(tf.tile(self.mean_global, [self.nvertices]), name="%s_meang" % self.name)
-        self.var = tf.tile(self.var_global, [self.nvertices])
+        self.mean = self.log_tf(tf.tile(self.mean_global, [self.nnodes]), name="%s_meang" % self.name)
+        self.var = tf.tile(self.var_global, [self.nnodes])
         self.std = self.log_tf(tf.sqrt(self.var, name="%s_std" % self.name))
 
     def sample(self, nsamples):
@@ -217,8 +217,8 @@ class GaussianGlobalPosterior(Posterior):
         FIXME should each parameter vertex get the same sample? Currently YES
         """
         eps = tf.random_normal((1, 1, nsamples), 0, 1, dtype=tf.float32)
-        tiled_mean = tf.tile(tf.reshape(self.mean, [self.nvertices, 1, 1]), [1, 1, nsamples])
-        sample = self.log_tf(tf.add(tiled_mean, tf.multiply(tf.reshape(self.std, [self.nvertices, 1, 1]), eps),
+        tiled_mean = tf.tile(tf.reshape(self.mean, [self.nnodes, 1, 1]), [1, 1, nsamples])
+        sample = self.log_tf(tf.add(tiled_mean, tf.multiply(tf.reshape(self.std, [self.nnodes, 1, 1]), eps),
                                     name="%s_sample" % self.name))
         return sample
 
@@ -257,7 +257,7 @@ class FactorisedPosterior(Posterior):
         self.mean = self.log_tf(tf.identity(mean, name="%s_mean" % self.name))
         self.var = self.log_tf(tf.identity(var, name="%s_var" % self.name))
         self.std = tf.sqrt(self.var, name="%s_std" % self.name)
-        self.nvertices = posts[0].nvertices
+        self.nnodes = posts[0].nnodes
 
         # Covariance matrix is diagonal
         self.cov = tf.matrix_diag(self.var, name='%s_cov' % self.name)
@@ -273,7 +273,7 @@ class FactorisedPosterior(Posterior):
         return self.log_tf(sample)
 
     def entropy(self, _samples=None):
-        entropy = tf.zeros([self.nvertices], dtype=tf.float32)
+        entropy = tf.zeros([self.nnodes], dtype=tf.float32)
         for post in self.posts:
             entropy = tf.add(entropy, post.entropy(), name="%s_entropy" % self.name)
         return self.log_tf(entropy)
@@ -303,15 +303,15 @@ class FactorisedPosterior(Posterior):
 
         https://en.wikipedia.org/wiki/Multivariate_normal_distribution#Kullback%E2%80%93Leibler_divergence
 
-        :param prior: Vertexwise Prior instance which defines the ``mean`` and ``cov`` vertices
+        :param prior: Vertexwise Prior instance which defines the ``mean`` and ``cov`` nodes
                       attributes
         """
         prior_cov_inv = tf.matrix_inverse(prior.cov)
         mean_diff = tf.subtract(self.mean, prior.mean)
 
         term1 = tf.trace(tf.matmul(prior_cov_inv, self.cov))
-        term2 = tf.matmul(tf.reshape(mean_diff, (self.nvertices, 1, -1)), prior_cov_inv)
-        term3 = tf.reshape(tf.matmul(term2, tf.reshape(mean_diff, (self.nvertices, -1, 1))), [self.nvertices])
+        term2 = tf.matmul(tf.reshape(mean_diff, (self.nnodes, 1, -1)), prior_cov_inv)
+        term3 = tf.reshape(tf.matmul(term2, tf.reshape(mean_diff, (self.nnodes, -1, 1))), [self.nnodes])
         term4 = prior.log_det_cov()
         term5 = self.log_det_cov()
 
@@ -341,7 +341,7 @@ class MVNPosterior(FactorisedPosterior):
             _mean, cov = kwargs["init"]
             covar_init = tf.cholesky(cov)
         else:
-            covar_init = tf.zeros([self.nvertices, self.nparams, self.nparams], dtype=tf.float32)
+            covar_init = tf.zeros([self.nnodes, self.nparams, self.nparams], dtype=tf.float32)
 
         self.off_diag_vars_base = self.log_tf(tf.Variable(covar_init, validate_shape=False,
                                                      name='%s_off_diag_vars' % self.name))
@@ -350,7 +350,7 @@ class MVNPosterior(FactorisedPosterior):
         else:
             self.off_diag_vars = self.off_diag_vars_base
         self.off_diag_cov_chol = tf.matrix_set_diag(tf.matrix_band_part(self.off_diag_vars, -1, 0),
-                                                    tf.zeros([self.nvertices, self.nparams]),
+                                                    tf.zeros([self.nnodes, self.nparams]),
                                                     name='%s_off_diag_cov_chol' % self.name)
 
         # Combine diagonal and off-diagonal elements into full matrix
@@ -373,11 +373,11 @@ class MVNPosterior(FactorisedPosterior):
 
     def sample(self, nsamples):
         # Use the 'reparameterization trick' to return the samples
-        eps = tf.random_normal((self.nvertices, self.nparams, nsamples), 0, 1, dtype=tf.float32, name="eps")
+        eps = tf.random_normal((self.nnodes, self.nparams, nsamples), 0, 1, dtype=tf.float32, name="eps")
 
         # NB self.cov_chol is the Cholesky decomposition of the covariance matrix
         # so plays the role of the std.dev.
-        tiled_mean = tf.tile(tf.reshape(self.mean, [self.nvertices, self.nparams, 1]),
+        tiled_mean = tf.tile(tf.reshape(self.mean, [self.nnodes, self.nparams, 1]),
                              [1, 1, nsamples])
         sample = tf.add(tiled_mean, tf.matmul(self.cov_chol, eps), name="%s_sample" % self.name)
         return self.log_tf(sample)
