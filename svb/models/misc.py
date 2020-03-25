@@ -41,13 +41,14 @@ class PolyModel(Model):
             self.params.append(
                 get_parameter("c%i" % idx, 
                               dist="Normal", mean=0.0,
-                              prior_var=1e6, post_var=1.0, 
+                              prior_var=1e6, post_var=1.0,
+                              post_init=self._init_c0 if idx == 0 else None,
                               **options),
             )
 
     def evaluate(self, params, tpts):
         ret = None
-        for idx in range(self._degree):
+        for idx in range(self._degree+1):
             c = params[idx]
             contrib = c * tf.pow(tpts, idx)
             if ret is None:
@@ -58,3 +59,7 @@ class PolyModel(Model):
 
     def __str__(self):
         return "Polynomial model: %s" % __version__
+
+    def _init_c0(self, _param, _t, data):
+        return tf.reduce_mean(data, axis=1), None
+
