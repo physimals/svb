@@ -1,5 +1,5 @@
 numpy
 nibabel
 six
-tensorflow
+tensorflow==1.*
 
