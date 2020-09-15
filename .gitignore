@@ -9,4 +9,6 @@ examples/example_out*
 dist/
 *.egg-info
 _version.py
+*logfile*
+.vscode 
 
