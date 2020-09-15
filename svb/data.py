@@ -42,62 +42,7 @@ class DataModel(LogBase):
         self.n_unmasked_voxels = self.data_flattened.shape[0]
         print("Data voxels: %i" % self.n_unmasked_voxels)
 
-    
-    def nodes_to_voxels_ts(self, tensor, vertex_axis=0):
-        """
-        Map parameter vertex-based data to data voxels
-
-        This is for the use case where data is defined in a different space to the
-        parameter estimation space. For example we may be estimating parameters on
-        a surface mesh, but using volumetric data to train this model.
-
-        :param tensor: TensorFlow tensor of which one axis represents indexing over
-                       parameter nodes
-        :param vertex_axis: Index of axis of tensor which corresponds to parameter nodes
-
-        :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
-                 axis and other tensor entries transformed appropriately to the 
-                 data space
-        """
-        if self.v2w_data is None:
-            # Default case where the two spaces are identical.
-            return tensor
-        else:
-            # FIXME matrix multiplication must take into account vertex/voxel axis
-            # FIXME 6 is a magic number for ASL data...
-            if self.v2w is None:
-                self.v2w = tf.SparseTensor(indices=self.v2w_data["indices"], values=self.v2w_data["data"], dense_shape=self.v2w_data["shape"])
-            results = []
-            for t in range(6):
-                results.append(tf.sparse.sparse_dense_matmul(self.v2w, tensor[..., t]))
-            result = tf.reshape(tf.concat(results, -1), (self.n_unmasked_voxels, -1, 6))
-            return result
-            
-    def nodes_to_voxels(self, tensor, vertex_axis=0):
-        """
-        Map parameter vertex-based data to data voxels
-
-        This is for the use case where data is defined in a different space to the
-        parameter estimation space. For example we may be estimating parameters on
-        a surface mesh, but using volumetric data to train this model.
-
-        :param tensor: TensorFlow tensor of which one axis represents indexing over
-                       parameter nodes
-        :param vertex_axis: Index of axis of tensor which corresponds to parameter nodes
-
-        :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
-                 axis and other tensor entries transformed appropriately to the 
-                 data space
-        """
-        if self.v2w_data is None:
-            # Default case where the two spaces are identical.
-            return tensor
-        else:
-            # FIXME matrix multiplication must take into account vertex/voxel axis
-            if self.v2w is None:
-                self.v2w = tf.SparseTensor(indices=self.v2w_data["indices"], values=self.v2w_data["data"], dense_shape=self.v2w_data["shape"])
-            return tf.sparse.sparse_dense_matmul(self.v2w, tensor)
-            
+    # TODO: volumetric only method 
     def nifti_image(self, data):
         """
         :return: A nibabel.Nifti1Image for some, potentially masked, output data
@@ -214,6 +159,48 @@ class VolumetricModel(DataModel):
             self.post_init = None
 
         self._calc_neighbours()
+
+
+    # TODO: subclass this for surface
+    def nodes_to_voxels_ts(self, tensor, vertex_axis=0):
+        """
+        Map parameter vertex-based data to data voxels
+
+        This is for the use case where data is defined in a different space to the
+        parameter estimation space. For example we may be estimating parameters on
+        a surface mesh, but using volumetric data to train this model.
+
+        :param tensor: TensorFlow tensor of which one axis represents indexing over
+                       parameter nodes
+        :param vertex_axis: Index of axis of tensor which corresponds to parameter nodes
+
+        :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
+                 axis and other tensor entries transformed appropriately to the 
+                 data space
+        """
+
+        return tensor
+
+            
+    # TODO: subclass this for surface
+    def nodes_to_voxels(self, tensor, vertex_axis=0):
+        """
+        Map parameter vertex-based data to data voxels
+
+        This is for the use case where data is defined in a different space to the
+        parameter estimation space. For example we may be estimating parameters on
+        a surface mesh, but using volumetric data to train this model.
+
+        :param tensor: TensorFlow tensor of which one axis represents indexing over
+                       parameter nodes
+        :param vertex_axis: Index of axis of tensor which corresponds to parameter nodes
+
+        :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
+                 axis and other tensor entries transformed appropriately to the 
+                 data space
+        """
+
+        return tensor
 
 
     def _calc_neighbours(self):
