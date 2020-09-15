@@ -64,7 +64,7 @@ options = {
     "learning_rate" : 0.005,
     "batch_size" : 10,
     "sample_size" : 10,
-    "epochs" : 500,
+    "epochs" : 250,
     "log_stream" : sys.stdout,
     "save_mean" : True,
     "save_var" : True,
