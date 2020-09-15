@@ -16,7 +16,7 @@ import re
 import numpy as np
 import nibabel as nib
 
-from . import __version__, DataModel, SvbFit, get_model_class
+from . import __version__, VolumetricModel, SvbFit, get_model_class
 from .utils import ValueList
 
 USAGE = "svb <options>"
@@ -236,7 +236,7 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     # Initialize the data model which contains data dimensions, number of time
     # points, list of unmasked voxels, etc
-    data_model = DataModel(data, mask, **kwargs)
+    data_model = VolumetricModel(data, mask, **kwargs)
     
     # Create the generative model
     fwd_model = get_model_class(model_name)(data_model, **kwargs)

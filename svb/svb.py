@@ -181,6 +181,7 @@ class SvbFit(LogBase):
 
         # Number of parameter nodes (W) - known at runtime. Currently equal
         # to number of voxels. In future this will be defined by the data model.
+        # TODO: update the above comment 
         self.nnodes = self.data_model.n_nodes
 
         # Represent neighbour lists as sparse tensors
@@ -189,6 +190,7 @@ class SvbFit(LogBase):
             values=np.ones((len(self.data_model.indices_nn),), dtype=np.float32),
             dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
         )
+
         self.n2 = tf.SparseTensor(
             indices=self.data_model.indices_n2,
             values=np.ones((len(self.data_model.indices_n2),), dtype=np.float32),

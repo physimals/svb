@@ -8,13 +8,13 @@ except ImportError:
     __timestamp__ = "Unknown timestamp"
 
 from .svb import SvbFit
-from .data import DataModel
+from .data import VolumetricModel
 from .model import Model, get_model_class
 
 __all__ = [   "__version__",
     "__timestamp__",
     "SvbFit",
-    "DataModel",
+    "VolumetricModel",
     "Model",
     "get_model_class",
 ]
