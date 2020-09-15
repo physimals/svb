@@ -42,6 +42,10 @@ class DataModel(LogBase):
         self.n_unmasked_voxels = self.data_flattened.shape[0]
         print("Data voxels: %i" % self.n_unmasked_voxels)
 
+    @property
+    def is_volumetric(self):
+        return (type(self) is VolumetricModel)
+
     # TODO: volumetric only method 
     def nifti_image(self, data):
         """
@@ -269,24 +273,33 @@ class VolumetricModel(DataModel):
             for n2 in voxel_n2s[voxel_idx]:
                 self.indices_n2.append([voxel_idx, n2])
 
+class SurfaceModel(DataModel):
+
+    def __init__(self, data, surfaces, mask=None, **kwargs):
+        super().__init__(data, mask=mask, **kwargs)
+
+        # TODO: Weights matrix from surfaces here
+
+        # See if we have a vertex-to-voxel linear mapping
+        v2w = kwargs.get("v2w", None)
+        if isinstance(v2w, six.string_types):
+            # For the moment the v2w data is stored as a Numpy savez of a SCIPY CSR sparse matrix
+            self.v2w_data = np.load(v2w)
+            print("v2w shape=%s (%i indices, %i values)" % (str(self.v2w_data["shape"]), self.v2w_data["indices"].shape[0], self.v2w_data["data"].shape[0]))
+            #self.v2w = scipy.sparse.csr_matrix((v2w_data["data"], v2w_data["indices"], v2w_data["indptr"]), shape=v2w_data["shape"])
+            #self.v2w = tf.SparseTensor(indices=v2w_data["indices"], values=v2w_data["data"], dense_shape=v2w_data["shape"])
+        else:
+            self.v2w_data = v2w # FIXME assumes dict with indices, data and shape
+
+        if len(self.v2w_data["shape"]) != 2:
+            raise ValueError("Vertex-to-voxel mapping must be a matrix")
+        if self.v2w_data["shape"][0] != self.n_unmasked_voxels:
+            raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
+        self.n_nodes = self.v2w_data["shape"][1]
 
 
-        # # See if we have a vertex-to-voxel linear mapping
-        # v2w = kwargs.get("v2w", None)
-        # if v2w is not None:
-        #     self.v2w = None
-        #     if isinstance(v2w, six.string_types):
-        #         # For the moment the v2w data is stored as a Numpy savez of a SCIPY CSR sparse matrix
-        #         self.v2w_data = np.load(v2w)
-        #         print("v2w shape=%s (%i indices, %i values)" % (str(self.v2w_data["shape"]), self.v2w_data["indices"].shape[0], self.v2w_data["data"].shape[0]))
-        #         #self.v2w = scipy.sparse.csr_matrix((v2w_data["data"], v2w_data["indices"], v2w_data["indptr"]), shape=v2w_data["shape"])
-        #         #self.v2w = tf.SparseTensor(indices=v2w_data["indices"], values=v2w_data["data"], dense_shape=v2w_data["shape"])
-        #     else:
-        #         self.v2w_data = v2w # FIXME assumes dict with indices, data and shape
-
-        #     if len(self.v2w_data["shape"]) != 2:
-        #         raise ValueError("Vertex-to-voxel mapping must be a matrix")
-        #     if self.v2w_data["shape"][0] != self.n_unmasked_voxels:
-        #         raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
-        #     self.n_nodes = self.v2w_data["shape"][1]
-        # else:
+        self.n_nodes = self.n_unmasked_voxels
+        if kwargs.get("initial_posterior", None):
+            self.post_init = self._get_posterior_data(kwargs["initial_posterior"])
+        else:
+            self.post_init = None
