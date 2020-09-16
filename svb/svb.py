@@ -54,6 +54,7 @@ import time
 import six
 
 import numpy as np
+from scipy import sparse
 try:
     import tensorflow.compat.v1 as tf
 except ImportError:
@@ -185,17 +186,37 @@ class SvbFit(LogBase):
         self.nnodes = self.data_model.n_nodes
 
         # Represent neighbour lists as sparse tensors
-        self.nn = tf.SparseTensor(
-            indices=self.data_model.indices_nn,
-            values=np.ones((len(self.data_model.indices_nn),), dtype=np.float32),
-            dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
-        )
+        if type(self.data_model.indices_nn) is list: 
+            self.nn = tf.SparseTensor(
+                indices=self.data_model.indices_nn,
+                values=np.ones((len(self.data_model.indices_nn),), dtype=np.float32),
+                dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
+            )
+        else: 
+            assert type(self.data_model.indices_nn) is sparse.coo_matrix
+            self.nn = tf.SparseTensor(
+                indices=np.array(
+                    [self.data_model.indices_nn.row, 
+                    self.data_model.indices_nn.col]).T,
+                values=self.data_model.indices_nn.data, 
+                dense_shape=self.data_model.indices_nn.shape
+            )
 
-        self.n2 = tf.SparseTensor(
-            indices=self.data_model.indices_n2,
-            values=np.ones((len(self.data_model.indices_n2),), dtype=np.float32),
-            dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
-        )
+        if type(self.data_model.indices_n2) is list: 
+            self.n2 = tf.SparseTensor(
+                indices=self.data_model.indices_n2,
+                values=np.ones((len(self.data_model.indices_n2),), dtype=np.float32),
+                dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
+            )
+        else: 
+            self.n2 = tf.SparseTensor(
+                indices=np.array(
+                    [self.data_model.indices_n2.row, 
+                    self.data_model.indices_n2.col]).T,
+                values=self.data_model.indices_n2.data, 
+                dense_shape=self.data_model.indices_n2.shape
+            )
+
 
     def _create_prior_post(self, **kwargs):
         """
