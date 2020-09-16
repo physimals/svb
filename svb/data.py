@@ -8,6 +8,7 @@ import six
 import numpy as np
 import nibabel as nib
 import tensorflow as tf
+from scipy import sparse
 
 from .utils import LogBase
 
@@ -154,7 +155,7 @@ class VolumetricModel(DataModel):
         super().__init__(data, mask=mask, **kwargs)
 
         # By default parameter space is same as data space
-        self.v2w_data = None
+        self.n2v_coo = None
         self.n_nodes = self.n_unmasked_voxels
 
         if kwargs.get("initial_posterior", None):
@@ -278,28 +279,62 @@ class SurfaceModel(DataModel):
     def __init__(self, data, surfaces, mask=None, **kwargs):
         super().__init__(data, mask=mask, **kwargs)
 
-        # TODO: Weights matrix from surfaces here
+        self.surfaces = surfaces['LMS']
 
         # See if we have a vertex-to-voxel linear mapping
-        v2w = kwargs.get("v2w", None)
-        if isinstance(v2w, six.string_types):
-            # For the moment the v2w data is stored as a Numpy savez of a SCIPY CSR sparse matrix
-            self.v2w_data = np.load(v2w)
-            print("v2w shape=%s (%i indices, %i values)" % (str(self.v2w_data["shape"]), self.v2w_data["indices"].shape[0], self.v2w_data["data"].shape[0]))
-            #self.v2w = scipy.sparse.csr_matrix((v2w_data["data"], v2w_data["indices"], v2w_data["indptr"]), shape=v2w_data["shape"])
-            #self.v2w = tf.SparseTensor(indices=v2w_data["indices"], values=v2w_data["data"], dense_shape=v2w_data["shape"])
-        else:
-            self.v2w_data = v2w # FIXME assumes dict with indices, data and shape
+        self.n2v_coo = sparse.coo_matrix(kwargs["n2v"])
 
-        if len(self.v2w_data["shape"]) != 2:
+        if len(self.n2v_coo.shape) != 2:
             raise ValueError("Vertex-to-voxel mapping must be a matrix")
-        if self.v2w_data["shape"][0] != self.n_unmasked_voxels:
+        if self.n2v_coo.shape[0] != self.n_unmasked_voxels:
             raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
-        self.n_nodes = self.v2w_data["shape"][1]
+        self.n_nodes = self.n2v_coo.shape[1]
 
-
-        self.n_nodes = self.n_unmasked_voxels
+        self.n_nodes = self.n2v_coo.shape[1]
         if kwargs.get("initial_posterior", None):
             self.post_init = self._get_posterior_data(kwargs["initial_posterior"])
         else:
             self.post_init = None
+
+        self._calc_neighbours()
+
+    def _calc_neighbours(self):
+        
+        surf = self.surfaces
+        indices_nn = np.zeros(2*[surf.points.shape[0]])
+        for pidx in range(surf.points.shape[0]):
+            touched = (surf.tris == pidx).any(1)
+            neighbours = np.unique(surf.tris[touched])
+            indices_nn[pidx,neighbours] = 1 
+
+        assert (indices_nn[np.diag_indices(surf.points.shape[0])] == 1).all()
+        self.indices_nn = sparse.coo_matrix(indices_nn)
+
+        indices_n2 = np.zeros(2*[surf.points.shape[0]]) 
+        self.indices_n2 = sparse.coo_matrix(indices_n2)
+
+    def nodes_to_voxels(self, tensor, *unused): 
+        print(tensor.shape)
+        n2v_tensor = tf.SparseTensor(
+            indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
+            values=self.n2v_coo.data.astype(np.float32), 
+            dense_shape=self.n2v_coo.shape
+        )
+        return tf.sparse.sparse_dense_matmul(n2v_tensor, tensor)
+
+    def nodes_to_voxels_ts(self, tensor, *unused):
+        print(tensor.shape)
+
+        n2v_tensor = tf.SparseTensor(
+            indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
+            values=self.n2v_coo.data.astype(np.float32), 
+            dense_shape=self.n2v_coo.shape
+        )
+
+        # FIXME: 6 is magic number for ASL 
+        results = []
+        for t in range(6):
+            results.append(tf.sparse.sparse_dense_matmul(n2v_tensor, tensor[..., t]))
+            result = tf.reshape(tf.concat(results, -1), (self.n_unmasked_voxels, -1, 6))
+        return result
+
