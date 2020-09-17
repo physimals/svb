@@ -19,8 +19,6 @@ import matplotlib.pyplot as plt
 import nibabel as nib
 
 # Use the package from the local directory, not the system installed version 
-import os.path as op 
-sys.path.append(op.abspath(op.join(__file__, '..', '..')))
 sys.argv.append('--show')
 
 from svb.main import run
@@ -64,7 +62,7 @@ options = {
     "learning_rate" : 0.005,
     "batch_size" : 10,
     "sample_size" : 10,
-    "epochs" : 250,
+    "epochs" : 500,
     "log_stream" : sys.stdout,
     "save_mean" : True,
     "save_var" : True,
