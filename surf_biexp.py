@@ -1,102 +1,141 @@
-# Example fitting of biexponential model
-#
-# This example runs SVB on a set of instances of biexponential data
-# (by default just 4, to make it possible to display the results
-# graphically, but you can up this number and not plot the output
-# if you want a bigger data set)
-#
-# Usage: python biexp_exam
+# To add a new cell, type '# %%'
+# To add a new markdown cell, type '# %% [markdown]'
+# %%
+from IPython import get_ipython
+
+
+# %%
 import sys
 import math
-
 import numpy as np
+import matplotlib.pyplot as plt
+import nibabel as nib
+import toblerone as tob 
+import regtricks as rt
+import pyvista as pv 
+import trimesh
+from svb.main import run
+
 try:
     import tensorflow.compat.v1 as tf
     tf.disable_v2_behavior()
 except ImportError:
     import tensorflow as tf
-import matplotlib.pyplot as plt
-import nibabel as nib
-import toblerone as tob 
-
-
-# Use the package from the local directory, not the system installed version 
-import os.path as op 
-sys.path.append(op.abspath(op.join(__file__, '..', '..')))
-sys.argv.append('--show')
-
-from svb.main import run
 
 # To make tests repeatable
 tf.set_random_seed(1)
 np.random.seed(1)
 
+pv.set_plot_theme('document')
+
+
+# %%
 # Set the properties of the simulated data
-num_times=200
-num_examples = 4
-name = "surf_test"
+num_times = 200
+sq_len = 5
+vox_size = 2 
+name = "example_data"
 true_params = {
     "amp1" : 10.0, # the true amplitude of the model
-    "amp2" : 10.0,
-    "r1" : 1.0,    # the true decay rate
-    "r2" : 10.0,
-    "noise_sd" : 1.0,
+    "r1" : 3.0,    # the true decay rate
+    "noise_sd" : 0.5,
 }
 true_var = true_params["noise_sd"]**2
 
 # For time being, make sure we have a good range of samples based on the choice of R1
 dt = 5.0/(true_params["r1"] * num_times)
 
+
+# %%
 # Generate test data and write to filenames
-sq_len = int(math.sqrt(num_examples))
-shape = (sq_len, sq_len, 1, num_times)
+shape = (sq_len, sq_len, sq_len, num_times)
 data = np.zeros(shape)
 for t_idx in range(num_times):
     t = t_idx*dt
-    data[..., t_idx] = true_params["amp1"]*math.exp(-true_params["r1"]*t) + \
-                       true_params["amp2"]*math.exp(-true_params["r2"]*t)
-nii = nib.Nifti1Image(data, np.identity(4))
-nii.to_filename(name + ".nii.gz")
+    data[..., t_idx] = true_params["amp1"]*math.exp(-true_params["r1"]*t)
 data_noisy = data + np.random.normal(0, true_params["noise_sd"], size=shape)
-nii_noisy = nib.Nifti1Image(data_noisy, np.identity(4))
-nii_noisy.to_filename(name + "_noisy.nii.gz")
+data_noisy.shape
 
-# Generate dummy surface 
-points = np.array([
-    [0,0,0], [1,0,0], [0,1,0], [1,1,0]
-], dtype=np.float32)
-tris = np.array([
-    [0,3,1], [2,3,0]
-], dtype=np.int32)
-surfaces = { 'LMS': tob.Surface.manual(points, tris) }
 
+# %%
+# Create a reference voxel grid for the data 
+ref_spc = rt.ImageSpace.create_axis_aligned(np.zeros(3), 3 * [sq_len], 3 * [vox_size])
+
+# Generate the point cloud of voxel centres
+vox_cents = ref_spc.voxel_centres().reshape(-1,3)
+voxel_poly = pv.PolyData(vox_cents)
+ref_spc
+
+
+# %%
+# Generate a spherical surface
+sph_mesh = trimesh.creation.icosphere(2, ((sq_len * vox_size)/2.2))
+surf = tob.Surface.manual(sph_mesh.vertices + (sq_len * vox_size)/2,    
+                                sph_mesh.faces)
+surf
+
+
+# %%
+# Plot the voxels and surface together (note the sphere seems to spill out of the voxel grid, this is because voxel centres are plotted, not the full bounding box)
+# plot = pv.BackgroundPlotter(notebook=True)
+# plot.add_mesh(surf.to_polydata(), 
+#     scalars=np.ones(surf.points.shape[0]), opacity=0.3, 
+#     show_edges=True, show_scalar_bar=True)
+# plot.add_mesh(voxel_poly)
+# plot.show()
+
+
+# %%
+# Form the weighting matrix for surface -> voxels
+# We will use weighted averaging (no PV weighting etc)
+surf2vol_weights = np.zeros((ref_spc.size.prod(), surf.points.shape[0]))
+vertices_ijk = rt.aff_trans(ref_spc.world2vox, surf.points).round(0)
+vertices_inds = np.ravel_multi_index(vertices_ijk.T.astype('i4'), ref_spc.size)
+for vtx_number, vtx_ind in enumerate(vertices_inds):
+    surf2vol_weights[vtx_ind, vtx_number] = 1 
+
+assert (surf2vol_weights.sum(0) == 1).all()
+divisor = surf2vol_weights.sum(1)
+surf2vol_weights[surf2vol_weights == 0] = -1
+surf2vol_weights /= divisor[:,None]
+surf2vol_weights[surf2vol_weights < 0] = 0
+mask = (surf2vol_weights.sum(1) > 0)
+surf2vol_weights = surf2vol_weights[mask,:]
+assert (surf2vol_weights.sum(1) == 1).all()
+# plt.spy(surf2vol_weights)
+# plt.xlabel('Vertex number')
+# plt.ylabel('Voxel index')
+# plt.show()
+
+
+# %%
 # Train model without covariance
 options = {
     "learning_rate" : 0.005,
     "batch_size" : 10,
-    "sample_size" : 10,
+    "sample_size" : 8,
     "epochs" : 250,
     "log_stream" : sys.stdout,
-    "save_mean" : True,
-    "save_var" : True,
-    "save_param_history" : True,
-    "save_cost" : True,
-    "save_cost_history" : True,
-    "save_model_fit" : True,
-    "save_log" : True,
+    # "save_mean" : True,
+    # "save_var" : True,
+    # "save_param_history" : True,
+    # "save_cost" : True,
+    # "save_cost_history" : True,
+    # "save_model_fit" : True,
+    # "save_log" : True,
+    "n2v" : surf2vol_weights
 }
 
-# runtime, svb, training_history = run(data_noisy, "biexp", "example_out_nocov", **options)
-# mean_cost_history = training_history["mean_cost"]
-# cost_history_v = training_history["voxel_cost"]
-# param_history_v = training_history["voxel_params"]
-# modelfit = svb.evaluate(svb.modelfit)
-# means = svb.evaluate(svb.model_means)
-# variances = svb.evaluate(svb.model_vars)
-# post_mean = svb.evaluate(svb.post.mean)
-# post_cov = svb.evaluate(svb.post.cov)
 
-runtime, svb, training_history = run(data_noisy, "biexp", "surf_test_cov", None, surfaces, infer_covar=True, **options)
+# %%
+runtime, svb, training_history = run(
+    data_noisy, "exp", 
+    "example_out_cov", 
+    mask=mask,
+    surfaces={'LMS': surf}, 
+    infer_covar=True, 
+    **options)
+
 mean_cost_history_cov = training_history["mean_cost"]
 cost_history_v_cov = training_history["voxel_cost"]
 param_history_v_cov = training_history["voxel_params"]
@@ -104,54 +143,8 @@ modelfit_cov = svb.evaluate(svb.modelfit)
 means_cov = svb.evaluate(svb.model_means)
 variances_cov = svb.evaluate(svb.model_vars)
 
-# runtime, svb, training_history = run(data_noisy, "biexp", "example_out_cov_init", infer_covar=True, 
-#                                      initial_posterior=(post_mean, post_cov), **options)
-# mean_cost_history_cov_init = training_history["mean_cost"]
-# cost_history_v_cov_init = training_history["voxel_cost"]
-# param_history_v_cov_init = training_history["voxel_params"]
-# modelfit_cov_init = svb.evaluate(svb.modelfit)
-# means_cov_init = svb.evaluate(svb.model_means)
-# variances_cov_init = svb.evaluate(svb.model_vars)
 
-if "--show" in sys.argv:
-    # Plot some results
-    clean_data = data.reshape((-1, num_times))
+# %%
 
-    for idx in range(num_examples):
-        # plt.figure(1)
-        # plt.suptitle("Cost history (No covariance)")
-        # ax1 = plt.subplot(sq_len, sq_len, idx+1)
-        # plt.plot(cost_history_v[idx])
 
-        plt.figure(2)
-        plt.suptitle("Cost history (With covariance)")
-        ax1 = plt.subplot(sq_len, sq_len, idx+1)
-        plt.plot(cost_history_v_cov[idx])
 
-        # plt.figure(3)
-        # plt.suptitle("Cost history (With covariance, pre-initialized)")
-        # ax1 = plt.subplot(sq_len, sq_len, idx+1)
-        # plt.plot(cost_history_v_cov_init[idx])
-
-        # plt.figure(4)
-        # plt.suptitle("Model fit (No covariance)")
-        # ax1 = plt.subplot(sq_len, sq_len, idx+1)
-        # plt.plot(svb.data_model.data_flattened[idx],'rx')
-        # plt.plot(clean_data[idx], 'g')
-        # plt.plot(modelfit[idx],'b')
-
-        plt.figure(5)
-        plt.suptitle("Model fit (With covariance)")
-        ax1 = plt.subplot(sq_len, sq_len, idx+1)
-        plt.plot(svb.data_model.data_flattened[idx],'rx')
-        plt.plot(clean_data[idx], 'g')
-        plt.plot(modelfit_cov[idx],'b')
-
-        # plt.figure(6)
-        # plt.suptitle("Model fit (With covariance, pre-initialized)")
-        # ax1 = plt.subplot(sq_len, sq_len, idx+1)
-        # plt.plot(svb.data_model.data_flattened[idx],'rx')
-        # plt.plot(clean_data[idx], 'g')
-        # plt.plot(modelfit_cov_init[idx],'b')
-
-    plt.show()
