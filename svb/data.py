@@ -32,7 +32,7 @@ class DataModel(LogBase):
         self.data_flattened = self.data_vol.reshape(-1, self.n_tpts)
 
         # If there is a mask load it and use it to mask the data
-        if mask:
+        if mask is not None:
             mask_nii, self.mask_vol = self._get_data(mask)
             self.mask_flattened = self.mask_vol.flatten()
             self.data_flattened = self.data_flattened[self.mask_flattened > 0]
@@ -94,7 +94,7 @@ class DataModel(LogBase):
                 raise NotImplementedError()
             self.log.info("Loaded data from %s", data)
         else:
-            nii = nib.Nifti1Image(data, np.identity(4))
+            nii = nib.Nifti1Image(data.astype(np.int8), np.identity(4))
             data_vol = data
         return nii, data_vol
 
@@ -310,11 +310,12 @@ class SurfaceModel(DataModel):
         assert (indices_nn[np.diag_indices(surf.points.shape[0])] == 1).all()
         self.indices_nn = sparse.coo_matrix(indices_nn)
 
+        # FIXME: Chase n2 through the code and delete at some point 
         indices_n2 = np.zeros(2*[surf.points.shape[0]]) 
         self.indices_n2 = sparse.coo_matrix(indices_n2)
 
     def nodes_to_voxels(self, tensor, *unused): 
-        print(tensor.shape)
+
         n2v_tensor = tf.SparseTensor(
             indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
             values=self.n2v_coo.data.astype(np.float32), 
@@ -323,18 +324,19 @@ class SurfaceModel(DataModel):
         return tf.sparse.sparse_dense_matmul(n2v_tensor, tensor)
 
     def nodes_to_voxels_ts(self, tensor, *unused):
-        print(tensor.shape)
 
         n2v_tensor = tf.SparseTensor(
             indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
             values=self.n2v_coo.data.astype(np.float32), 
             dense_shape=self.n2v_coo.shape
         )
+ 
+        def sparse_mul(dense):
+            return tf.sparse.sparse_dense_matmul(n2v_tensor, dense)
 
-        # FIXME: 6 is magic number for ASL 
-        results = []
-        for t in range(6):
-            results.append(tf.sparse.sparse_dense_matmul(n2v_tensor, tensor[..., t]))
-            result = tf.reshape(tf.concat(results, -1), (self.n_unmasked_voxels, -1, 6))
-        return result
+        assert len(tensor.shape) == 3, 'not a 3D tensor'
+        result = tf.map_fn(
+            sparse_mul, tf.transpose(tensor, [2, 0, 1])
+            )
+        return tf.transpose(result, [1, 2, 0])
 
