@@ -34,7 +34,7 @@ def test_normal_prior_mean_log_pdf():
 
         session.run(tf.global_variables_initializer())
         samples = np.random.normal(4.3, 2.8, [nvoxels_in, 1, 100])
-        mean_log_pdf = session.run(prior.mean_log_pdf(tf.constant(samples, dtype=tf.float32)))
+        mean_log_pdf = session.run(prior.mean_log_pdf(tf.constant(samples, dtype=TF_DTYPE)))
         assert list(mean_log_pdf.shape) == [nvoxels_in]
 
         # Check against standard result
@@ -73,7 +73,7 @@ def test_fac_mean_log_pdf():
         prior = FactorisedPrior(priors)
 
         samples = np.random.normal(4.3, 2.8, [nvoxels_in, nparams_in, 100])
-        tf_samples = tf.constant(samples, dtype=tf.float32)
+        tf_samples = tf.constant(samples, dtype=TF_DTYPE)
 
         session.run(tf.global_variables_initializer())
         out_logpdf = session.run(prior.mean_log_pdf(tf_samples))
@@ -81,7 +81,7 @@ def test_fac_mean_log_pdf():
 
         in_logpdf = np.zeros([nvoxels_in])
         for idx, p in enumerate(priors):
-            tf_samples_param = tf.constant(samples[:, [idx], :], dtype=tf.float32)
+            tf_samples_param = tf.constant(samples[:, [idx], :], dtype=TF_DTYPE)
             param_logpdf = session.run(p.mean_log_pdf(tf_samples_param))
             in_logpdf += param_logpdf
         assert np.allclose(out_logpdf, in_logpdf)

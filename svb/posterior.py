@@ -8,7 +8,7 @@ except ImportError:
 
 import numpy as np
 
-from .utils import LogBase
+from .utils import LogBase, TF_DTYPE, NP_DTYPE
 from . import dist
 
 def get_posterior(idx, param, t, data_model, **kwargs):
@@ -132,8 +132,8 @@ class NormalPosterior(Posterior):
         self.name = kwargs.get("name", "NormPost")
         
         mean, var = self._get_mean_var(mean, var, kwargs.get("init", None))
-        mean = tf.cast(mean, tf.float32)
-        var = tf.cast(var, tf.float32)
+        mean = tf.cast(mean, TF_DTYPE)
+        var = tf.cast(var, TF_DTYPE)
         mean = self.log_tf(tf.where(tf.is_finite(mean), mean, tf.zeros_like(mean)))
         var = tf.where(tf.is_nan(var), tf.ones_like(var), var)
 
@@ -153,7 +153,7 @@ class NormalPosterior(Posterior):
         self.std = self.log_tf(tf.sqrt(self.var, name="%s_std" % self.name))
 
     def sample(self, nsamples):
-        eps = tf.random_normal((self.nnodes, 1, nsamples), 0, 1, dtype=tf.float32)
+        eps = tf.random_normal((self.nnodes, 1, nsamples), 0, 1, dtype=TF_DTYPE)
         tiled_mean = tf.tile(tf.reshape(self.mean, [self.nnodes, 1, 1]), [1, 1, nsamples])
         sample = self.log_tf(tf.add(tiled_mean, tf.multiply(tf.reshape(self.std, [self.nnodes, 1, 1]), eps),
                                     name="%s_sample" % self.name))
@@ -196,9 +196,9 @@ class GaussianGlobalPosterior(Posterior):
         initial_mean_global = tf.reshape(tf.reduce_mean(mean), [1])
         initial_var_global = tf.reshape(tf.reduce_mean(var), [1])
         self.mean_variable = tf.Variable(initial_mean_global, 
-                                         dtype=tf.float32, validate_shape=False,
+                                         dtype=TF_DTYPE, validate_shape=False,
                                          name="%s_mean" % self.name)
-        self.log_var = tf.Variable(tf.log(tf.cast(initial_var_global, dtype=tf.float32)), validate_shape=False,
+        self.log_var = tf.Variable(tf.log(tf.cast(initial_var_global, dtype=TF_DTYPE)), validate_shape=False,
                                    name="%s_log_var" % self.name)
         self.var_variable = self.log_tf(tf.exp(self.log_var, name="%s_var" % self.name))
         if kwargs.get("suppress_nan", True):
@@ -216,7 +216,7 @@ class GaussianGlobalPosterior(Posterior):
         """
         FIXME should each parameter vertex get the same sample? Currently YES
         """
-        eps = tf.random_normal((1, 1, nsamples), 0, 1, dtype=tf.float32)
+        eps = tf.random_normal((1, 1, nsamples), 0, 1, dtype=TF_DTYPE)
         tiled_mean = tf.tile(tf.reshape(self.mean, [self.nnodes, 1, 1]), [1, 1, nsamples])
         sample = self.log_tf(tf.add(tiled_mean, tf.multiply(tf.reshape(self.std, [self.nnodes, 1, 1]), eps),
                                     name="%s_sample" % self.name))
@@ -273,7 +273,7 @@ class FactorisedPosterior(Posterior):
         return self.log_tf(sample)
 
     def entropy(self, _samples=None):
-        entropy = tf.zeros([self.nnodes], dtype=tf.float32)
+        entropy = tf.zeros([self.nnodes], dtype=TF_DTYPE)
         for post in self.posts:
             entropy = tf.add(entropy, post.entropy(), name="%s_entropy" % self.name)
         return self.log_tf(entropy)
@@ -341,7 +341,7 @@ class MVNPosterior(FactorisedPosterior):
             _mean, cov = kwargs["init"]
             covar_init = tf.cholesky(cov)
         else:
-            covar_init = tf.zeros([self.nnodes, self.nparams, self.nparams], dtype=tf.float32)
+            covar_init = tf.zeros([self.nnodes, self.nparams, self.nparams], dtype=TF_DTYPE)
 
         self.off_diag_vars_base = self.log_tf(tf.Variable(covar_init, validate_shape=False,
                                                      name='%s_off_diag_vars' % self.name))
@@ -373,7 +373,7 @@ class MVNPosterior(FactorisedPosterior):
 
     def sample(self, nsamples):
         # Use the 'reparameterization trick' to return the samples
-        eps = tf.random_normal((self.nnodes, self.nparams, nsamples), 0, 1, dtype=tf.float32, name="eps")
+        eps = tf.random_normal((self.nnodes, self.nparams, nsamples), 0, 1, dtype=TF_DTYPE, name="eps")
 
         # NB self.cov_chol is the Cholesky decomposition of the covariance matrix
         # so plays the role of the std.dev.

@@ -10,7 +10,7 @@ import nibabel as nib
 import tensorflow as tf
 from scipy import sparse
 
-from .utils import LogBase
+from .utils import LogBase, TF_DTYPE, NP_DTYPE
 
 class DataModel(LogBase):
     """
@@ -131,8 +131,8 @@ class DataModel(LogBase):
             raise ValueError("Posterior input file '%s' has %i volumes - not consistent with upper triangle of square matrix" % (fname, nvols))
         self.log.info("Posterior image contains %i parameters", n_params)
         
-        cov = np.zeros((self.n_unmasked_voxels, n_params, n_params), dtype=np.float32)
-        mean = np.zeros((self.n_unmasked_voxels, n_params), dtype=np.float32)
+        cov = np.zeros((self.n_unmasked_voxels, n_params, n_params), dtype=NP_DTYPE)
+        mean = np.zeros((self.n_unmasked_voxels, n_params), dtype=NP_DTYPE)
         vol_idx = 0
         for row in range(n_params):
             for col in range(row+1):
@@ -279,8 +279,8 @@ class SurfaceModel(DataModel):
         if self.n2v_coo.shape[0] != self.n_unmasked_voxels:
             raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
         self.n_nodes = self.n2v_coo.shape[1]
+        self.n2v_coo.data = self.n2v_coo.data.astype(NP_DTYPE)
 
-        self.n_nodes = self.n2v_coo.shape[1]
         if kwargs.get("initial_posterior", None):
             self.post_init = self._get_posterior_data(kwargs["initial_posterior"])
         else:
@@ -298,13 +298,13 @@ class SurfaceModel(DataModel):
             indices_nn[pidx,neighbours] = 1 
 
         assert (indices_nn[np.diag_indices(surf.points.shape[0])] == 1).all()
-        self.indices_nn = sparse.coo_matrix(indices_nn)
+        self.indices_nn = sparse.coo_matrix(indices_nn, dtype=NP_DTYPE)
 
     def nodes_to_voxels(self, tensor, *unused): 
 
         n2v_tensor = tf.SparseTensor(
             indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
-            values=self.n2v_coo.data.astype(np.float32), 
+            values=self.n2v_coo.data.astype(NP_DTYPE), 
             dense_shape=self.n2v_coo.shape
         )
         return tf.sparse.sparse_dense_matmul(n2v_tensor, tensor)
@@ -313,7 +313,7 @@ class SurfaceModel(DataModel):
 
         n2v_tensor = tf.SparseTensor(
             indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
-            values=self.n2v_coo.data.astype(np.float32), 
+            values=self.n2v_coo.data.astype(NP_DTYPE), 
             dense_shape=self.n2v_coo.shape
         )
  

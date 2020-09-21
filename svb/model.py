@@ -121,7 +121,7 @@ class Model(LogBase):
         within a session and return the evaluated output tensor
         """
         with tf.Session():
-            return self.evaluate(tf.constant(params, dtype=tf.float32), tf.constant(tpts, dtype=tf.float32)).eval()
+            return self.evaluate(tf.constant(params, dtype=TF_DTYPE), tf.constant(tpts, dtype=TF_DTYPE)).eval()
 
     def test_data(self, tpts, params_map):
         """

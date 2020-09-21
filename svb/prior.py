@@ -8,7 +8,7 @@ try:
 except ImportError:
     import tensorflow as tf
 
-from .utils import LogBase
+from .utils import LogBase, TF_DTYPE
 from .dist import Normal
 
 PRIOR_TYPE_NONSPATIAL = "N"
@@ -199,7 +199,7 @@ class MRFSpatialPrior(Prior):
 
         # Set up spatial smoothing parameter calculation from posterior and neighbour lists
         # We infer the log of ak.
-        self.logak = tf.Variable(-5.0, name="log_ak", dtype=tf.float32)
+        self.logak = tf.Variable(-5.0, name="log_ak", dtype=TF_DTYPE)
         self.ak = self.log_tf(tf.exp(self.logak, name="ak"))
 
     def mean_log_pdf(self, samples):
@@ -240,7 +240,7 @@ class ARDPrior(NormalPrior):
         self.fixed_var = self.var
         
         # Set up inferred precision parameter phi
-        self.logphi = tf.Variable(tf.log(1/self.fixed_var), name="log_phi", dtype=tf.float32)
+        self.logphi = tf.Variable(tf.log(1/self.fixed_var), name="log_phi", dtype=TF_DTYPE)
         self.phi = self.log_tf(tf.exp(self.logphi, name="phi"))
         self.var = 1/self.phi
         self.std = tf.sqrt(self.var, name="%s_std" % self.name)
@@ -277,7 +277,7 @@ class MRF2SpatialPrior(Prior):
         self.sample_size = kwargs.get("sample_size", 5)
 
         # Set up spatial smoothing parameter calculation from posterior and neighbour lists
-        self.logak = tf.Variable(-5.0, name="log_ak", dtype=tf.float32)
+        self.logak = tf.Variable(-5.0, name="log_ak", dtype=TF_DTYPE)
         self.ak = self.log_tf(tf.exp(self.logak, name="ak"))
 
     def mean_log_pdf(self, samples):
@@ -399,7 +399,7 @@ class FactorisedPrior(Prior):
     def mean_log_pdf(self, samples):
         nnodes = tf.shape(samples)[0]
 
-        mean_log_pdf = tf.zeros([nnodes], dtype=tf.float32)
+        mean_log_pdf = tf.zeros([nnodes], dtype=TF_DTYPE)
         for idx, prior in enumerate(self.priors):
             param_samples = tf.slice(samples, [0, idx, 0], [-1, 1, -1])
             param_logpdf = prior.mean_log_pdf(param_samples)

@@ -63,7 +63,7 @@ except ImportError:
 from .noise import NoiseParameter
 from .prior import NormalPrior, FactorisedPrior, get_prior
 from .posterior import NormalPosterior, FactorisedPosterior, MVNPosterior, get_posterior
-from .utils import LogBase
+from .utils import LogBase, TF_DTYPE, NP_DTYPE
 
 class SvbFit(LogBase):
     """
@@ -126,30 +126,30 @@ class SvbFit(LogBase):
         self.feed_dict = {}
 
         # Training data - may be mini-batch of full data
-        self.data_train = tf.placeholder(tf.float32, [None, None], name="data_train")
+        self.data_train = tf.placeholder(TF_DTYPE, [None, None], name="data_train")
 
         # Time points in training data (not necessarily the full data - may be mini-batch)
-        self.tpts_train = tf.placeholder(tf.float32, [None, None])
+        self.tpts_train = tf.placeholder(TF_DTYPE, [None, None])
 
         # Full data - we need this during training to correctly scale contributions
         # to the cost
-        #self.data_full = tf.placeholder(tf.float32, [None, None], name="data_full")
-        self.data_full = tf.constant(self.data_model.data_flattened, dtype=tf.float32, name="data_full")
+        #self.data_full = tf.placeholder(TF_DTYPE, [None, None], name="data_full")
+        self.data_full = tf.constant(self.data_model.data_flattened, dtype=TF_DTYPE, name="data_full")
 
         # Number of time points in full data - known at runtime
         #self.nt_full = tf.shape(self.data_full)[1]
         self.nt_full = self.data_model.n_tpts
 
         # Initial learning rate
-        self.initial_lr = tf.placeholder(tf.float32, shape=[])
+        self.initial_lr = tf.placeholder(TF_DTYPE, shape=[])
 
         # Counters to keep track of how far through the full set of optimization steps
         # we have reached
         self.global_step = tf.train.create_global_step()
-        self.num_steps = tf.placeholder(tf.float32, shape=[])
+        self.num_steps = tf.placeholder(TF_DTYPE, shape=[])
 
         # Optional learning rate decay - to disable simply set decay rate to 1.0
-        self.lr_decay_rate = tf.placeholder(tf.float32, shape=[])
+        self.lr_decay_rate = tf.placeholder(TF_DTYPE, shape=[])
         self.learning_rate = tf.train.exponential_decay(
             self.initial_lr,
             self.global_step,
@@ -159,13 +159,13 @@ class SvbFit(LogBase):
         )
 
         # Amount of weight given to latent loss in cost function (0-1)
-        self.latent_weight = tf.placeholder(tf.float32, shape=[])
+        self.latent_weight = tf.placeholder(TF_DTYPE, shape=[])
 
         # Initial number of samples per parameter for the sampling of the posterior distribution
         self.initial_ss = tf.placeholder(tf.int32, shape=[])
 
         # Optional increase in the sample size - to disable set factor to 1.0
-        self.ss_increase_factor = tf.placeholder(tf.float32, shape=[])
+        self.ss_increase_factor = tf.placeholder(TF_DTYPE, shape=[])
         self.sample_size = tf.cast(tf.round(tf.train.exponential_decay(
             tf.to_float(self.initial_ss),
             self.global_step,
@@ -189,7 +189,7 @@ class SvbFit(LogBase):
         if type(self.data_model.indices_nn) is list: 
             self.nn = tf.SparseTensor(
                 indices=self.data_model.indices_nn,
-                values=np.ones((len(self.data_model.indices_nn),), dtype=np.float32),
+                values=np.ones((len(self.data_model.indices_nn),), dtype=NP_DTYPE),
                 dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
             )
         else: 
@@ -199,7 +199,7 @@ class SvbFit(LogBase):
                     [self.data_model.indices_nn.row, 
                     self.data_model.indices_nn.col]).T,
                 values=self.data_model.indices_nn.data, 
-                dense_shape=self.data_model.indices_nn.shape
+                dense_shape=self.data_model.indices_nn.shape, 
             )
 
 

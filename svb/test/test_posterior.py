@@ -34,8 +34,8 @@ def test_normal_onevox():
 def test_normal_onevox_sample():
     """ sample() method returns correct shape of data and is consistent with input mean/var """
     with tf.Session() as session:
-        means = np.array([3.0], dtype=np.float32)
-        variances = np.array([2.0], dtype=np.float32)
+        means = np.array([3.0], dtype=NP_DTYPE)
+        variances = np.array([2.0], dtype=NP_DTYPE)
 
         post = NormalPosterior(means, variances)
 

@@ -7,6 +7,10 @@ try:
     import tensorflow.compat.v1 as tf
 except ImportError:
     import tensorflow as tf
+import numpy as np 
+
+TF_DTYPE = tf.float32
+NP_DTYPE = np.float32
 
 def ValueList(value_type):
     """
