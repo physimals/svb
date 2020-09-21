@@ -202,21 +202,6 @@ class SvbFit(LogBase):
                 dense_shape=self.data_model.indices_nn.shape
             )
 
-        if type(self.data_model.indices_n2) is list: 
-            self.n2 = tf.SparseTensor(
-                indices=self.data_model.indices_n2,
-                values=np.ones((len(self.data_model.indices_n2),), dtype=np.float32),
-                dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
-            )
-        else: 
-            self.n2 = tf.SparseTensor(
-                indices=np.array(
-                    [self.data_model.indices_n2.row, 
-                    self.data_model.indices_n2.col]).T,
-                values=self.data_model.indices_n2.data, 
-                dense_shape=self.data_model.indices_n2.shape
-            )
-
 
     def _create_prior_post(self, **kwargs):
         """
@@ -261,7 +246,7 @@ class SvbFit(LogBase):
         # for spatial regularization
         all_priors = []
         for idx, param in enumerate(self.params):            
-            all_priors.append(get_prior(param, self.data_model, idx=idx, post=self.post, nn=self.nn, n2=self.n2))
+            all_priors.append(get_prior(param, self.data_model, idx=idx, post=self.post, nn=self.nn))
         self.prior = FactorisedPrior(all_priors, name="prior", **kwargs)
 
         # If all of our priors and posteriors are Gaussian we can use an analytic expression for

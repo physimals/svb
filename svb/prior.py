@@ -108,13 +108,12 @@ class FabberMRFSpatialPrior(NormalPrior):
     why.
     """
 
-    def __init__(self, nnodes, mean, var, idx=None, post=None, nn=None, n2=None, **kwargs):
+    def __init__(self, nnodes, mean, var, idx=None, post=None, nn=None, **kwargs):
         """
         :param mean: Tensor of shape [W] containing the prior mean at each parameter vertex
         :param var: Tensor of shape [W] containing the prior variance at each parameter vertex
         :param post: Posterior instance
         :param nn: Sparse tensor of shape [W, W] containing nearest neighbour lists
-        :param n2: Sparse tensor of shape [W, W] containing second nearest neighbour lists
         """
         NormalPrior.__init__(self, nnodes, mean, var, name="FabberMRFSpatialPrior")
         self.idx = idx
@@ -124,21 +123,20 @@ class FabberMRFSpatialPrior(NormalPrior):
         self.fixed_mean = self.mean
         self.fixed_var = self.var
 
-        # nn and n2 are sparse tensors of shape [W, W]. If nn[A, B] = 1 then A is
-        # a nearest neighbour of B, and similarly for n2 and second nearest neighbours
+        # nn sparse tensor of shape [W, W]. If nn[A, B] = 1 then A is
+        # a nearest neighbour of B
         self.nn = nn
-        self.n2 = n2
 
         # Set up spatial smoothing parameter calculation from posterior and neighbour lists
-        self._setup_ak(post, nn, n2)
+        self._setup_ak(post, nn)
 
         # Set up prior mean/variance
-        self._setup_mean_var(post, nn, n2)
+        self._setup_mean_var(post, nn)
 
     def __str__(self):
         return "Spatial MRF prior (%f, %f)" % (self.scalar_mean, self.scalar_var)
 
-    def _setup_ak(self, post, nn, n2):
+    def _setup_ak(self, post, nn):
         # This is the equivalent of CalculateAk in Fabber
         #
         # Some of this could probably be better done using linalg
@@ -154,7 +152,6 @@ class FabberMRFSpatialPrior(NormalPrior):
 
         # Sum of nearest and next-nearest neighbour mean values
         self.sum_means_nn = self.log_tf(tf.reshape(tf.sparse_tensor_dense_matmul(self.nn, tf.reshape(self.wK, (-1, 1))), (-1,)), name="wksum") # [W]
-        self.sum_means_n2 = self.log_tf(tf.reshape(tf.sparse_tensor_dense_matmul(self.n2, tf.reshape(self.wK, (-1, 1))), (-1,)), name="contrib8") # [W]
         
         # vertex parameter mean multipled by number of nearest neighbours
         wknn = self.log_tf(self.wK * self.num_nn, name="wknn") # [W]
@@ -167,10 +164,9 @@ class FabberMRFSpatialPrior(NormalPrior):
         hk = tf.multiply(tf.to_float(self.nnodes), 0.5) + 1.0
         self.ak = self.log_tf(tf.identity(gk * hk, name="ak"))
 
-    def _setup_mean_var(self, post, nn, n2):
+    def _setup_mean_var(self, post, nn):
         # This is the equivalent of ApplyToMVN in Fabber
         contrib_nn = self.log_tf(8*self.sum_means_nn, name="contrib_nn") # [W]
-        contrib_n2 = self.log_tf(-self.sum_means_n2, name="contrib_n2") # [W]
         
         spatial_mean = self.log_tf(contrib_nn / (8*self.num_nn), name="spatial_mean")
         spatial_prec = self.log_tf(self.num_nn * self.ak, name="spatial_prec")
@@ -189,7 +185,7 @@ class MRFSpatialPrior(Prior):
     as a parameter of the optimization.
     """
 
-    def __init__(self, nnodes, mean, var, idx=None, post=None, nn=None, n2=None, **kwargs):
+    def __init__(self, nnodes, mean, var, idx=None, post=None, nn=None, **kwargs):
         Prior.__init__(self)
         self.name = kwargs.get("name", "MRFSpatialPrior")
         self.nnodes = nnodes
@@ -265,7 +261,7 @@ class MRF2SpatialPrior(Prior):
     FIXME currently this does not work unless sample size=1
     """
 
-    def __init__(self, nnodes, mean, var, idx=None, post=None, nn=None, n2=None, **kwargs):
+    def __init__(self, nnodes, mean, var, idx=None, post=None, nn=None, **kwargs):
         Prior.__init__(self)
         self.name = kwargs.get("name", "MRF2SpatialPrior")
         self.nnodes = nnodes
@@ -313,13 +309,12 @@ class ConstantMRFSpatialPrior(NormalPrior):
     This is equivalent to the Fabber 'M' type spatial prior
     """
 
-    def __init__(self, nnodes, mean, var, idx=None, nn=None, n2=None, **kwargs):
+    def __init__(self, nnodes, mean, var, idx=None, nn=None, **kwargs):
         """
         :param mean: Tensor of shape [W] containing the prior mean at each parameter vertex
         :param var: Tensor of shape [W] containing the prior variance at each parameter vertex
         :param post: Posterior instance
         :param nn: Sparse tensor of shape [W, W] containing nearest neighbour lists
-        :param n2: Sparse tensor of shape [W, W] containing second nearest neighbour lists
         """
         NormalPrior.__init__(self, nnodes, mean, var, name="MRFSpatialPrior")
         self.idx = idx
@@ -329,10 +324,9 @@ class ConstantMRFSpatialPrior(NormalPrior):
         self.fixed_mean = self.mean
         self.fixed_var = self.var
 
-        # nn and n2 are sparse tensors of shape [W, W]. If nn[A, B] = 1 then A is
-        # a nearest neighbour of B, and similarly for n2 and second nearest neighbours
+        # nn is a sparse tensor of shape [W, W]. If nn[A, B] = 1 then A is
+        # a nearest neighbour of B
         self.nn = nn
-        self.n2 = n2
 
     def __str__(self):
         return "Spatial MRF prior (%f, %f) - const" % (self.scalar_mean, self.scalar_var)
@@ -353,7 +347,6 @@ class ConstantMRFSpatialPrior(NormalPrior):
 
         # Sum of nearest and next-nearest neighbour mean values
         self.sum_means_nn = np.matmul(self.nn, np.reshape(self.wK, (-1, 1))) # [W]
-        self.sum_means_n2 = np.matmul(self.n2, tf.reshape(self.wK, (-1, 1))) # [W]
         
         # vertex parameter mean multipled by number of nearest neighbours
         wknn = self.wK * self.num_nn # [W]
@@ -370,7 +363,6 @@ class ConstantMRFSpatialPrior(NormalPrior):
     def _setup_mean_var(self, post_mean, post_cov):
         # This is the equivalent of ApplyToMVN in Fabber
         contrib_nn = self.log_tf(8*self.sum_means_nn, name="contrib_nn") # [W]
-        contrib_n2 = self.log_tf(-self.sum_means_n2, name="contrib_n2") # [W]
         
         spatial_mean = self.log_tf(contrib_nn / (8*self.num_nn), name="spatial_mean")
         spatial_prec = self.log_tf(self.num_nn * self.ak, name="spatial_prec")

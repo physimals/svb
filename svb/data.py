@@ -263,16 +263,6 @@ class VolumetricModel(DataModel):
                             self.indices_nn.append([voxel_idx, nn])
                         voxel_idx += 1
 
-        # Second nearest neighbour lists exclude self but include duplicates
-        # TODO: currently we do not use 2nd neighbours in spatial prior
-        voxel_n2s = [[] for voxel in voxel_nns]
-        self.indices_n2 = []
-        for voxel_idx, nns in enumerate(voxel_nns):
-            for nn in nns:
-                voxel_n2s[voxel_idx].extend(voxel_nns[nn])
-            voxel_n2s[voxel_idx] = [v for v in voxel_n2s[voxel_idx] if v != voxel_idx]
-            for n2 in voxel_n2s[voxel_idx]:
-                self.indices_n2.append([voxel_idx, n2])
 
 class SurfaceModel(DataModel):
 
@@ -309,10 +299,6 @@ class SurfaceModel(DataModel):
 
         assert (indices_nn[np.diag_indices(surf.points.shape[0])] == 1).all()
         self.indices_nn = sparse.coo_matrix(indices_nn)
-
-        # FIXME: Chase n2 through the code and delete at some point 
-        indices_n2 = np.zeros(2*[surf.points.shape[0]]) 
-        self.indices_n2 = sparse.coo_matrix(indices_n2)
 
     def nodes_to_voxels(self, tensor, *unused): 
 
