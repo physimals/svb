@@ -184,23 +184,15 @@ class SvbFit(LogBase):
         # to number of voxels. In future this will be defined by the data model.
         # TODO: update the above comment 
         self.nnodes = self.data_model.n_nodes
-
-        # Represent neighbour lists as sparse tensors
-        if type(self.data_model.indices_nn) is list: 
-            self.nn = tf.SparseTensor(
-                indices=self.data_model.indices_nn,
-                values=np.ones((len(self.data_model.indices_nn),), dtype=NP_DTYPE),
-                dense_shape=[self.data_model.n_unmasked_voxels, self.data_model.n_unmasked_voxels]
-            )
-        else: 
-            assert type(self.data_model.indices_nn) is sparse.coo_matrix
-            self.nn = tf.SparseTensor(
-                indices=np.array(
-                    [self.data_model.indices_nn.row, 
-                    self.data_model.indices_nn.col]).T,
-                values=self.data_model.indices_nn.data, 
-                dense_shape=self.data_model.indices_nn.shape, 
-            )
+ 
+        assert type(self.data_model.adj_matrix) is sparse.coo_matrix
+        self.nn = tf.SparseTensor(
+            indices=np.array(
+                [self.data_model.adj_matrix.row, 
+                self.data_model.adj_matrix.col]).T,
+            values=self.data_model.adj_matrix.data, 
+            dense_shape=self.data_model.adj_matrix.shape, 
+        )
 
 
     def _create_prior_post(self, **kwargs):
