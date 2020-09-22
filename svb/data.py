@@ -269,7 +269,7 @@ class VolumetricModel(DataModel):
             dtype=NP_DTYPE
         )
 
-        assert (self.adj_matrix.tocsr()[np.diag_indices(self.n_unmasked_voxels)] == 0).all().all()
+        assert not (self.adj_matrix.tocsr()[np.diag_indices(self.n_unmasked_voxels)] != 0).nnz
 
 class SurfaceModel(DataModel):
 
@@ -293,19 +293,21 @@ class SurfaceModel(DataModel):
         else:
             self.post_init = None
 
-        self._calc_neighbours()
+        self._calc_adjacency_matrix()
 
-    def _calc_neighbours(self):
+    def _calc_adjacency_matrix(self):
         
         surf = self.surfaces
-        indices_nn = np.zeros(2*[surf.points.shape[0]])
+        adj = sparse.dok_matrix(2*(surf.points.shape[0],), dtype=NP_DTYPE)
         for pidx in range(surf.points.shape[0]):
             touched = (surf.tris == pidx).any(1)
             neighbours = np.unique(surf.tris[touched])
-            indices_nn[pidx,neighbours] = 1 
+            adj[pidx,neighbours] = 1 
 
-        assert (indices_nn[np.diag_indices(surf.points.shape[0])] == 1).all()
-        self.indices_nn = sparse.coo_matrix(indices_nn, dtype=NP_DTYPE)
+        adj[np.diag_indices(surf.points.shape[0])] = 0
+        assert not (adj[np.diag_indices(adj.shape[0])] != 0).nnz
+        self.adj_matrix = adj.tocoo()
+
 
     def nodes_to_voxels(self, tensor, *unused): 
 
