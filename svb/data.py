@@ -165,6 +165,12 @@ class VolumetricModel(DataModel):
 
         self._calc_adjacency_matrix()
 
+        # Set the laplacian here 
+        lap = self.adj_matrix.todok(copy=True)
+        lap[np.diag_indices(lap.shape[0])] = -lap.sum(1).T
+        assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
+        self.laplacian = lap.tocoo()
+
 
     # TODO: subclass this for surface
     def nodes_to_voxels_ts(self, tensor, vertex_axis=0):
@@ -269,7 +275,7 @@ class VolumetricModel(DataModel):
             dtype=NP_DTYPE
         )
 
-        assert not (self.adj_matrix.tocsr()[np.diag_indices(self.n_unmasked_voxels)] != 0).nnz
+        assert not (self.adj_matrix.tocsr()[np.diag_indices(self.n_unmasked_voxels)] != 0).max()
 
 class SurfaceModel(DataModel):
 
@@ -294,6 +300,12 @@ class SurfaceModel(DataModel):
             self.post_init = None
 
         self._calc_adjacency_matrix()
+
+        # Set the laplacian here 
+        lap = self.adj_matrix.todok(copy=True)
+        lap[np.diag_indices(lap.shape[0])] = -lap.sum(1).T
+        assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
+        self.laplacian = lap.tocoo()
 
     def _calc_adjacency_matrix(self):
         
