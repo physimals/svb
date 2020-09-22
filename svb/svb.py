@@ -185,22 +185,6 @@ class SvbFit(LogBase):
         # TODO: update the above comment 
         self.nnodes = self.data_model.n_nodes
  
-        # assert type(self.data_model.laplacian) is sparse.coo_matrix
-        # self.laplacian = tf.SparseTensor(
-        #     indices=np.array(
-        #         [self.data_model.laplacian.row, 
-        #         self.data_model.laplacian.col]).T,
-        #     values=self.data_model.laplacian.data, 
-        #     dense_shape=self.data_model.laplacian.shape, 
-        # )
-
-        # self.nn = tf.SparseTensor(
-        #     indices=np.array(
-        #         [self.data_model.adj_matrix.row, 
-        #         self.data_model.adj_matrix.col]).T,
-        #     values=self.data_model.adj_matrix.data, 
-        #     dense_shape=self.data_model.adj_matrix.shape, 
-        # )
 
 
     def _create_prior_post(self, **kwargs):
