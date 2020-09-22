@@ -163,7 +163,7 @@ class VolumetricModel(DataModel):
         else:
             self.post_init = None
 
-        self._calc_neighbours()
+        self._calc_adjacency_matrix()
 
 
     # TODO: subclass this for surface
@@ -208,15 +208,15 @@ class VolumetricModel(DataModel):
         return tensor
 
 
-    def _calc_neighbours(self):
+    def _calc_adjacency_matrix(self):
         """
-        Generate nearest neighbour and second nearest neighbour lists
+        Generate adjacency matrix for voxel nearest neighbours.
+        Note the result will be a square sparse COO matrix of size 
+        (n_unmasked voxels), indexed according to voxels in the mask
+        (so index 0 refers to the first un-masked voxel). 
         
         These are required for spatial priors and in practice do not
         take long to calculate so we provide them as a matter of course
-
-        FIXME this needs to be done in parameter space where that differs 
-        from the data space
         """
         def add_if_unmasked(x, y, z, masked_indices, nns):
             # Check that potential neighbour is not masked and if so
@@ -244,7 +244,7 @@ class VolumetricModel(DataModel):
 
         # Now generate the nearest neighbour lists.
         voxel_nns = []
-        self.indices_nn = []
+        indices_nn = []
         voxel_idx = 0
         for x in range(nx):
             for y in range(ny):
@@ -260,9 +260,16 @@ class VolumetricModel(DataModel):
                         voxel_nns.append(nns)
                         # For TensorFlow sparse tensor
                         for nn in nns:
-                            self.indices_nn.append([voxel_idx, nn])
+                            indices_nn.append([voxel_idx, nn])
                         voxel_idx += 1
 
+        self.adj_matrix = sparse.coo_matrix(
+            (np.ones(len(indices_nn)), (np.array(indices_nn).T)), 
+            shape=2*[self.n_unmasked_voxels], 
+            dtype=NP_DTYPE
+        )
+
+        assert (self.adj_matrix.tocsr()[np.diag_indices(self.n_unmasked_voxels)] == 0).all().all()
 
 class SurfaceModel(DataModel):
 
