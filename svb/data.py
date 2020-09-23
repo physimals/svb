@@ -164,6 +164,13 @@ class VolumetricModel(DataModel):
             self.post_init = None
 
         self._calc_adjacency_matrix()
+        self._calc_laplacian()
+
+    def _calc_laplacian(self):
+        """
+        Laplacian matrix. Note the sign convention is negatives
+        on the diagonal, and positive values off diagonal. 
+        """
 
         # Set the laplacian here 
         lap = self.adj_matrix.todok(copy=True)
@@ -300,12 +307,20 @@ class SurfaceModel(DataModel):
             self.post_init = None
 
         self._calc_adjacency_matrix()
+        self._calc_laplacian()
 
+    def _calc_laplacian(self):
+        """
+        Laplacian matrix. Note the sign convention is negatives
+        on the diagonal, and positive values off diagonal. 
+        """
+        
         # Set the laplacian here 
         lap = self.adj_matrix.todok(copy=True)
         lap[np.diag_indices(lap.shape[0])] = -lap.sum(1).T
         assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
         self.laplacian = lap.tocoo()
+
 
     def _calc_adjacency_matrix(self):
         
