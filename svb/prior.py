@@ -230,23 +230,21 @@ class MRFSpatialPrior(Prior):
 
         :math:`\log P = \frac{1}{2} \log \phi - \frac{\phi}{2}\underline{x^T} D \underline{x}`
         """
-        samples = tf.reshape(samples, (self.nnodes, -1)) # [W, N]
 
-        self.num_nn = self.log_tf(tf.sparse_reduce_sum(self.nn, axis=1), name="num_nn") # [W]
-        dx_diag = self.log_tf(tf.reshape(self.num_nn, (self.nnodes, 1)) * samples, name="dx_diag") # [W, N]
-        dx_offdiag = self.log_tf(tf.sparse_tensor_dense_matmul(self.nn, samples), name="dx_offdiag") # [W, N]
-        self.dx = self.log_tf(dx_diag - dx_offdiag, name="dx") # [W, N]
-        self.xdx = self.log_tf(samples * self.dx, name="xdx") # [W, N]
-        term1 = tf.identity(0.5*self.logak, name="term1")
-        term2 = tf.identity(-0.5*self.ak*self.xdx, name="term2")
-        log_pdf = term1 + term2  # [W, N]
-        mean_log_pdf = tf.reshape(tf.reduce_mean(log_pdf, axis=-1), [self.nnodes]) # [W]
+        samples = tf.reshape(samples, (self.nnodes, -1)) # [W,N]
+        D = self.laplacian # [W, W]
+        Dx = self.log_tf(tf.sparse.sparse_dense_matmul(D, samples)) # [W,N]
+        xDx = self.log_tf(samples * Dx, name="xDx") # [W,N]
+        log_ak = tf.identity(0.5 * self.logak, name="log_ak")
+        half_ak_xDx = tf.identity(0.5 * self.ak * xDx, name="half_ak_xDx")
+        logP = log_ak + half_ak_xDx
+        mean_logP = tf.reshape(tf.reduce_mean(logP, axis=-1), [self.nnodes])
 
         # Gamma prior if we care
         #q1, q2 = 1, 100
         #mean_log_pdf += (q1-1) * self.logak - self.ak / q2
 
-        return mean_log_pdf
+        return mean_logP
 
     def __str__(self):
         return "MRF spatial prior"
