@@ -9,6 +9,7 @@ import numpy as np
 import nibabel as nib
 import tensorflow as tf
 from scipy import sparse
+import igl 
 
 from .utils import LogBase, TF_DTYPE, NP_DTYPE
 
@@ -308,6 +309,10 @@ class SurfaceModel(DataModel):
 
         self._calc_adjacency_matrix()
         self._calc_laplacian()
+        self._calc_lbo()
+
+        # Use LBO instead of Laplacian 
+        self.laplacian = self.lbo 
 
     def _calc_laplacian(self):
         """
@@ -362,3 +367,16 @@ class SurfaceModel(DataModel):
             )
         return tf.transpose(result, [1, 2, 0])
 
+    def _calc_lbo(self):
+        """
+        Laplace-Beltrami operator, following same sign covention as 
+        for Laplacian: negative weight on diagonal elements, positive
+        elsewhere
+        """
+
+        s = self.surfaces
+        L = igl.cotmatrix(s.points, s.tris)
+        M = igl.massmatrix(s.points, s.tris, igl.MASSMATRIX_TYPE_BARYCENTRIC)
+        lbo = (M.power(-1)).dot(L)
+        assert (np.abs(lbo.sum(1)) < 1e-2).max(), 'Unweighted LBO matrix'
+        self.lbo = lbo.tocoo()
