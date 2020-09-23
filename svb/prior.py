@@ -55,6 +55,13 @@ class Prior(LogBase):
                 dense_shape=data_model.adj_matrix.shape, 
             )
 
+            # Check sign convention on Laplacian
+            diags = data_model.laplacian.tocsr()[
+                np.diag_indices(data_model.laplacian.shape[0])]
+            if (diags > 0).any():
+                raise ValueError("Sign convention on Laplacian matrix: " +
+                "diagonal elements should be negative, off-diag positive.")
+
             self.laplacian = tf.SparseTensor(
                 indices=np.array([
                     data_model.laplacian.row, 
