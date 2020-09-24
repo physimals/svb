@@ -71,6 +71,10 @@ options = {
     "save_cost_history" : True,
     "save_model_fit" : True,
     "save_log" : True,
+    "prior_type": "N",
+    "param_overrides": {
+        "amp1": { "prior_type": "M" } 
+        } 
 }
 
 # runtime, svb, training_history = run(data_noisy, "biexp", "example_out_nocov", **options)
