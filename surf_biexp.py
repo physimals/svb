@@ -34,7 +34,6 @@ pv.set_plot_theme('document')
 num_times = 200
 sq_len = 5
 vox_size = 2 
-name = "example_data"
 true_params = {
     "amp1" : 10.0, # the true amplitude of the model
     "r1" : 3.0,    # the true decay rate
@@ -66,23 +65,11 @@ vox_cents = ref_spc.voxel_centres().reshape(-1,3)
 voxel_poly = pv.PolyData(vox_cents)
 ref_spc
 
-
 # %%
 # Generate a spherical surface
 sph_mesh = trimesh.creation.icosphere(2, ((sq_len * vox_size)/2.2))
 surf = tob.Surface.manual(sph_mesh.vertices + (sq_len * vox_size)/2,    
                                 sph_mesh.faces)
-surf
-
-
-# %%
-# Plot the voxels and surface together (note the sphere seems to spill out of the voxel grid, this is because voxel centres are plotted, not the full bounding box)
-# plot = pv.BackgroundPlotter(notebook=True)
-# plot.add_mesh(surf.to_polydata(), 
-#     scalars=np.ones(surf.points.shape[0]), opacity=0.3, 
-#     show_edges=True, show_scalar_bar=True)
-# plot.add_mesh(voxel_poly)
-# plot.show()
 
 
 # %%
@@ -96,16 +83,12 @@ for vtx_number, vtx_ind in enumerate(vertices_inds):
 
 assert (surf2vol_weights.sum(0) == 1).all()
 divisor = surf2vol_weights.sum(1)
+mask = (divisor > 0)
 surf2vol_weights[surf2vol_weights == 0] = -1
-surf2vol_weights /= divisor[:,None]
+surf2vol_weights[mask,:] /= divisor[mask,None]
 surf2vol_weights[surf2vol_weights < 0] = 0
-mask = (surf2vol_weights.sum(1) > 0)
 surf2vol_weights = surf2vol_weights[mask,:]
 assert (surf2vol_weights.sum(1) == 1).all()
-# plt.spy(surf2vol_weights)
-# plt.xlabel('Vertex number')
-# plt.ylabel('Voxel index')
-# plt.show()
 
 
 # %%
@@ -116,14 +99,11 @@ options = {
     "sample_size" : 8,
     "epochs" : 250,
     "log_stream" : sys.stdout,
-    # "save_mean" : True,
-    # "save_var" : True,
-    # "save_param_history" : True,
-    # "save_cost" : True,
-    # "save_cost_history" : True,
-    # "save_model_fit" : True,
-    # "save_log" : True,
-    "n2v" : surf2vol_weights
+    "n2v" : surf2vol_weights,
+    "prior_type": "M",
+    "param_overrides": {
+        "amp1": { "prior_type": "M" } 
+        } 
 }
 
 
