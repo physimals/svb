@@ -307,39 +307,12 @@ class SurfaceModel(DataModel):
         else:
             self.post_init = None
 
-        self._calc_adjacency_matrix()
-        self._calc_laplacian()
-        self._calc_lbo()
+        self.adj_matrix = self.surfaces.adjacency_matrix().tocoo()
+        self.laplacian = self.surfaces.mesh_laplacian().tocoo()
+        self.lbo = self.surfaces.laplace_beltrami().tocoo()
 
         # Use LBO instead of Laplacian 
         self.laplacian = self.lbo 
-
-    def _calc_laplacian(self):
-        """
-        Laplacian matrix. Note the sign convention is negatives
-        on the diagonal, and positive values off diagonal. 
-        """
-        
-        # Set the laplacian here 
-        lap = self.adj_matrix.todok(copy=True)
-        lap[np.diag_indices(lap.shape[0])] = -lap.sum(1).T
-        assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
-        self.laplacian = lap.tocoo()
-
-
-    def _calc_adjacency_matrix(self):
-        
-        surf = self.surfaces
-        adj = sparse.dok_matrix(2*(surf.points.shape[0],), dtype=NP_DTYPE)
-        for pidx in range(surf.points.shape[0]):
-            touched = (surf.tris == pidx).any(1)
-            neighbours = np.unique(surf.tris[touched])
-            adj[pidx,neighbours] = 1 
-
-        adj[np.diag_indices(surf.points.shape[0])] = 0
-        assert not (adj[np.diag_indices(adj.shape[0])] != 0).nnz
-        self.adj_matrix = adj.tocoo()
-
 
     def nodes_to_voxels(self, tensor, *unused): 
 
@@ -366,17 +339,3 @@ class SurfaceModel(DataModel):
             sparse_mul, tf.transpose(tensor, [2, 0, 1])
             )
         return tf.transpose(result, [1, 2, 0])
-
-    def _calc_lbo(self):
-        """
-        Laplace-Beltrami operator, following same sign covention as 
-        for Laplacian: negative weight on diagonal elements, positive
-        elsewhere
-        """
-
-        s = self.surfaces
-        L = igl.cotmatrix(s.points, s.tris)
-        M = igl.massmatrix(s.points, s.tris, igl.MASSMATRIX_TYPE_BARYCENTRIC)
-        lbo = (M.power(-1)).dot(L)
-        assert (np.abs(lbo.sum(1)) < 1e-2).max(), 'Unweighted LBO matrix'
-        self.lbo = lbo.tocoo()
