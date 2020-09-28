@@ -97,10 +97,10 @@ options = {
     "learning_rate" : 0.005,
     "batch_size" : 10,
     "sample_size" : 8,
-    "epochs" : 250,
+    "epochs" : 500,
     "log_stream" : sys.stdout,
     "n2v" : surf2vol_weights,
-    "prior_type": "M",
+    "prior_type": "N",
     "param_overrides": {
         "amp1": { "prior_type": "M" } 
         } 
