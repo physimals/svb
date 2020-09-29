@@ -230,7 +230,7 @@ class SvbFit(LogBase):
         # for spatial regularization
         all_priors = []
         for idx, param in enumerate(self.params):            
-            all_priors.append(get_prior(param, self.data_model, idx=idx, post=self.post))
+            all_priors.append(get_prior(param, self.data_model, idx=idx, post=self.post, **kwargs))
         self.prior = FactorisedPrior(all_priors, name="prior", **kwargs)
 
         # If all of our priors and posteriors are Gaussian we can use an analytic expression for
@@ -602,9 +602,10 @@ class SvbFit(LogBase):
             training_history["mean_params"][epoch, :] = mean_params
             training_history["voxel_params"][:, epoch, :] = params.transpose()
             try:
-                training_history["ak"][epoch] = self.evaluate("ak")
+                ak = self.evaluate("ak")
+                training_history["ak"][epoch] = ak
             except:
-                pass
+                ak = 0
 
             if err or np.isnan(mean_total_cost) or np.any(np.isnan(mean_params)):
                 # Numerical errors while processing this epoch. Revert to best saved params if possible
@@ -635,8 +636,8 @@ class SvbFit(LogBase):
                     outcome = "Not saving"
 
             if epoch % display_step == 0:
-                state_str = "mean/median cost=%f/%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s lr=%f, ss=%i" % (
-                    mean_total_cost, median_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var, current_lr, current_ss)
+                state_str = "mean/median cost=%f/%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s lr=%f, ss=%i ak=%e" % (
+                    mean_total_cost, median_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var, current_lr, current_ss, ak)
                 self.log.info(" - Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
 
             epoch_end_time = time.time()
