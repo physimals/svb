@@ -114,6 +114,7 @@ runtime, svb, training_history = run(
     mask=mask,
     surfaces={'LMS': surf}, 
     infer_covar=True, 
+    dt=dt,
     **options)
 
 mean_cost_history_cov = training_history["mean_cost"]
