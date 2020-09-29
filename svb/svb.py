@@ -293,12 +293,13 @@ class SvbFit(LogBase):
         model_vars.append(ext_vars)
         
         # Define convenience tensors for querying the model-space sample, means and prediction
-        # modelfit_nodes has shape [W x B]
+        # modelfit_nodes has shape [W x B], modelfit_voxels [V, B]
         self.model_samples = self.log_tf(tf.identity(model_samples, name="model_samples"))
         self.model_means = self.log_tf(tf.identity(model_means, name="model_means"))
         self.model_vars = self.log_tf(tf.identity(model_vars, name="model_vars"))
         self.modelfit_nodes = self.log_tf(tf.identity(self.model.evaluate(tf.expand_dims(self.model_means, -1), self.tpts_train), "modelfit_nodes"))
-        
+        self.modelfit_voxels = tf.squeeze(self.data_model.nodes_to_voxels_ts(tf.expand_dims(self.modelfit_nodes, 1)), 1)
+
         # FIXME compatibility
         self.modelfit = self.log_tf(self.modelfit_nodes, name="modelfit")
 
@@ -635,7 +636,7 @@ class SvbFit(LogBase):
 
             if epoch % display_step == 0:
                 state_str = "mean/median cost=%f/%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s lr=%f, ss=%i" % (
-                    mean_total_cost, median_total_cost, mean_total_latent, mean_total_reconst, median_params, mean_var, current_lr, current_ss)
+                    mean_total_cost, median_total_cost, mean_total_latent, mean_total_reconst, mean_params, mean_var, current_lr, current_ss)
                 self.log.info(" - Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
 
             epoch_end_time = time.time()
