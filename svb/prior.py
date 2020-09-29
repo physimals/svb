@@ -226,7 +226,11 @@ class MRFSpatialPrior(Prior):
 
         # Set up spatial smoothing parameter calculation from posterior and neighbour lists
         # We infer the log of ak.
-        self.logak = tf.Variable(-5.0, name="log_ak", dtype=TF_DTYPE)
+        ak_init = kwargs.get("ak", 1e-5)
+        if  kwargs.get("infer_ak", True):
+            self.logak = tf.Variable(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
+        else:
+            self.logak = tf.constant(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
         self.ak = self.log_tf(tf.exp(self.logak, name="ak"))
 
     def mean_log_pdf(self, samples):
@@ -248,8 +252,8 @@ class MRFSpatialPrior(Prior):
         mean_logP = tf.reshape(tf.reduce_mean(logP, axis=-1), [self.nnodes])
 
         # Gamma prior if we care
-        #q1, q2 = 1, 100
-        #mean_log_pdf += (q1-1) * self.logak - self.ak / q2
+        q1, q2 = 1, 100
+        mean_logP += (q1-1) * self.logak - self.ak / q2
 
         return mean_logP
 
