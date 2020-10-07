@@ -287,8 +287,8 @@ class SvbFit(LogBase):
         self.noise_prediction = tf.expand_dims(
             noise_param.post_dist.transform.ext_values(noise_samples), -1)
         ext_means, ext_vars = noise_param.post_dist.transform.ext_moments(int_means, int_vars)
-        model_means.append(ext_means)
-        model_vars.append(ext_vars)
+        # model_means.append(ext_means)
+        # model_vars.append(ext_vars)
         self.noise_mean = self.log_tf(tf.identity(ext_means), name="noise_mean")
         self.noise_var = self.log_tf(tf.identity(ext_vars), name="noise_vars")
         
@@ -347,7 +347,6 @@ class SvbFit(LogBase):
         # Model prediction has shape [W x S x B]
         model_prediction, noise_prediction = self._get_model_prediction(
                                                         param_samples, noise_samples)
-
 
 
         # Unpack noise parameter. The noise model knows how to interpret this - typically it is the
@@ -589,8 +588,10 @@ class SvbFit(LogBase):
                 err = True
 
             # Record the cost and parameter values at the end of each epoch.
-            params = self.evaluate(self.model_means) # [P, W]
-            var = self.evaluate(self.post.var) # [W, P]
+            params = self.evaluate(self.model_means) # [P-1, W]
+            params = np.vstack([params, self.evaluate(self.noise_mean)]) # [P, W]
+            var = self.evaluate(self.post.var) # [W, P-1]
+            # FIXME add in the noise var here
             current_lr, current_ss = self.evaluate(self.learning_rate, self.sample_size)
             mean_params = np.mean(params, axis=1)
             median_params = np.median(params, axis=1)
