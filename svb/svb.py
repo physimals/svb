@@ -248,7 +248,7 @@ class SvbFit(LogBase):
             self.log.info("   - Prior: %s %s", param.prior_dist, all_priors[idx])
             self.log.info("   - Posterior: %s %s", param.post_dist, all_posts[idx])
 
-    def _get_model_prediction(self, samples):
+    def _get_model_prediction(self, param_samples, noise_samples):
         """
         Get a model prediction for the data batch being processed for each
         sample from the posterior
@@ -263,8 +263,9 @@ class SvbFit(LogBase):
                 we return a prediction which can be compared with the data batch
         """
         model_samples, model_means, model_vars = [], [], []
-        for idx, param in enumerate(self.params):
-            int_samples = samples[:, idx, :]
+        for idx, param in zip(range(param_samples.shape[1]), self.params):
+            assert idx != self.noise_idx, 'Iterating over noise parameter'
+            int_samples = param_samples[:, idx, :]
             int_means = self.post.mean[:, idx]
             int_vars = self.post.var[:, idx]
             
@@ -274,24 +275,24 @@ class SvbFit(LogBase):
             # The sample parameter values tensor also needs to be reshaped to [P x W x S x 1] so
             # the time values from the data batch will be broadcasted and a full prediction
             # returned for every sample
-            if idx != self.noise_idx:
-                # Skip the noise parameter for now as the model expects to be passed its own parameters
-                # in order
-                model_samples.append(tf.expand_dims(param.post_dist.transform.ext_values(int_samples), -1))
-                ext_means, ext_vars = param.post_dist.transform.ext_moments(int_means, int_vars)
-                model_means.append(ext_means)
-                model_vars.append(ext_vars)
+            model_samples.append(tf.expand_dims(param.post_dist.transform.ext_values(int_samples), -1))
+            ext_means, ext_vars = param.post_dist.transform.ext_moments(int_means, int_vars)
+            model_means.append(ext_means)
+            model_vars.append(ext_vars)
 
-        # Put the noise parameter at the end
-        param = self.params[self.noise_idx]
-        int_samples = samples[:, self.noise_idx, :]
+        # Produce a noise prediction 
+        noise_param = self.params[self.noise_idx]
         int_means = self.post.mean[:, self.noise_idx]
         int_vars = self.post.var[:, self.noise_idx]
-        model_samples.append(tf.expand_dims(param.post_dist.transform.ext_values(int_samples), -1))
-        ext_means, ext_vars = param.post_dist.transform.ext_moments(int_means, int_vars)
+        self.noise_prediction = tf.expand_dims(
+            noise_param.post_dist.transform.ext_values(noise_samples), -1)
+        ext_means, ext_vars = noise_param.post_dist.transform.ext_moments(int_means, int_vars)
         model_means.append(ext_means)
         model_vars.append(ext_vars)
+        self.noise_mean = self.log_tf(tf.identity(ext_means), name="noise_mean")
+        self.noise_var = self.log_tf(tf.identity(ext_vars), name="noise_vars")
         
+        # Produce the model prediction 
         # Define convenience tensors for querying the model-space sample, means and prediction
         # modelfit_nodes has shape [W x B]
         self.model_samples = self.log_tf(tf.identity(model_samples, name="model_samples"))
@@ -310,7 +311,7 @@ class SvbFit(LogBase):
         # Model prediction has shape [W x S x B]
         self.sample_predictions = self.log_tf(tf.identity(self.model.evaluate(model_samples, sample_tpts),
                                                           "sample_predictions"), shape=True, force=False)
-        return self.sample_predictions
+        return self.sample_predictions, self.noise_prediction
 
     def _create_loss_optimizer(self):
         """
@@ -327,6 +328,8 @@ class SvbFit(LogBase):
         """
         # Generate a set of samples from the posterior [W x P x B]
         samples = self.log_tf(self.post.sample(self.sample_size), name="samples", shape=True, force=False)
+        noise_samples = samples[:,self.noise_idx,:]
+        param_samples = samples[:,:self.noise_idx,:]
 
         #samples = tf.boolean_mask(samples, self.voxel_mask)
         #data = tf.boolean_mask(self.data_train, self.voxel_mask)
@@ -342,12 +345,16 @@ class SvbFit(LogBase):
 
         # Get the model prediction for the current set of parameter samples
         # Model prediction has shape [W x S x B]
-        model_prediction = self._get_model_prediction(samples)
+        model_prediction, noise_prediction = self._get_model_prediction(
+                                                        param_samples, noise_samples)
+
+
 
         # Unpack noise parameter. The noise model knows how to interpret this - typically it is the
         # log of a Gaussian variance but this is not required
         #noise_samples = self.log_tf(tf.identity(samples[:, self.noise_idx, :], name="noise_samples"), shape=True, force=True)
-        noise_samples = self.log_tf(tf.squeeze(self.model_samples[-1]), name="noise_samples", shape=True, force=False)
+        # noise_samples = self.log_tf(tf.squeeze(self.model_samples[-1]), name="noise_samples", shape=True, force=False)
+        noise_samples = tf.squeeze(noise_prediction)
 
         # Note that we pass the total number of time points as we need to scale this term correctly
         # when the batch size is not the full data size
