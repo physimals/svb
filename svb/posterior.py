@@ -8,7 +8,7 @@ except ImportError:
 
 import numpy as np
 
-from .utils import LogBase, TF_DTYPE, NP_DTYPE
+from .utils import LogBase, TF_DTYPE
 from . import dist
 
 def get_posterior(idx, param, t, data_model, **kwargs):
@@ -18,7 +18,6 @@ def get_posterior(idx, param, t, data_model, **kwargs):
     :param param: svb.parameter.Parameter instance
     :
     """
-    nnodes = data_model.n_nodes
     initial_mean, initial_var = None, None
     if param.post_init is not None:
         if data_model.n_nodes != data_model.n_unmasked_voxels:
@@ -28,24 +27,36 @@ def get_posterior(idx, param, t, data_model, **kwargs):
         else:
             initial_mean, initial_var = param.post_init(param, t, data_model.data_flattened)
 
+    # The size of the posterior (number of positions at which it is 
+    # estimated) is determined by the data_space it refers to, and 
+    # in turn by the data model. If it is global, the reduction will
+    # be applied when creating the GaussianGlobalPosterior later on 
+    if param.data_space == "node":
+        post_size = data_model.n_nodes
+    else:
+        post_size = data_model.n_unmasked_voxels
+
     if initial_mean is None:
-        initial_mean = tf.fill([nnodes], param.post_dist.mean)
+        initial_mean = tf.fill([post_size], param.post_dist.mean)
     else:
         initial_mean = param.post_dist.transform.int_values(initial_mean)
 
     if initial_var is None:
-        initial_var = tf.fill([nnodes], param.post_dist.var)
+        initial_var = tf.fill([post_size], param.post_dist.var)
     else:
         # FIXME variance not value?
         initial_var = param.post_dist.transform.int_values(initial_var)
 
-    if param.post_type == "vertexwise" and isinstance(param.post_dist, dist.Normal):
-        return NormalPosterior(idx, initial_mean, initial_var, name=param.name, **kwargs)
+    if (not param.is_global) and isinstance(param.post_dist, dist.Normal):
+        return NormalPosterior(idx, initial_mean, initial_var, name=param.name,
+            data_space=param.data_space, **kwargs)
     
-    if param.post_type == "global" and isinstance(param.post_dist, dist.Normal):
-        return GaussianGlobalPosterior(idx, initial_mean, initial_var, name=param.name, **kwargs)
+    if param.is_global and isinstance(param.post_dist, dist.Normal):
+        return GaussianGlobalPosterior(idx, initial_mean, initial_var, name=param.name,
+            data_space=param.data_space, **kwargs)
 
-    raise ValueError("Can't create %s posterior for distribution: %s" % (param.post_type, param.post_dist))
+    raise ValueError("Can't create %s (global: %s) posterior for distribution: %s" 
+        % (param.data_space, param.is_global, param.post_dist))
         
 class Posterior(LogBase):
     """
@@ -53,6 +64,16 @@ class Posterior(LogBase):
     """
     def __init__(self, idx, **kwargs):
         LogBase.__init__(self, **kwargs)
+
+        # The space in which the corresponding paramter is being
+        # estimated, either "voxel" or "node" (on the surface).
+        # FactorisedPosteriors and subclasses thereof deal with
+        # this in their own __init__() methods 
+        if not isinstance(self, FactorisedPosterior):
+            self.data_space = kwargs["data_space"]
+        else: 
+            self.data_space = None
+
         self._idx = idx
 
     def _get_mean_var(self, mean, var, init_post):
@@ -116,6 +137,10 @@ class Posterior(LogBase):
     def log_det_cov(self):
         raise NotImplementedError()
 
+    @property
+    def is_gaussian(self):
+        return isinstance(self, NormalPosterior)
+
 class NormalPosterior(Posterior):
     """
     Posterior distribution for a single vertexwise parameter with a normal
@@ -173,7 +198,7 @@ class NormalPosterior(Posterior):
         ]
 
     def __str__(self):
-        return "Vertexwise posterior"
+        return f"{self.data_space}wise posterior"
 
 class GaussianGlobalPosterior(Posterior):
     """
@@ -248,6 +273,12 @@ class FactorisedPosterior(Posterior):
         self.posts = posts
         self.nparams = len(self.posts)
         self.name = kwargs.get("name", "FactPost")
+
+        # The data_space is determined by that of the individual posteriors, 
+        # and must be common to all of them. 
+        ds = posts[0].data_space 
+        if any ([ p.data_space != ds for p in posts ]):
+            raise NotImplementedError("All posteriors should be in same data space")
 
         means = [post.mean for post in self.posts]
         variances = [post.var for post in self.posts]

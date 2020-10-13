@@ -11,7 +11,7 @@ try:
 except ImportError:
     import tensorflow as tf
    
-from .utils import LogBase, ValueList
+from .utils import LogBase, ValueList, TF_DTYPE, NP_DTYPE
 
 MODELS = {
 }
@@ -61,6 +61,13 @@ class Model(LogBase):
         self.params = []
         for option in self.OPTIONS:
             setattr(self, option.attr_name, options.get(option.attr_name, option.default))
+
+    @property
+    def data_space(self):
+        if self.data_model.is_volumetric:
+            return "voxel"
+        else: 
+            return "node"
 
     @property
     def nparams(self):

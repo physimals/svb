@@ -12,6 +12,7 @@ try:
 except ImportError:
     import tensorflow as tf
    
+from svb.posterior import GaussianGlobalPosterior
 from .utils import LogBase
 from . import dist
 
@@ -22,15 +23,15 @@ def get_parameter(name, **kwargs):
     custom_kwargs = kwargs.pop("param_overrides", {}).get(name, {})
     kwargs.update(custom_kwargs)
 
+    data_space = kwargs.get("data_space", "voxel")
     desc = kwargs.get("desc", "No description given")
     prior_dist = dist.get_dist(prefix="prior", **kwargs)
     prior_type = kwargs.get("prior_type", "N")
-
     post_dist = dist.get_dist(prefix="post", **kwargs)
-    post_type = kwargs.get("post_type", "vertexwise")
     post_init = kwargs.get("post_init", None)
 
-    return Parameter(name, desc=desc, prior=prior_dist, prior_type=prior_type, post=post_dist, post_init=post_init, post_type=post_type)
+    return Parameter(name, desc=desc, prior=prior_dist, prior_type=prior_type,
+        post=post_dist, post_init=post_init, data_space=data_space)
 
 class Parameter(LogBase):
     """
@@ -50,6 +51,8 @@ class Parameter(LogBase):
                          value or a callable which takes the parameters t, data, param_name
          - ``log_var_init`` Initial value for the posterior log variance either as a numeric
                             value or a callable which takes the parameters t, data, param_name
+         - ``data_space`` Space in which parameter is defined/estimated, either 
+                          "voxel" (default) or "node" for volume/surface respectively. 
          - ``param_overrides`` Dictionary keyed by parameter name. Value should be dictionary
                                of keyword arguments which will override those defined as
                                existing keyword arguments
@@ -64,8 +67,17 @@ class Parameter(LogBase):
         self.prior_dist = kwargs.get("prior")
         self.prior_type = kwargs.get("prior_type", "N")
         self.post_dist = kwargs.get("post", self.prior_dist)
-        self.post_type = kwargs.get("post_type", "vertexwise")
-        self.post_init = kwargs.get("post_init", None)
+        self.post_init = kwargs.get("post_init", None)  
+        self.data_space = kwargs.get("data_space", "voxel")
+
 
     def __str__(self):
         return "Parameter: %s" % self.name
+
+    @property
+    def is_global(self):
+        """
+        If global, parameter has a single global value across all 
+        voxels or nodes (if in volume/surface space respectively). 
+        """
+        return isinstance(self, GaussianGlobalPosterior)

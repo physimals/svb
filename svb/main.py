@@ -33,7 +33,7 @@ class SvbArgumentParser(argparse.ArgumentParser):
         "prior_dist" : str,
         "prior_type" : str,
         "post_mean" : float,
-        "post_type" : str,
+        # FIXME: allow user to set global: True as option here 
     }
 
     def __init__(self, **kwargs):

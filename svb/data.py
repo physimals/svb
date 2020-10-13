@@ -46,7 +46,7 @@ class DataModel(LogBase):
 
     @property
     def is_volumetric(self):
-        return (type(self) is VolumetricModel)
+        return isinstance(self, VolumetricModel)
 
     # TODO: volumetric only method 
     def nifti_image(self, data):
