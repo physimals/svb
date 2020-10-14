@@ -162,7 +162,7 @@ runtime, svb, training_history = run(
 
 mean_cost_history = training_history["mean_cost"]
 cost_history_v = training_history["voxel_cost"]
-param_history_v = training_history["voxel_params"]
+param_history_v = training_history["model_params"]
 modelfit = svb.evaluate(svb.modelfit)
 means = svb.evaluate(svb.model_means)
 variances = svb.evaluate(svb.model_vars)
@@ -171,8 +171,9 @@ variances = svb.evaluate(svb.model_vars)
 # For each parameter of interest, we infer a mean (best estimate) and variance (degree of uncertainty). We also project the surface parameter estimates back into volume space for reference. 
 
 # %%
-amp1_mean, r1_mean, noise_mean = [ means[d] for d in range(3) ]
-amp1_var, r1_var, noise_var =  [ variances[0] for d in range(3) ] 
+amp1_mean, r1_mean = [ *means ]
+amp1_var, r1_var =  [ *variances ] 
+noise_var = training_history["mean_noise_params"]
 vol_amp1 = surf2vol_weights.dot(amp1_mean)
 
 # %% [markdown]
