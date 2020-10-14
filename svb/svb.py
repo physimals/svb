@@ -61,9 +61,9 @@ except ImportError:
     import tensorflow as tf
 
 from .noise import NoiseParameter
-from .prior import NormalPrior, FactorisedPrior, get_prior
-from .posterior import NormalPosterior, FactorisedPosterior, MVNPosterior, get_posterior
-from .utils import LogBase, TF_DTYPE, NP_DTYPE
+from .prior import FactorisedPrior, get_prior
+from .posterior import FactorisedPosterior, MVNPosterior, get_posterior
+from .utils import LogBase, TF_DTYPE
 
 class SvbFit(LogBase):
     """
@@ -84,11 +84,12 @@ class SvbFit(LogBase):
         # The model to use for inference
         self.model = fwd_model
 
-        # All the parameters to infer - model parameters plus noise parameters
+        # All the parameters to infer - model parameters. 
+        # Noise is defined as a separate parameter in "voxel" space 
+        # (never "node" - surface - as may be the case for the model) 
         self.params = list(fwd_model.params)
-        self.noise = NoiseParameter()
-        self.params.append(self.noise)
-        self._nparams = len(self.params)
+        self.noise_param = NoiseParameter()
+        self._nparams = len(self.params) + 1
         self._infer_covar = kwargs.get("infer_covar", False)
         self.mean_1, self.covar_1 = None, None
 
@@ -109,7 +110,32 @@ class SvbFit(LogBase):
 
             # Tensorflow session for runnning graph
             self.sess = tf.Session()
-    
+
+    @property
+    def n_model_params(self):
+        """Number of model parameters, exlcuding noise
+        """
+        return self._nparams - 1
+
+    @property
+    def n_all_params(self):
+        """Number of paramters, including noise
+        """
+        return self._nparams
+
+    @property
+    def nnodes(self):
+        """
+        Number of positions at which *model* parameters will be estimated
+        """
+        return self.data_model.n_nodes
+
+    @property
+    def nvoxels(self):
+        """Number of data voxels that will be used for estimation 
+        """
+        return self.data_model.n_unmasked_voxels
+ 
     def _create_input_tensors(self):
         """
         Tensorflow input required for training
@@ -176,36 +202,32 @@ class SvbFit(LogBase):
             #power=1.0,
         )), tf.int32)
 
-        # Number of voxels in full data (V) - known at runtime
-        #self.nvoxels = tf.shape(self.data_full)[0]
-        self.nvoxels = self.data_model.n_unmasked_voxels
-
-        # Number of parameter nodes (W) - known at runtime. Currently equal
-        # to number of voxels. In future this will be defined by the data model.
-        # TODO: update the above comment 
-        self.nnodes = self.data_model.n_nodes
- 
-
 
     def _create_prior_post(self, **kwargs):
         """
         Create voxelwise prior and posterior distribution tensors
         """
         self.log.info("Setting up prior and posterior")
-        # Create posterior distribution - note this can be initialized using the actual data
+
+        # Create posterior distributions for model parameters
+        # Note this can be initialized using the actual data
         gaussian_posts, nongaussian_posts, all_posts = [], [], []
         for idx, param in enumerate(self.params):    
-            post = get_posterior(idx, param, self.tpts_train, self.data_model, init=self.data_model.post_init, **kwargs)
-            if isinstance(post, NormalPosterior):
+            post = get_posterior(idx, param, self.tpts_train, 
+                self.data_model, init=self.data_model.post_init, 
+                **kwargs
+            )
+            if post.is_gaussian:
                 gaussian_posts.append(post)
-                # FIXME Noise parameter hack
-                if idx == len(self.params) - 1:
-                    noise_gaussian = True
             else:
                 nongaussian_posts.append(post)
-                if idx == len(self.params) - 1:
-                    noise_gaussian = False
             all_posts.append(post)
+
+        # The noise posterior is defined separate to model posteriors in 
+        # the voxel data space 
+        self.noise_post = get_posterior(idx+1, self.noise_param,
+                                        self.tpts_train, self.data_model, 
+                                        init=self.data_model.post_init, **kwargs)
 
         if self._infer_covar:
             self.log.info(" - Inferring covariances (correlation) between %i Gaussian parameters" % len(gaussian_posts))
@@ -215,16 +237,9 @@ class SvbFit(LogBase):
             else:
                 self.post = MVNPosterior(gaussian_posts, name="post", init=self.data_model.post_init, **kwargs)
 
-            # Depending on whether the noise is gaussian or not it may appear in 
-            # a different position in the parameter lists
-            if noise_gaussian:
-                self.noise_idx = len(all_posts) - len(nongaussian_posts) - 1
-            else:
-                self.noise_idx = len(all_posts) - 1
         else:
             self.log.info(" - Not inferring covariances between parameters")
             self.post = FactorisedPosterior(all_posts, name="post", **kwargs)
-            self.noise_idx = len(all_posts) - 1
 
         # Create prior distribution - note this can make use of the posterior e.g.
         # for spatial regularization
@@ -233,10 +248,17 @@ class SvbFit(LogBase):
             all_priors.append(get_prior(param, self.data_model, idx=idx, post=self.post))
         self.prior = FactorisedPrior(all_priors, name="prior", **kwargs)
 
+        # As for the noise posterior, the prior is defined seperately to the
+        # model ones, and again in voxel data space  
+        self.noise_prior = get_prior(self.noise_param, self.data_model, 
+                                     idx=idx+1, post=self.noise_param.post_dist)
+
         # If all of our priors and posteriors are Gaussian we can use an analytic expression for
         # the latent loss - so set this flag to decide if this is possible
-        self.analytic_latent_loss = (np.all([isinstance(prior, NormalPrior) for prior in all_priors]) and
-                             not nongaussian_posts and not kwargs.get("force_num_latent_loss", False))
+        self.analytic_latent_loss = (np.all([ p.is_gaussian for p in all_priors ]) 
+                                     and not nongaussian_posts 
+                                     and not kwargs.get("force_num_latent_loss", False)
+                                     and False)   # FIXME always disabled for now 
         if self.analytic_latent_loss:
             self.log.info(" - Using analytical expression for latent loss since prior and posterior are Gaussian")
         else:
@@ -248,29 +270,32 @@ class SvbFit(LogBase):
             self.log.info("   - Prior: %s %s", param.prior_dist, all_priors[idx])
             self.log.info("   - Posterior: %s %s", param.post_dist, all_posts[idx])
 
-    def _get_model_prediction(self, param_samples, noise_samples):
+        self.log.info(" - Noise")
+        self.log.info("   - Prior: %s %s", self.noise_param.prior_dist, self.noise_prior)
+        self.log.info("   - Posterior: %s %s", self.noise_param.post_dist, self.noise_post)
+
+
+    def _get_model_prediction(self, param_samples):
         """
         Get a model prediction for the data batch being processed for each
         sample from the posterior
 
-        FIXME assuming noise is last parameter
-
-        :param samples: Tensor [W x P x S] containing samples from the posterior.
-                        S is the number of samples (not always the same
-                        as the batch size)
+        :param param_samples: Tensor [W x P x S] containing samples from the posterior.
+                              This is does not include noise samples. S is the number 
+                              of samples (not always the same as the batch size). 
 
         :return Tensor [V x S x B]. B is the batch size, so for each voxel and sample
                 we return a prediction which can be compared with the data batch
         """
         model_samples, model_means, model_vars = [], [], []
         for idx, param in zip(range(param_samples.shape[1]), self.params):
-            assert idx != self.noise_idx, 'Iterating over noise parameter'
             int_samples = param_samples[:, idx, :]
             int_means = self.post.mean[:, idx]
             int_vars = self.post.var[:, idx]
             
             # Transform the underlying Gaussian samples into the values required by the model
-            # This depends on each model parameter's underlying distribution
+            # denoted by the prefix int_ -> ext_, determined by each parameter's 
+            # underlying distribution. 
             #
             # The sample parameter values tensor also needs to be reshaped to [P x W x S x 1] so
             # the time values from the data batch will be broadcasted and a full prediction
@@ -280,38 +305,30 @@ class SvbFit(LogBase):
             model_means.append(ext_means)
             model_vars.append(ext_vars)
 
-        # Produce a noise prediction 
-        noise_param = self.params[self.noise_idx]
-        int_means = self.post.mean[:, self.noise_idx]
-        int_vars = self.post.var[:, self.noise_idx]
-        self.noise_prediction = tf.expand_dims(
-            noise_param.post_dist.transform.ext_values(noise_samples), -1)
-        ext_means, ext_vars = noise_param.post_dist.transform.ext_moments(int_means, int_vars)
-        # model_means.append(ext_means)
-        # model_vars.append(ext_vars)
-        self.noise_mean = self.log_tf(tf.identity(ext_means), name="noise_mean")
-        self.noise_var = self.log_tf(tf.identity(ext_vars), name="noise_vars")
-        
-        # Produce the model prediction 
-        # Define convenience tensors for querying the model-space sample, means and prediction
-        # modelfit_nodes has shape [W x B]
-        self.model_samples = self.log_tf(tf.identity(model_samples, name="model_samples"))
-        self.model_means = self.log_tf(tf.identity(model_means, name="model_means"))
-        self.model_vars = self.log_tf(tf.identity(model_vars, name="model_vars"))
-        self.modelfit_nodes = self.log_tf(tf.identity(self.model.evaluate(tf.expand_dims(self.model_means, -1), self.tpts_train), "modelfit_nodes"))
-        
-        # FIXME compatibility
-        self.modelfit = self.log_tf(self.modelfit_nodes, name="modelfit")
-
         # The timepoints tensor has shape [V x B] or [1 x B]. It needs to be reshaped
         # to [V x 1 x B] or [1 x 1 x B] so it can be broadcast across each of the S samples
         sample_tpts = self.log_tf(tf.expand_dims(self.tpts_train, 1), name="sample_tpts")
-
-        # Evaluate the model using the transformed values
+        
+        # Produce a model prediction for each set of transformed parameter samples passed in 
         # Model prediction has shape [W x S x B]
-        self.sample_predictions = self.log_tf(tf.identity(self.model.evaluate(model_samples, sample_tpts),
-                                                          "sample_predictions"), shape=True, force=False)
-        return self.sample_predictions, self.noise_prediction
+        self.model_samples = self.log_tf(tf.identity(model_samples, name="model_samples"))
+        self.sample_predictions = self.log_tf(tf.identity(
+                                    self.model.evaluate(model_samples, sample_tpts),
+                                    "sample_predictions"), shape=True, force=False)
+
+        # Define convenience tensors for querying the model-space sample, means and prediction. 
+        # Modelfit_nodes has shape [W x B]. Produce a current "best estimate" prediction from 
+        # model_means. This is distinct to producing a prediction for each samples. 
+        self.model_means = self.log_tf(tf.identity(model_means, name="model_means"))
+        self.model_vars = self.log_tf(tf.identity(model_vars, name="model_vars"))
+        self.modelfit_nodes = self.log_tf(tf.identity(self.model.evaluate(
+                                            tf.expand_dims(self.model_means, -1), 
+                                            self.tpts_train), "modelfit_nodes"))
+        
+        # FIXME compatibility, this is used by an output stage, could be removed. 
+        self.modelfit = self.log_tf(self.modelfit_nodes, name="modelfit")
+
+        return self.sample_predictions
 
     def _create_loss_optimizer(self):
         """
@@ -326,41 +343,61 @@ class SvbFit(LogBase):
         2. The latent loss. This is a measure of how closely the posterior fits the
            prior
         """
-        # Generate a set of samples from the posterior [W x P x B]
-        samples = self.log_tf(self.post.sample(self.sample_size), name="samples", shape=True, force=False)
-        noise_samples = samples[:,self.noise_idx,:]
-        param_samples = samples[:,:self.noise_idx,:]
-
-        #samples = tf.boolean_mask(samples, self.voxel_mask)
-        #data = tf.boolean_mask(self.data_train, self.voxel_mask)
+        # Generate a set of model parameter samples from the posterior [W x P x B]
+        # Generate a set of noise parameter samples from the posterior [W x 2 x B]
+        # They are in the 'internal' form required by the distributions themselves
+        param_samples_int = self.log_tf(self.post.sample(self.sample_size),
+                            name="param_samples_int", shape=True, force=False)
+        noise_samples_int = self.log_tf(self.noise_post.sample(self.sample_size), 
+                            name="noise_samples_int", shape=True, force=False)
 
         # Part 1: Reconstruction loss
         #
-        # This deals with how well the parameters replicate the data and is defined as the
-        # log-likelihood of the data (given the parameters).
+        # This deals with how well the parameters replicate the data and is 
+        # defined as the log-likelihood of the data (given the parameters).
         #
-        # This is calculated from the noise model, as it boils down to how likely the deviations
-        # from the model prediction to the data are within the noise model (with its current
-        # parameters)
+        # This is calculated using the noise model. For each prediction generated
+        # from the samples, the difference between it and the original data is 
+        # taken to be an estimate of the noise ('residual' loss). This noise estimate
+        # is compared with the current noise posterior in each voxel (via samples
+        # drawn from the posterior and calculation of the log likelihoood). 
+        # 
+        # If the current model parameters are poor, then the model prediction
+        # will not reproduce the data well. The high residual loss between the
+        # predictions and the data will be interpreted as a high level of noise. 
+        # If these noise levels are highly unlikely given the current noise 
+        # parameters, then the log-likelihood will be low, and in turn the 
+        # free energy (the quantity we wish to maximise) will be reduced. 
 
-        # Get the model prediction for the current set of parameter samples
-        # Model prediction has shape [W x S x B]
-        model_prediction, noise_prediction = self._get_model_prediction(
-                                                        param_samples, noise_samples)
+        # For each set of parameter samples, produce a model prediction with 
+        # shape [W x S x B]. Project these into voxel space for comparison 
+        # with the data. Note that we pass the total number of time points 
+        # as we need to scale this term correctly when the batch size is not
+        # the full data size. 
+        model_prediction = self._get_model_prediction(param_samples_int)
+        model_prediction_voxels = self.log_tf(self.data_model.nodes_to_voxels_ts(
+                                    model_prediction), name="model_prediction_voxels", 
+                                    shape=True, force=False)
+
+        # Convert the noise samples from from internal to external representation.
+        # Save the current moments of the noise posterior. 
+        transformer = self.noise_param.post_dist.transform
+        noise_samples_ext = tf.squeeze(transformer.ext_values(noise_samples_int))
+        noise_mean_ext, noise_var_ext = transformer.ext_moments(
+                                            self.noise_post.mean, self.noise_post.var)
+        self.noise_mean = self.log_tf(tf.identity(noise_mean_ext), name="noise_mean")
+        self.noise_var = self.log_tf(tf.identity(noise_var_ext), name="noise_var")        
 
 
-        # Unpack noise parameter. The noise model knows how to interpret this - typically it is the
-        # log of a Gaussian variance but this is not required
-        #noise_samples = self.log_tf(tf.identity(samples[:, self.noise_idx, :], name="noise_samples"), shape=True, force=True)
-        # noise_samples = self.log_tf(tf.squeeze(self.model_samples[-1]), name="noise_samples", shape=True, force=False)
-        noise_samples = tf.squeeze(noise_prediction)
-
-        # Note that we pass the total number of time points as we need to scale this term correctly
-        # when the batch size is not the full data size
-        model_prediction_voxels = self.log_tf(self.data_model.nodes_to_voxels_ts(model_prediction), name="model_prediction_voxels", shape=True, force=False)
-        noise_samples_voxels = self.log_tf(self.data_model.nodes_to_voxels(noise_samples), name="noise_samples_voxels", shape=True, force=False)
-        reconstr_loss = self.noise.log_likelihood(self.data_train, model_prediction_voxels, noise_samples_voxels, self.nt_full)
-        self.reconstr_loss = self.log_tf(tf.identity(reconstr_loss, name="reconstr_loss"), shape=True, force=False)
+        # Reconstruction loss calculated here: the log-likelihood of the difference between 
+        # the data and the model predictions. Calculation of the log-likelihood requires 
+        # the properties of the noise distribution, which we get from the noise paramter
+        # samples. Finally, we average this over voxels. 
+        reconstr_loss = self.noise_param.log_likelihood(self.data_train, 
+                            model_prediction_voxels, noise_samples_ext, self.nt_full)
+        self.reconstr_loss = self.log_tf(tf.identity(reconstr_loss, name="reconstr_loss"),
+                                shape=True, force=False)
+        self.mean_reconstr_cost = tf.reduce_mean(self.reconstr_loss, name="mean_reconstr_cost")
 
         # Part 2: Latent loss
         #
@@ -370,32 +407,44 @@ class SvbFit(LogBase):
         # sample obtained earlier. Note that the mean log pdf of the posterior based on sampling
         # from itself is just the distribution entropy so we allow it to be calculated without
         # sampling.
-        if self.analytic_latent_loss:
+        if self.analytic_latent_loss: 
+            # FIXME: this will not be able to handle mixed voxel/node priors. 
             latent_loss = tf.identity(self.post.latent_loss(self.prior), name="latent_loss")
         else:
-            latent_loss = tf.subtract(self.post.entropy(samples), self.prior.mean_log_pdf(samples), name="latent_loss")
 
-        self.latent_loss = self.log_tf(latent_loss)
+            # Latent loss is calculated over model parameters and noise parameters separately 
+            # Note that these may be sized differently (one over nodes, the other voxels)
+            self.param_latent_loss = tf.subtract(
+                                    self.post.entropy(param_samples_int), 
+                                    self.prior.mean_log_pdf(param_samples_int), 
+                                    name="param_latent_loss")
+            self.noise_latent_loss = tf.subtract(
+                                    self.noise_post.entropy(noise_samples_int), 
+                                    self.noise_prior.mean_log_pdf(noise_samples_int),
+                                    name="noise_latent_loss")
 
-        # Voxelwise cost is the sum of the latent and reconstruction cost but we have the possibility
-        # of gradually introducing the latent loss via the latent_weight variable. This is based on
-        # the theory that you should let the model fit the data first and then allow the fit to
+        # Reduce the latent costs over their voxel/node dimension to give an average.
+        # This deals with the situation where they may be sized differently. The overall
+        # latent cost is then the sum of the two averages 
+        self.mean_latent_loss = tf.add(
+                tf.reduce_mean(self.latent_weight * self.param_latent_loss), 
+                tf.reduce_mean(self.latent_weight * self.noise_latent_loss),
+                name="mean_latent_cost")
+                
+        # We have the possibility of gradually introducing the latent loss 
+        # via the latent_weight variable. This is based on the theory that you 
+        # should let the model fit the data first and then allow the fit to
         # be perturbed by the priors.
         if self.latent_weight == 0:
-            #self.cost = tf.identity(self.reconstr_loss, name="cost")
-            raise NotImplementedError()
-        else:
-            # FIXME can't add reconstr and latent costs as one defined on voxels the other on nodes
-            #self.cost = tf.add(self.reconstr_loss, self.latent_weight * self.latent_loss, name="cost")
-            self.cost = self.log_tf(tf.identity(self.reconstr_loss, name="cost"), force=False, shape=True)
-            self.mean_reconstr_cost = tf.reduce_mean(self.reconstr_loss, name="mean_reconstr_cost")
-            self.mean_latent_cost = tf.reduce_mean(self.latent_weight * self.latent_loss, name="mean_latent_cost")
+            raise NotImplementedError("Variable latent cost not implemented")
 
-        # Combine the costs from each voxel and use a single ADAM optimizer to optimize the mean cost
+        # Overall mean cost is taken as the sum of (mean voxel reconstruction loss) 
+        # and the sum ((average latent over model) + (average latent over nosie))
+        self.mean_cost = tf.add(self.mean_reconstr_cost, self.mean_latent_loss)
+
+        # Set up ADAM to optimise over mean cost as defined above. 
         # It is also possible to optimize the total cost but this makes it harder to compare with
         # variable numbers of voxels
-        #self.mean_cost = tf.reduce_mean(self.cost, name="mean_cost")
-        self.mean_cost = tf.add(self.mean_reconstr_cost, self.mean_latent_cost)
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.optimize = self.optimizer.minimize(self.mean_cost, global_step=self.global_step)
 
@@ -403,10 +452,11 @@ class SvbFit(LogBase):
         """
         Train model based on mini-batch of input data.
 
-        :return: Tuple of total cost of mini-batch, latent cost and reconstruction cost
+        :return: Tuple of (param_latent, noise_latent, reconstruction) losses for batch
         """
-        _, cost, latent, reconstr = self.evaluate(self.optimize, self.cost, self.latent_loss, self.reconstr_loss)
-        return cost, latent, reconstr
+        _, param_latent, noise_latent, reconstr = self.evaluate(self.optimize, 
+                    self.param_latent_loss, self.noise_latent_loss, self.reconstr_loss)
+        return param_latent, noise_latent, reconstr
 
     def evaluate(self, *tensors):
         """
@@ -499,8 +549,10 @@ class SvbFit(LogBase):
         training_history = {
             "mean_cost" : np.zeros([epochs+1]),
             "voxel_cost" : np.zeros([n_voxels, epochs+1]),
-            "mean_params" : np.zeros([epochs+1, self._nparams]),
-            "voxel_params" : np.zeros([n_nodes, epochs+1, self._nparams]),
+            "model_params" : np.zeros([n_nodes, epochs+1, self.n_model_params]),
+            "mean_model_params" : np.zeros([epochs+1, self.n_model_params]),
+            "noise_params": np.zeros([n_voxels, epochs+1]),
+            "mean_noise_params": np.zeros([epochs+1]),
             "ak" : np.zeros([epochs+1]),
             "runtime" : np.zeros([epochs+1]),
         }
@@ -532,10 +584,18 @@ class SvbFit(LogBase):
         if revert_post_trials > 0:
             self.log.info(" - Posterior reversion after %i trials", revert_post_trials)
 
-        initial_means = np.mean(self.evaluate(self.model_means), axis=1)
-        initial_vars = np.mean(self.evaluate(self.post.var), axis=0)
-        initial_cost = np.mean(self.evaluate(self.cost))
-        initial_latent = np.mean(self.evaluate(self.latent_loss))
+        initial_cost = np.mean(self.evaluate(self.mean_cost))
+        initial_means = np.array([ 
+            *np.mean(self.evaluate(self.model_means), axis=1), 
+            np.mean(self.evaluate(self.noise_mean))
+        ])
+        initial_vars = np.array([
+            *np.mean(self.evaluate(self.post.var), axis=0),  
+            np.mean(self.evaluate(self.noise_var))
+        ])
+
+        initial_latent = (np.mean(self.evaluate(self.param_latent_loss))
+                        + np.mean(self.evaluate(self.noise_latent_loss)))
         initial_reconstr = np.mean(self.evaluate(self.reconstr_loss))
         start_time = time.time()
         self.log.info(" - Start 0000: mean cost=%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s", 
@@ -543,8 +603,8 @@ class SvbFit(LogBase):
         for epoch in range(epochs):
             try:
                 err = False
-                total_cost = np.zeros([n_voxels])
-                total_latent = np.zeros([n_nodes])
+                total_param_latent = np.zeros([n_nodes])
+                total_noise_latent = np.zeros([n_voxels])
                 total_reconstr = np.zeros([n_voxels])
 
                 if epoch == fit_only_epochs:
@@ -578,36 +638,41 @@ class SvbFit(LogBase):
                         self.tpts_train : batch_tpts,
                         self.latent_weight : latent_weight,
                     })
-                    batch_cost, batch_latent, batch_reconstr = self.fit_batch()
-                    total_latent += batch_latent / n_batches
-                    total_reconstr += batch_reconstr / n_batches
-                    total_cost += batch_cost / n_batches
+                    param_latent, noise_latent, reconstruction = self.fit_batch()
+                    total_param_latent += param_latent / n_batches
+                    total_noise_latent += noise_latent / n_batches 
+                    total_reconstr += reconstruction / n_batches
 
             except tf.OpError:
                 self.log.exception("Numerical error fitting batch")
                 err = True
 
             # Record the cost and parameter values at the end of each epoch.
-            params = self.evaluate(self.model_means) # [P-1, W]
-            params = np.vstack([params, self.evaluate(self.noise_mean)]) # [P, W]
-            var = self.evaluate(self.post.var) # [W, P-1]
-            # FIXME add in the noise var here
             current_lr, current_ss = self.evaluate(self.learning_rate, self.sample_size)
-            mean_params = np.mean(params, axis=1)
+            params = self.evaluate(self.model_means) # [P-1, W]
+            var = self.evaluate(self.post.var) # [W, P-1]
+            mean_params = params.mean(1)
             median_params = np.median(params, axis=1)
             mean_var = np.mean(var, axis=0)
 
-            mean_total_latent = np.mean(total_latent)
-            mean_total_reconst = np.mean(total_reconstr)
+            noise_params = np.array([ self.evaluate(self.noise_mean), 
+                                      self.evaluate(self.noise_var) ])
+            mean_noise_params = noise_params.mean()
+
+            mean_total_latent = total_param_latent.mean() + total_noise_latent.mean()
+            mean_total_reconst = total_reconstr.mean()
             mean_total_cost = mean_total_latent + mean_total_reconst
-            median_total_latent = np.median(total_latent)
+            median_total_latent = np.median(total_param_latent) + np.median(total_noise_latent)
             median_total_reconst = np.median(total_reconstr)
             median_total_cost = median_total_latent + median_total_reconst # approx
             
-            training_history["mean_cost"][epoch] = mean_total_cost
-            training_history["voxel_cost"][:, epoch] = total_cost
-            training_history["mean_params"][epoch, :] = mean_params
-            training_history["voxel_params"][:, epoch, :] = params.transpose()
+            # TODO: store both vertex-wise and voxel-wise params in training hist?
+            # training_history["mean_cost"][epoch] = mean_total_cost
+            # training_history["voxel_cost"][:, epoch] = total_cost
+            training_history["mean_model_params"][epoch, :] = mean_params
+            training_history["model_params"][:, epoch, :] = params.T
+            training_history["mean_noise_params"][epoch] = mean_noise_params
+            training_history["noise_params"][:, epoch] = noise_params[0,:]
             try:
                 training_history["ak"][epoch] = self.evaluate("ak")
             except:
@@ -642,8 +707,8 @@ class SvbFit(LogBase):
                     outcome = "Not saving"
 
             if epoch % display_step == 0:
-                state_str = "mean/median cost=%f/%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s lr=%f, ss=%i" % (
-                    mean_total_cost, median_total_cost, mean_total_latent, mean_total_reconst, median_params, mean_var, current_lr, current_ss)
+                state_str = "mean/median cost=%f/%f (latent=%f, reconstr=%f) mean params=%s mean_var=%s mean noise var=%f lr=%f, ss=%i" % (
+                    mean_total_cost, median_total_cost, mean_total_latent, mean_total_reconst, median_params, mean_var, mean_noise_params, current_lr, current_ss)
                 self.log.info(" - Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
 
             epoch_end_time = time.time()
@@ -658,17 +723,17 @@ class SvbFit(LogBase):
 
         self.feed_dict[self.data_train] = data
         self.feed_dict[self.tpts_train] = tpts
-        cost = self.evaluate(self.cost) # [W]
+        # cost = self.evaluate(self.cost) # [W]
         params = self.evaluate(self.model_means) # [P, W]
         
         self.log.info(" - Best batch-averaged cost: %f", best_cost)
-        self.log.info(" - Final cost across full data: %f", np.mean(cost))
+        # self.log.info(" - Final cost across full data: %f", np.mean(cost))
         self.log.info(" - Final params: %s", np.mean(params, axis=1))
 
-        training_history["mean_cost"][-1] = np.mean(cost)
-        training_history["voxel_cost"][:, -1] = cost
-        training_history["mean_params"][-1, :] = np.mean(params, axis=1)
-        training_history["voxel_params"][:, -1, :] = params.transpose()
+        # training_history["mean_cost"][-1] = np.mean(cost)
+        # training_history["voxel_cost"][:, -1] = cost
+        training_history["mean_model_params"][-1, :] = np.mean(params, axis=1)
+        training_history["model_params"][:, -1, :] = params.transpose()
         try:
             training_history["ak"][-1] = self.evaluate("ak")
         except:
