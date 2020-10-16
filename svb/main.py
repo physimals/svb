@@ -262,54 +262,55 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     else:
         params = fwd_model.params
 
-    # Write out parameter mean and variance images
-    means = svb.evaluate(svb.model_means)
-    variances = svb.evaluate(svb.model_vars)
-    for idx, param in enumerate(params):
-        if kwargs.get("save_mean", False):
-            data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
-        if kwargs.get("save_var", False):
-            data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
-        if kwargs.get("save_std", False):
-            data_model.nifti_image(np.sqrt(variances[idx])).to_filename(os.path.join(output, "std_%s.nii.gz" % param.name))
+    # # TODO: all output stages need to be updated for surf/gifti usage. 
+    # # Write out parameter mean and variance images
+    # means = svb.evaluate(svb.model_means)
+    # variances = svb.evaluate(svb.model_vars)
+    # for idx, param in enumerate(params):
+    #     if kwargs.get("save_mean", False):
+    #         data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
+    #     if kwargs.get("save_var", False):
+    #         data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
+    #     if kwargs.get("save_std", False):
+    #         data_model.nifti_image(np.sqrt(variances[idx])).to_filename(os.path.join(output, "std_%s.nii.gz" % param.name))
 
-    # Write out voxelwise cost history
-    cost_history_v = training_history["voxel_cost"]
-    if kwargs.get("save_cost", False):
-        data_model.nifti_image(cost_history_v[..., -1]).to_filename(os.path.join(output, "cost.nii.gz"))
-    if kwargs.get("save_cost_history", False):
-        data_model.nifti_image(cost_history_v).to_filename(os.path.join(output, "cost_history.nii.gz"))
+    # # Write out reconstruction cost history
+    # cost_history_v = training_history["reconstruction_cost"]
+    # if kwargs.get("save_cost", False):
+    #     data_model.nifti_image(cost_history_v[..., -1]).to_filename(os.path.join(output, "cost.nii.gz"))
+    # if kwargs.get("save_cost_history", False):
+    #     data_model.nifti_image(cost_history_v).to_filename(os.path.join(output, "cost_history.nii.gz"))
 
-    # Write out voxelwise parameter history
-    if kwargs.get("save_param_history", False):
-        param_history_v = training_history["voxel_params"]
-        for idx, param in enumerate(params):
-            data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
+    # # Write out voxelwise parameter history
+    # if kwargs.get("save_param_history", False):
+    #     param_history_v = training_history["voxel_params"]
+    #     for idx, param in enumerate(params):
+    #         data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
 
-    # Write out modelfit
-    if kwargs.get("save_model_fit", False):
-        modelfit = svb.evaluate(svb.modelfit)
-        data_model.nifti_image(modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
+    # # Write out modelfit
+    # if kwargs.get("save_model_fit", False):
+    #     modelfit = svb.evaluate(svb.modelfit)
+    #     data_model.nifti_image(modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
 
-    # Write out posterior
-    if kwargs.get("save_post", False):
-        post_data = data_model.posterior_data(svb.evaluate(svb.post.mean), svb.evaluate(svb.post.cov))
-        log.info("Posterior data shape: %s", post_data.shape)
-        data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
+    # # Write out posterior
+    # if kwargs.get("save_post", False):
+    #     post_data = data_model.posterior_data(svb.evaluate(svb.post.mean), svb.evaluate(svb.post.cov))
+    #     log.info("Posterior data shape: %s", post_data.shape)
+    #     data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
 
-    # Write out runtime
-    if kwargs.get("save_runtime", False):
-        with open(os.path.join(output, "runtime"), "w") as runtime_f:
-            runtime_f.write("%f\n" % runtime)
+    # # Write out runtime
+    # if kwargs.get("save_runtime", False):
+    #     with open(os.path.join(output, "runtime"), "w") as runtime_f:
+    #         runtime_f.write("%f\n" % runtime)
 
-        runtime_history = training_history["runtime"]
-        with open(os.path.join(output, "runtime_history"), "w") as runtime_f:
-            for epoch_time in runtime_history:
-                runtime_f.write("%f\n" % epoch_time)
+    #     runtime_history = training_history["runtime"]
+    #     with open(os.path.join(output, "runtime_history"), "w") as runtime_f:
+    #         for epoch_time in runtime_history:
+    #             runtime_f.write("%f\n" % epoch_time)
 
-    # Write out input data
-    if kwargs.get("save_input_data", False):
-        data_model.nifti_image(data_model.data_flattened).to_filename(os.path.join(output, "input_data.nii.gz"))
+    # # Write out input data
+    # if kwargs.get("save_input_data", False):
+    #     data_model.nifti_image(data_model.data_flattened).to_filename(os.path.join(output, "input_data.nii.gz"))
 
     log.info("Output written to: %s", output)
     return runtime, svb, training_history
