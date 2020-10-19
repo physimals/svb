@@ -49,12 +49,12 @@ true_var = true_params["noise_sd"]**2
 dt = 5.0/(true_params["r1"] * num_times)
 
 shape = (sq_len, sq_len, sq_len, num_times)
-data = np.zeros(shape)
+data_nopv = np.zeros(shape)
 for t_idx in range(num_times):
     t = t_idx*dt
-    data[..., t_idx] = true_params["amp1"]*math.exp(-true_params["r1"]*t)
-data_noisy_nopv = data + np.random.normal(0, true_params["noise_sd"], size=shape)
-print('Data shape', data_noisy_nopv.shape)
+    data_nopv[..., t_idx] = true_params["amp1"]*math.exp(-true_params["r1"]*t)
+noise = np.random.normal(0, true_params["noise_sd"], size=shape)
+print('Data shape', data_nopv.shape)
 
 # %% [markdown]
 # Create a reference voxel grid for the data 
@@ -115,7 +115,7 @@ print("Mean vertices per voxel:", (surf2vol_weights > 0).sum(1).mean())
 
 # %%
 pvs = projector.flat_pvs()
-data_noisy = data_noisy_nopv * pvs[:,0].reshape(ref_spc.size)[...,None]
+data_noisy = (data_nopv * pvs[:,0].reshape(ref_spc.size)[...,None]) + noise
 # plt.figure(figsize=(8,4))
 # plt.subplot(1,2,1)
 # plt.title('Noisy data, no PVE')
@@ -143,13 +143,14 @@ data_noisy = data_noisy_nopv * pvs[:,0].reshape(ref_spc.size)[...,None]
 # %%
 options = {
     "learning_rate" : 0.005,
-    "batch_size" : 10,
-    "sample_size" : 5,
-    "epochs" : 1000,
+    "batch_size" : 20,
+    "sample_size" : 8,
+    "epochs" : 400,
     "log_stream" : sys.stdout,
-    "n2v" : surf2vol_weights,
-    "prior_type": "N",
-    "ak": 30
+    "param_overrides": {
+        "amp1": { "prior_type": "M" }, 
+        "r1": { "prior_type": "M" },
+    },
 }
 
 runtime, svb, training_history = run(
@@ -157,11 +158,11 @@ runtime, svb, training_history = run(
     "example_out_cov", 
     mask=vol_mask,
     surfaces={'LMS': mid_surf}, 
+    projector=projector,
     dt=dt,
     **options)
 
 mean_cost_history = training_history["mean_cost"]
-cost_history_v = training_history["voxel_cost"]
 param_history_v = training_history["model_params"]
 modelfit = svb.evaluate(svb.modelfit)
 means = svb.evaluate(svb.model_means)
