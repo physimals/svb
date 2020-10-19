@@ -20,12 +20,16 @@ def get_posterior(idx, param, t, data_model, **kwargs):
     """
     initial_mean, initial_var = None, None
     if param.post_init is not None:
-        if data_model.n_nodes != data_model.n_unmasked_voxels:
-            # FIXME we don't have voxels_to_nodes currently...
-            #initial_mean, initial_var = data_model.voxels_to_nodes(param.post_init(param, t, data_model.data_flattened))
-            pass
-        else:
-            initial_mean, initial_var = param.post_init(param, t, data_model.data_flattened)
+        initial_mean, initial_var = param.post_init(param, t, data_model.data_flattened)
+
+        # If parameter defined on surface, project the volume init values
+        # onto the surface 
+        if param.data_space == "node":
+            initial_mean = tf.squeeze(data_model.voxels_to_nodes(
+                tf.expand_dims(initial_mean, -1)))
+            if initial_var is not None: 
+                initial_var = tf.squeeze(data_model.voxels_to_nodes(
+                    tf.expand_dims(initial_var, -1)))
 
     # The size of the posterior (number of positions at which it is 
     # estimated) is determined by the data_space it refers to, and 
