@@ -11,14 +11,16 @@ from . import dist
 
 class NoiseParameter(Parameter):
     """
-    Noise parameter providing Gaussian (white) noise
+    Noise parameter providing Gaussian (white) noise. Note that by default, 
+    noise is always assumed to be volumetric in origin (data_space="voxel"). 
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, data_space="voxel", **kwargs):
         Parameter.__init__(self, "noise",
                            prior=dist.LogNormal(1.0, 2e5),
                            post=dist.LogNormal(1.0, 1.02),
                            post_init=self._init_noise,
+                           data_space=data_space,
                            **kwargs)
 
     def _init_noise(self, _param, _t, data):

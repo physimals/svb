@@ -52,6 +52,11 @@ class AslRestModel(Model):
             # FIXME variable repeats
             self.repeats = self.repeats[0]
 
+        # Add the "data_space" to the kwarg options. This is set by 
+        # the data_model, "voxel" means voxelwise inference, "node" means
+        # surface inference. Noise is ALWAYS defined in "voxel" however. 
+        options["data_space"] = self.data_space
+
         self.params = [
             get_parameter("ftiss", dist="FoldedNormal", 
                           mean=5.0, prior_var=1e6, post_var=1.0, 

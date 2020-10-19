@@ -11,4 +11,4 @@ dist/
 _version.py
 *logfile*
 .vscode 
-
+proj.pkl 

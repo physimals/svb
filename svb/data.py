@@ -46,9 +46,8 @@ class DataModel(LogBase):
 
     @property
     def is_volumetric(self):
-        return (type(self) is VolumetricModel)
+        return isinstance(self, VolumetricModel)
 
-    # TODO: volumetric only method 
     def nifti_image(self, data):
         """
         :return: A nibabel.Nifti1Image for some, potentially masked, output data
@@ -97,7 +96,7 @@ class DataModel(LogBase):
         else:
             nii = nib.Nifti1Image(data.astype(np.int8), np.identity(4))
             data_vol = data
-        return nii, data_vol
+        return nii, data_vol.astype(NP_DTYPE)
 
     def _get_posterior_data(self, post_data):
         if isinstance(post_data, six.string_types):
@@ -180,7 +179,6 @@ class VolumetricModel(DataModel):
         self.laplacian = lap.tocoo()
 
 
-    # TODO: subclass this for surface
     def nodes_to_voxels_ts(self, tensor, vertex_axis=0):
         """
         Map parameter vertex-based data to data voxels
@@ -200,8 +198,7 @@ class VolumetricModel(DataModel):
 
         return tensor
 
-            
-    # TODO: subclass this for surface
+
     def nodes_to_voxels(self, tensor, vertex_axis=0):
         """
         Map parameter vertex-based data to data voxels
@@ -290,17 +287,22 @@ class SurfaceModel(DataModel):
     def __init__(self, data, surfaces, mask=None, **kwargs):
         super().__init__(data, mask=mask, **kwargs)
 
+        # TODO: only accepts one hemisphere
         self.surfaces = surfaces['LMS']
-
-        # See if we have a vertex-to-voxel linear mapping
-        self.n2v_coo = sparse.coo_matrix(kwargs["n2v"])
+        
+        # Process the projector, apply the mask 
+        proj = kwargs['projector']
+        s2v = proj.surf2vol_matrix().astype(NP_DTYPE)
+        v2s = proj.vol2surf_matrix(edge_correction=True).astype(NP_DTYPE)
+        assert mask.size == s2v.shape[0], 'Mask size does not match projector'
+        self.n2v_coo = s2v[mask,:].tocoo()
+        self.v2s_coo = v2s[:,mask].tocoo()
 
         if len(self.n2v_coo.shape) != 2:
             raise ValueError("Vertex-to-voxel mapping must be a matrix")
         if self.n2v_coo.shape[0] != self.n_unmasked_voxels:
             raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
         self.n_nodes = self.n2v_coo.shape[1]
-        self.n2v_coo.data = self.n2v_coo.data.astype(NP_DTYPE)
 
         if kwargs.get("initial_posterior", None):
             self.post_init = self._get_posterior_data(kwargs["initial_posterior"])
@@ -308,34 +310,37 @@ class SurfaceModel(DataModel):
             self.post_init = None
 
         self.adj_matrix = self.surfaces.adjacency_matrix().tocoo()
-        self.laplacian = self.surfaces.mesh_laplacian().tocoo()
-        self.lbo = self.surfaces.laplace_beltrami().tocoo()
-
-        # Use LBO instead of Laplacian 
-        self.laplacian = self.lbo 
+        self.laplacian = self.surfaces.laplace_beltrami().tocoo()
 
     def nodes_to_voxels(self, tensor, *unused): 
 
         n2v_tensor = tf.SparseTensor(
             indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
-            values=self.n2v_coo.data.astype(NP_DTYPE), 
-            dense_shape=self.n2v_coo.shape
-        )
+            values=self.n2v_coo.data, 
+            dense_shape=self.n2v_coo.shape)
+
         return tf.sparse.sparse_dense_matmul(n2v_tensor, tensor)
 
     def nodes_to_voxels_ts(self, tensor, *unused):
 
         n2v_tensor = tf.SparseTensor(
             indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
-            values=self.n2v_coo.data.astype(NP_DTYPE), 
-            dense_shape=self.n2v_coo.shape
-        )
+            values=self.n2v_coo.data, 
+            dense_shape=self.n2v_coo.shape)
  
         def sparse_mul(dense):
             return tf.sparse.sparse_dense_matmul(n2v_tensor, dense)
 
         assert len(tensor.shape) == 3, 'not a 3D tensor'
-        result = tf.map_fn(
-            sparse_mul, tf.transpose(tensor, [2, 0, 1])
-            )
+        result = tf.map_fn(sparse_mul, tf.transpose(tensor, [2, 0, 1]))
+
         return tf.transpose(result, [1, 2, 0])
+
+    def voxels_to_nodes(self, tensor):
+        
+        v2s_tensor = tf.SparseTensor(
+            indices=np.array([self.v2s_coo.row, self.v2s_coo.col]).T,
+            values=self.v2s_coo.data, 
+            dense_shape=self.v2s_coo.shape)
+
+        return tf.sparse.sparse_dense_matmul(v2s_tensor, tensor)

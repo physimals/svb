@@ -2,6 +2,7 @@
 Definition of prior distribution
 """
 import numpy as np
+from numpy.lib.arraysetops import isin
 
 try:
     import tensorflow.compat.v1 as tf
@@ -19,17 +20,23 @@ def get_prior(param, data_model, **kwargs):
     Factory method to return a vertexwise prior
     """
     prior = None
+    space = "voxel" if param.data_space == "voxel" else "node"
     if isinstance(param.prior_dist, Normal):
         if param.prior_type == "N":
-            prior = NormalPrior(data_model, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = NormalPrior(data_model, param.prior_dist.mean, param.prior_dist.var, 
+                data_space=space, **kwargs)
         elif param.prior_type == "M":
-            prior = MRFSpatialPrior(data_model, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = MRFSpatialPrior(data_model, param.prior_dist.mean, param.prior_dist.var, 
+                data_space=space, **kwargs)
         elif param.prior_type == "M2":
-            prior = MRF2SpatialPrior(data_model, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = MRF2SpatialPrior(data_model, param.prior_dist.mean, param.prior_dist.var, 
+                data_space=space, **kwargs)
         elif param.prior_type == "Mfab":
-            prior = FabberMRFSpatialPrior(data_model, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = FabberMRFSpatialPrior(data_model, param.prior_dist.mean, param.prior_dist.var, 
+                data_space=space, **kwargs)
         elif param.prior_type == "A":
-            prior = ARDPrior(data_model, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = ARDPrior(data_model, param.prior_dist.mean, param.prior_dist.var, 
+                data_space=space, **kwargs)
 
     if prior is not None:
         return prior
@@ -41,10 +48,16 @@ class Prior(LogBase):
     Base class for a prior, defining methods that must be implemented
     """
 
-    def __init__(self, data_model=None):
+    def __init__(self, data_model=None, data_space="voxel", **unused):
+        """
+        :param data_model: DataModel object 
+        :param data_space: space in which the corresponding parameter is
+                           defined, either "voxel" (default) or "node". 
+        """
 
         super().__init__() 
         self.data_model = data_model
+        self.data_space = data_space
 
         if data_model is not None: 
             self.nn = tf.SparseTensor(
@@ -71,12 +84,18 @@ class Prior(LogBase):
             )
 
     @property
-    def nnodes(self):
+    def is_gaussian(self):
+        return isinstance(self, NormalPrior)
 
+    @property
+    def nnodes(self):
         if type(self) is FactorisedPrior:
             return self.priors[0].nnodes
         else:
-            return self.data_model.n_nodes 
+            if (self.data_space == "voxel"):
+                return self.data_model.n_unmasked_voxels 
+            else:
+                return self.data_model.n_nodes
 
 
     def mean_log_pdf(self, samples):
@@ -104,7 +123,7 @@ class NormalPrior(Prior):
         :param mean: Prior mean value
         :param var: Prior variance
         """
-        Prior.__init__(self, data_model)
+        Prior.__init__(self, data_model, **kwargs)
         self.name = kwargs.get("name", "NormalPrior")
         self.scalar_mean = mean
         self.scalar_var = var
@@ -151,7 +170,7 @@ class FabberMRFSpatialPrior(NormalPrior):
         :param var: Tensor of shape [W] containing the prior variance at each parameter vertex
         :param post: Posterior instance
         """
-        NormalPrior.__init__(self, data_model, mean, var, name="FabberMRFSpatialPrior")
+        NormalPrior.__init__(self, data_model, mean, var, name="FabberMRFSpatialPrior", **kwargs)
         self.idx = idx
 
         # Save the original vertexwise mean and variance - the actual prior mean/var
@@ -218,7 +237,7 @@ class MRFSpatialPrior(Prior):
     """
 
     def __init__(self, data_model, mean, var, idx=None, post=None, **kwargs):
-        Prior.__init__(self, data_model)
+        Prior.__init__(self, data_model, **kwargs)
         self.name = kwargs.get("name", "MRFSpatialPrior")
         self.mean = tf.fill([self.nnodes], mean, name="%s_mean" % self.name)
         self.var = tf.fill([self.nnodes], var, name="%s_var" % self.name)
@@ -292,7 +311,7 @@ class MRF2SpatialPrior(Prior):
     """
 
     def __init__(self, data_model, mean, var, idx=None, post=None, nn=None, **kwargs):
-        Prior.__init__(self, data_model)
+        Prior.__init__(self, data_model, **kwargs)
         self.name = kwargs.get("name", "MRF2SpatialPrior")
         self.mean = tf.fill([self.nnodes], mean, name="%s_mean" % self.name)
         self.var = tf.fill([self.nnodes], var, name="%s_var" % self.name)
@@ -340,7 +359,7 @@ class ConstantMRFSpatialPrior(NormalPrior):
         :param var: Tensor of shape [W] containing the prior variance at each parameter vertex
         :param post: Posterior instance
         """
-        NormalPrior.__init__(self, data_model, mean, var, name="MRFSpatialPrior")
+        NormalPrior.__init__(self, data_model, mean, var, name="MRFSpatialPrior", **kwargs)
         self.idx = idx
 
         # Save the original vertexwise mean and variance - the actual prior mean/var
