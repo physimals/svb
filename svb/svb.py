@@ -750,8 +750,6 @@ class SvbFit(LogBase):
         mean_noise_params = noise_params.mean(1)
 
         self.log.info(" - Best batch-averaged cost: %f", best_cost)
-        # FIXME: total cost over all voxels here?
-        # self.log.info(" - Final cost across full data: %f", np.mean(cost))
         self.log.info(" - Final model params: %s", param_means.mean(1))
         self.log.info(" - Final noise variance: %s", mean_noise_params[0])
 

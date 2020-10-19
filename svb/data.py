@@ -48,7 +48,6 @@ class DataModel(LogBase):
     def is_volumetric(self):
         return isinstance(self, VolumetricModel)
 
-    # TODO: volumetric only method 
     def nifti_image(self, data):
         """
         :return: A nibabel.Nifti1Image for some, potentially masked, output data
@@ -180,7 +179,6 @@ class VolumetricModel(DataModel):
         self.laplacian = lap.tocoo()
 
 
-    # TODO: subclass this for surface
     def nodes_to_voxels_ts(self, tensor, vertex_axis=0):
         """
         Map parameter vertex-based data to data voxels
@@ -200,8 +198,7 @@ class VolumetricModel(DataModel):
 
         return tensor
 
-            
-    # TODO: subclass this for surface
+
     def nodes_to_voxels(self, tensor, vertex_axis=0):
         """
         Map parameter vertex-based data to data voxels
