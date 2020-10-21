@@ -8,6 +8,7 @@ except ImportError:
    
 from .parameter import Parameter
 from . import dist
+from .utils import TF_DTYPE
 
 class NoiseParameter(Parameter):
     """
@@ -55,10 +56,11 @@ class NoiseParameter(Parameter):
         # Since we are processing only a batch of the data at a time, we need to scale the 
         # sum of squared differences term correctly. Note that 'nt' is already the full data
         # size
-        scale = self.log_tf(tf.divide(tf.to_float(nt), tf.to_float(batch_size), name="scale"))
+        scale = self.log_tf(tf.divide(tf.cast(nt, TF_DTYPE), 
+                    tf.cast(batch_size, TF_DTYPE), name="scale"))
 
         # Log likelihood has shape [NV, S]
-        log_likelihood = 0.5 * (log_noise_var * tf.to_float(nt) +
+        log_likelihood = 0.5 * (log_noise_var * tf.cast(nt, TF_DTYPE) +
                                 scale * sum_square_diff / noise_var)
         log_likelihood = self.log_tf(tf.identity(log_likelihood, name="log_likelihood"), force=False)
 

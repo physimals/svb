@@ -212,7 +212,7 @@ class FabberMRFSpatialPrior(NormalPrior):
         term2 = self.log_tf(tf.reduce_sum(swk * self.wK), name="term2") # [1]
 
         gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1)
-        hk = tf.multiply(tf.to_float(self.nnodes), 0.5) + 1.0
+        hk = tf.multiply(tf.cast(self.nnodes, TF_DTYPE), 0.5) + 1.0
         self.ak = self.log_tf(tf.identity(gk * hk, name="ak"))
 
     def _setup_mean_var(self, post, nn):
