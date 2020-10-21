@@ -12,3 +12,4 @@ _version.py
 *logfile*
 .vscode 
 proj.pkl 
+.ipynb_checkpoints/surf_demo-checkpoint.ipynb
