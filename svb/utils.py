@@ -37,6 +37,8 @@ class LogBase(object):
         :param shape: If True, precede tensor with its shape
         """
         if self.log.isEnabledFor(level) or kwargs.get("force", False):
+            if not isinstance(tensor, tf.Tensor):
+                tensor = tf.constant(tensor, dtype=tf.float32)
             items = [tensor]
             if kwargs.get("shape", False):
                 items.insert(0, tf.shape(tensor))
