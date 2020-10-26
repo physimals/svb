@@ -270,9 +270,9 @@ class MRFSpatialPrior(Prior):
         logP = log_ak + half_ak_xDx
         mean_logP = tf.reshape(tf.reduce_mean(logP, axis=-1), [self.nnodes])
 
-        # Gamma prior if we care
-        q1, q2 = 1, 100
-        mean_logP += (q1-1) * self.logak - self.ak / q2
+        # Gamma prior if we care. FIXME: what's the status of this code?
+        # q1, q2 = 1, 100
+        # mean_logP += (q1-1) * self.logak - self.ak / q2
 
         return mean_logP
 
