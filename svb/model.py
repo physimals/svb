@@ -100,7 +100,7 @@ class Model(LogBase):
         :return: Either a Numpy array of shape [n_tpts] or a Numpy array of shape
                  shape + [n_tpts] for voxelwise timepoints
         """
-        return np.linspace(self.t0, self.t0+self.data_model.n_tpts*self.dt, num=self.data_model.n_tpts, endpoint=False)
+        return np.linspace(self.t0, self.t0+self.data_model.n_tpts*self.dt, num=self.data_model.n_tpts, endpoint=False, dtype=NP_DTYPE)
 
     def evaluate(self, params, tpts):
         """

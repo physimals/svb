@@ -6,6 +6,7 @@ try:
 except ImportError:
     import tensorflow as tf
 
+from svb.utils import NP_DTYPE
 import numpy as np
 
 from svb import __version__
@@ -48,9 +49,14 @@ class AslRestModel(Model):
 
         if self.attsd is None:
             self.attsd = 1.0 if len(self.tis) > 1 else 0.1
-        if len(self.repeats) == 1:
-            # FIXME variable repeats
-            self.repeats = self.repeats[0]
+
+        # If repeats is just a single number, cast to list 
+        if isinstance(self.repeats, (list, np.ndarray)): 
+            if len(self.repeats) == 1:
+                self.repeats = self.repeats[0]
+            elif ((len(self.repeats) > 1)
+                 and any([ r != self.repeats[0] for r in self.repeats ])):
+                raise NotImplementedError("Variable repeats for TIs/PLDs")
 
         # Add the "data_space" to the kwarg options. This is set by 
         # the data_model, "voxel" means voxelwise inference, "node" means
@@ -220,7 +226,7 @@ class AslRestModel(Model):
         else:
             # Timings are the same for all voxels
             t = np.array(sum([[ti] * self.repeats for ti in self.tis], []))
-        return t
+        return t.astype(NP_DTYPE)
 
     def __str__(self):
         return "ASL resting state model: %s" % __version__
