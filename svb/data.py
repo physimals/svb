@@ -9,7 +9,6 @@ import numpy as np
 import nibabel as nib
 import tensorflow as tf
 from scipy import sparse
-import igl 
 
 from .utils import LogBase, TF_DTYPE, NP_DTYPE
 
