@@ -728,9 +728,9 @@ class SvbFit(LogBase):
                     outcome = "Not saving"
 
             if epoch % display_step == 0:
-                state_str = ("mean/median cost=%f/%f (latent=%f, reconstr=%f) param means=%s"
-                             + " param vars=%s noise mean/var=%s lr=%f, ss=%i") % (
-                    mean_total_cost, median_total_cost, mean_total_latent, mean_total_reconst, median_params, mean_var, mean_noise_params, current_lr, current_ss)
+                state_str = ("mean/median cost=%f/%f, (latent=%f, reconstr=%f), param means=%s,"
+                             + " param vars=%s, noise mean/var=%s, ak=%f, lr=%f, ss=%i") % (
+                    mean_total_cost, median_total_cost, mean_total_latent, mean_total_reconst, median_params, mean_var, mean_noise_params, ak, current_lr, current_ss)
                 self.log.info(" - Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
 
             epoch_end_time = time.time()
