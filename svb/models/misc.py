@@ -7,8 +7,10 @@ except ImportError:
     import tensorflow as tf
 
 from svb import __version__
-from svb.model import Model
+from svb.model import Model, assert_param_overrides_used
 from svb.parameter import get_parameter
+
+
 
 class ConstantModel(Model):
     """
@@ -23,6 +25,8 @@ class ConstantModel(Model):
                           data_space=self.data_space,
                           **options),
         ]
+
+        assert_param_overrides_used(self.params, options)
 
     def evaluate(self, params, tpts):
         return params[0] * tf.ones_like(tpts)

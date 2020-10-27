@@ -7,7 +7,7 @@ except ImportError:
     import tensorflow as tf
 
 from svb import __version__
-from svb.model import Model
+from svb.model import Model, assert_param_overrides_used
 from svb.parameter import Parameter, get_parameter
 import svb.dist as dist
 
@@ -33,6 +33,8 @@ class MultiExpModel(Model):
                               data_space=self.data_space,
                               **options),
             ]
+
+        assert_param_overrides_used(self.params, options)
 
 
     def _init_amp(self, _param, _t, data):

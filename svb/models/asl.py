@@ -10,7 +10,7 @@ from svb.utils import NP_DTYPE
 import numpy as np
 
 from svb import __version__
-from svb.model import Model, ModelOption, ValueList
+from svb.model import Model, ModelOption, ValueList, assert_param_overrides_used
 from svb.parameter import get_parameter
 import svb.dist as dist
 import svb.prior as prior
@@ -90,6 +90,8 @@ class AslRestModel(Model):
                               mean=self.att - 0.3, var=self.attsd**2,
                               **options)
             )
+
+        assert_param_overrides_used(self.params, options)
 
     def evaluate(self, params, tpts):
         """

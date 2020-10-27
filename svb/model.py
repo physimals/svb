@@ -34,6 +34,13 @@ def get_model_class(model_name):
 
     return model_class
 
+def assert_param_overrides_used(model_params, options):
+    if 'param_overrides' in options: 
+        for pname in options['param_overrides'].keys():
+            if (all([ (pname != p.name) for p in model_params ]) 
+                and (pname != 'noise')):
+                raise RuntimeError(f"Parameter override {pname} did not match any model parameter")
+
 class ModelOption:
     def __init__(self, attr_name, desc, **kwargs):
         self.attr_name = attr_name
