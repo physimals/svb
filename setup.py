@@ -95,6 +95,7 @@ KWARGS = {
             "biexp=svb.models.exp:BiExpModel",
             "constant=svb.models.misc:ConstantModel",
             "poly=svb.models.misc:PolyModel",
+            "asl=svb.models.asl:AslRestModel",
         ],
     },
     'classifiers' : [
