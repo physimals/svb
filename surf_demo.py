@@ -81,7 +81,7 @@ tpts = asl_model.tpts()
 
 CBF = 60 
 ATT = 0.75
-NOISE_VAR = 0.0
+NOISE_VAR = 0
 
 ftiss = CBF * np.ones([surf_model.n_nodes, tpts.size], dtype=np.float32)
 deltiss = ATT * np.ones([surf_model.n_nodes, tpts.size], dtype=np.float32)
@@ -94,7 +94,6 @@ vol_data += np.random.normal(0, NOISE_VAR, vol_data.shape)
 pvs = projector.flat_pvs()
 vox_idx = np.argmax(pvs[:,0])
 vol_data = vol_data.reshape(*ref_spc.size, tpts.size)
-raise RuntimeError("M spatial prior causing numerical instability")
 
 # Fit options common to both runs 
 options = {
@@ -110,6 +109,8 @@ options = {
     "plds": plds, 
     "repeats": repeats, 
     "casl": True, 
+    "ak": 1e-4, 
+    "infer_ak": True 
 }
 
 # # Fit all parameters in N mode: no spatial prior, ie independent voxel fit 
@@ -124,7 +125,7 @@ runtime, svb, training_history = run(
     "example_out_cov", 
     param_overrides={
         "ftiss" : { "prior_type": "M" }, 
-        "deltiss" : { "prior_type": "M" }
+        "delttiss" : { "prior_type": "M" }
     },
     **options)
 
