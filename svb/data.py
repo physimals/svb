@@ -309,7 +309,7 @@ class SurfaceModel(DataModel):
             self.post_init = None
 
         self.adj_matrix = self.surfaces.adjacency_matrix().tocoo()
-        self.laplacian = self.surfaces.laplace_beltrami().tocoo()
+        self.laplacian = self.surfaces.mesh_laplacian(distance_weight=1).tocoo()
 
     def nodes_to_voxels(self, tensor, *unused): 
 

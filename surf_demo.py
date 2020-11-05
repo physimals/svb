@@ -72,6 +72,18 @@ vol_mask = (vertices_per_voxel > 0)
 surf2vol_weights = projector.surf2vol_matrix()[vol_mask,:]
 print("Mean vertices per voxel:", (surf2vol_weights > 0).sum(1).mean())
 
+from scipy import sparse
+gp = mid_surf.mesh_laplacian(distance_weight=1)
+
+def sym(a):
+    return not ((np.abs(a - a.T) >= 1e-6).max())
+
+def is_nsd(a):
+    return not (sparse.linalg.eigs(a)[0] > 0).any()
+
+assert sym(gp)
+assert is_nsd(gp)
+
 plds = np.arange(0.25, 1.75, 0.25)
 repeats = 8
 data = np.zeros(3*[sq_len] + [ repeats * plds.size ])
@@ -81,7 +93,7 @@ tpts = asl_model.tpts()
 
 CBF = 60 
 ATT = 0.75
-NOISE_VAR = 0
+NOISE_VAR = 1
 
 ftiss = CBF * np.ones([surf_model.n_nodes, tpts.size], dtype=np.float32)
 deltiss = ATT * np.ones([surf_model.n_nodes, tpts.size], dtype=np.float32)
