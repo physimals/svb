@@ -217,7 +217,6 @@ class VolumetricModel(DataModel):
 
         return tensor
 
-
     def _calc_adjacency_matrix(self):
         """
         Generate adjacency matrix for voxel nearest neighbours.
@@ -273,8 +272,14 @@ class VolumetricModel(DataModel):
                             indices_nn.append([voxel_idx, nn])
                         voxel_idx += 1
 
+        # Edge case of no neighbours (e.g. single voxel often used in testing)
+        if len(indices_nn) == 0:
+            values = ([], [[], []])
+        else:
+            values = (np.ones(len(indices_nn)), (np.array(indices_nn).T))
+
         self.adj_matrix = sparse.coo_matrix(
-            (np.ones(len(indices_nn)), (np.array(indices_nn).T)), 
+            values,
             shape=2*[self.n_unmasked_voxels], 
             dtype=NP_DTYPE
         )
