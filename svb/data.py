@@ -41,7 +41,6 @@ class DataModel(LogBase):
             self.mask_flattened = self.mask_vol.flatten()
 
         self.n_unmasked_voxels = self.data_flattened.shape[0]
-        print("Data voxels: %i" % self.n_unmasked_voxels)
 
     @property
     def is_volumetric(self):
@@ -147,6 +146,63 @@ class DataModel(LogBase):
         self.log.info("Posterior mean shape: %s, cov shape: %s", mean.shape, cov.shape)
         return mean, cov
 
+    def nodes_to_voxels(self, tensor):
+        """
+        Map parameter node-based data to voxels
+
+        This is for the use case where data is defined in a different space to the
+        parameter estimation space. For example we may be estimating parameters on
+        a surface mesh, but using volumetric data to train this model. The input
+        data is defined in terms of 'voxels' while the parameter estimation is
+        defined on 'nodes'.
+
+        :param tensor: Tensor with axis 0 representing indexing over nodes
+
+        :return: Tensor with axis 0 representing indexing over voxels
+        """
+        raise NotImplementedError()
+
+    def nodes_to_voxels_ts(self, tensor):
+        """
+        Map parameter node-based timeseries data to voxels
+
+        See :func:`~svb.data.DataModel.nodes_to_voxels`
+
+        This method works on time series data, i.e. the conversion to voxel space
+        is batched over the outermost axis which is assumed to contain multiple
+        independent tensors each requiring conversion.
+
+        :param tensor: 3D tensor of which axis 0 represents indexing over
+                       parameter nodes, and axis 2 represents a time series
+
+        :return: 3D tensor with axis 0 representing indexing over voxels
+        """
+        raise NotImplementedError()
+
+    def voxels_to_nodes(self, tensor, vertex_axis=0):
+        """
+        Map voxel-based data to nodes
+
+        See :func:`~svb.data.DataModel.nodes_to_voxels`
+
+        :param tensor: Tensor of which axis 0 represents indexing over voxels
+
+        :return: Tensor with axis 0 representing indexing over nodes
+        """
+        raise NotImplementedError()
+
+    def voxels_to_nodes_ts(self, tensor, vertex_axis=0):
+        """
+        Map voxel-based timeseries data to nodes
+
+        See :func:`~svb.data.DataModel.nodes_to_voxels_ts`
+
+        :param tensor: 3D tensor of which axis 0 represents indexing over
+                       voxels, and axis 2 represents a time series
+
+        :return: 3D tensor with axis 0 representing indexing over nodes
+        """
+        raise NotImplementedError()
 
 class VolumetricModel(DataModel):
 
@@ -177,44 +233,16 @@ class VolumetricModel(DataModel):
         assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
         self.laplacian = lap.tocoo()
 
-
-    def nodes_to_voxels_ts(self, tensor, vertex_axis=0):
-        """
-        Map parameter vertex-based data to data voxels
-
-        This is for the use case where data is defined in a different space to the
-        parameter estimation space. For example we may be estimating parameters on
-        a surface mesh, but using volumetric data to train this model.
-
-        :param tensor: TensorFlow tensor of which one axis represents indexing over
-                       parameter nodes
-        :param vertex_axis: Index of axis of tensor which corresponds to parameter nodes
-
-        :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
-                 axis and other tensor entries transformed appropriately to the 
-                 data space
-        """
-
+    def nodes_to_voxels_ts(self, tensor):
         return tensor
 
+    def nodes_to_voxels(self, tensor):
+        return tensor
 
-    def nodes_to_voxels(self, tensor, vertex_axis=0):
-        """
-        Map parameter vertex-based data to data voxels
+    def voxels_to_nodes(self, tensor):
+        return tensor
 
-        This is for the use case where data is defined in a different space to the
-        parameter estimation space. For example we may be estimating parameters on
-        a surface mesh, but using volumetric data to train this model.
-
-        :param tensor: TensorFlow tensor of which one axis represents indexing over
-                       parameter nodes
-        :param vertex_axis: Index of axis of tensor which corresponds to parameter nodes
-
-        :return: TensorFlow tensor with parameter vertex axis replaced by data voxel
-                 axis and other tensor entries transformed appropriately to the 
-                 data space
-        """
-
+    def voxels_to_nodes_ts(self, tensor):
         return tensor
 
     def _calc_adjacency_matrix(self):
@@ -300,7 +328,7 @@ class SurfaceModel(DataModel):
         v2s = proj.vol2surf_matrix(edge_correction=True).astype(NP_DTYPE)
         assert mask.size == s2v.shape[0], 'Mask size does not match projector'
         self.n2v_coo = s2v[mask,:].tocoo()
-        self.v2s_coo = v2s[:,mask].tocoo()
+        self.v2n_coo = v2s[:,mask].tocoo()
 
         if len(self.n2v_coo.shape) != 2:
             raise ValueError("Vertex-to-voxel mapping must be a matrix")
@@ -316,35 +344,36 @@ class SurfaceModel(DataModel):
         self.adj_matrix = self.surfaces.adjacency_matrix().tocoo()
         self.laplacian = self.surfaces.mesh_laplacian(distance_weight=1).tocoo()
 
-    def nodes_to_voxels(self, tensor, *unused): 
+    @property
+    def n2v_tensor(self):
+        if not hasattr(self, "_n2v_tensor"):
+            self._n2v_tensor = tf.SparseTensor(
+                indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
+                values=self.n2v_coo.data,
+                dense_shape=self.n2v_coo.shape)
+        return self._n2v_tensor
 
-        n2v_tensor = tf.SparseTensor(
-            indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
-            values=self.n2v_coo.data, 
-            dense_shape=self.n2v_coo.shape)
+    @property
+    def v2n_tensor(self):
+        if not hasattr(self, "_v2n_tensor"):
+            self._v2n_tensor = tf.SparseTensor(
+                indices=np.array([self.v2n_coo.row, self.v2n_coo.col]).T,
+                values=self.v2n_coo.data,
+                dense_shape=self.v2n_coo.shape)
+        return self._v2n_tensor
 
-        return tf.sparse.sparse_dense_matmul(n2v_tensor, tensor)
+    def nodes_to_voxels(self, tensor):
+        return tf.sparse.sparse_dense_matmul(self.n2v_tensor, tensor)
 
-    def nodes_to_voxels_ts(self, tensor, *unused):
-
-        n2v_tensor = tf.SparseTensor(
-            indices=np.array([self.n2v_coo.row, self.n2v_coo.col]).T,
-            values=self.n2v_coo.data, 
-            dense_shape=self.n2v_coo.shape)
- 
-        def sparse_mul(dense):
-            return tf.sparse.sparse_dense_matmul(n2v_tensor, dense)
-
+    def nodes_to_voxels_ts(self, tensor):
         assert len(tensor.shape) == 3, 'not a 3D tensor'
-        result = tf.map_fn(sparse_mul, tf.transpose(tensor, [2, 0, 1]))
-
+        result = tf.map_fn(self.nodes_to_voxels, tf.transpose(tensor, [2, 0, 1]))
         return tf.transpose(result, [1, 2, 0])
 
     def voxels_to_nodes(self, tensor):
-        
-        v2s_tensor = tf.SparseTensor(
-            indices=np.array([self.v2s_coo.row, self.v2s_coo.col]).T,
-            values=self.v2s_coo.data, 
-            dense_shape=self.v2s_coo.shape)
+        return tf.sparse.sparse_dense_matmul(self.v2n_tensor, tensor)
 
-        return tf.sparse.sparse_dense_matmul(v2s_tensor, tensor)
+    def voxels_to_nodes_ts(self, tensor):
+        assert len(tensor.shape) == 3, 'not a 3D tensor'
+        result = tf.map_fn(self.voxels_to_nodes, tf.transpose(tensor, [2, 0, 1]))
+        return tf.transpose(result, [1, 2, 0])
