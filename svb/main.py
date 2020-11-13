@@ -17,6 +17,7 @@ import numpy as np
 import nibabel as nib
 
 from . import __version__, SvbFit, get_model_class
+from .model import assert_param_overrides_used
 from .utils import ValueList
 from .data import SurfaceModel, VolumetricModel
 
@@ -242,11 +243,22 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     else:
         data_model = SurfaceModel(data, surfaces, mask, **kwargs)
     
+    # Set the default "data_space" for parameters. This is set by 
+    # the data_model, "voxel" means voxelwise inference, "node" means
+    # surface inference. Noise is ALWAYS defined in "voxel" however. 
+    if "data_space" not in kwargs:
+        data_space = "voxel" if data_model.is_volumetric else "node"
+    else:
+        data_space = kwargs.pop("data_space")
+
     # Create the generative model
-    fwd_model = get_model_class(model_name)(data_model, **kwargs)
+    fwd_model = get_model_class(model_name)(data_model, data_space=data_space, **kwargs)
     fwd_model.log_config()
 
-    # Get the time points from the model
+    # Check that any parameter overrides actually match parameters in the model
+    assert_param_overrides_used(fwd_model.params, kwargs)
+
+    # Get the time points from the model.
     tpts = fwd_model.tpts()
     if tpts.ndim > 1 and tpts.shape[0] > 1:
         tpts = tpts[data_model.mask_flattened > 0]

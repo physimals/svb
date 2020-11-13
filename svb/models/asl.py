@@ -6,14 +6,13 @@ try:
 except ImportError:
     import tensorflow as tf
 
-from svb.utils import NP_DTYPE
 import numpy as np
 
-from svb import __version__
-from svb.model import Model, ModelOption, ValueList, assert_param_overrides_used
+from svb.model import Model, ModelOption
+from svb.utils import ValueList, NP_DTYPE
 from svb.parameter import get_parameter
-import svb.dist as dist
-import svb.prior as prior
+
+from svb import __version__
 
 class AslRestModel(Model):
     """
@@ -58,11 +57,6 @@ class AslRestModel(Model):
                  and any([ r != self.repeats[0] for r in self.repeats ])):
                 raise NotImplementedError("Variable repeats for TIs/PLDs")
 
-        # Add the "data_space" to the kwarg options. This is set by 
-        # the data_model, "voxel" means voxelwise inference, "node" means
-        # surface inference. Noise is ALWAYS defined in "voxel" however. 
-        options["data_space"] = self.data_space
-
         self.params = [
             get_parameter("ftiss", dist="FoldedNormal", 
                           mean=5.0, prior_var=1e6, post_var=1.0, 
@@ -90,8 +84,6 @@ class AslRestModel(Model):
                               mean=self.att - 0.3, var=self.attsd**2,
                               **options)
             )
-
-        assert_param_overrides_used(self.params, options)
 
     def evaluate(self, params, tpts):
         """
