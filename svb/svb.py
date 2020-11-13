@@ -615,7 +615,6 @@ class SvbFit(LogBase):
 
                 # Iterate over training batches - note that there may be only one
                 for i in range(n_batches):
-                    #print(i)
                     if sequential_batches:
                         # Batches are defined by sequential data time points
                         index = i*batch_size
