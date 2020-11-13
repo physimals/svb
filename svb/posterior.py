@@ -23,10 +23,11 @@ def get_posterior(idx, param, t, data_model, **kwargs):
         initial_mean, initial_var = param.post_init(param, t, data_model.data_flattened)
 
         # If parameter defined on surface, project the volume init values
-        # onto the surface 
+        # onto the surface
         if param.data_space == "node":
-            initial_mean = tf.squeeze(data_model.voxels_to_nodes(
-                tf.expand_dims(initial_mean, -1)))
+            if initial_mean is not None:
+                initial_mean = tf.squeeze(data_model.voxels_to_nodes(
+                    tf.expand_dims(initial_mean, -1)))
             if initial_var is not None: 
                 initial_var = tf.squeeze(data_model.voxels_to_nodes(
                     tf.expand_dims(initial_var, -1)))
