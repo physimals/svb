@@ -11,7 +11,7 @@ import trimesh
 from svb.main import run
 import pyvista as pv 
 from pyvista import PlotterITK
-from svb.models.asl import AslRestModel 
+from svb_models_asl import AslRestModel 
 from svb.data import SurfaceModel
 
 
@@ -87,25 +87,26 @@ assert is_nsd(gp)
 plds = np.arange(0.25, 1.75, 0.25)
 repeats = 8
 data = np.zeros(3*[sq_len] + [ repeats * plds.size ])
-surf_model = SurfaceModel(data, surfaces={'LMS': mid_surf}, projector=projector, mask=vol_mask)
+mask = vol_mask.reshape(data.shape[:3])
+surf_model = SurfaceModel(data, surfaces={'LMS': mid_surf}, projector=projector, mask=mask)
 asl_model = AslRestModel(surf_model, plds=plds, repeats=repeats, casl=True) 
-tpts = asl_model.tpts()
 
 CBF = 60 
 ATT = 0.75
 NOISE_VAR = 1
 
-ftiss = CBF * np.ones([surf_model.n_nodes, tpts.size], dtype=np.float32)
-deltiss = ATT * np.ones([surf_model.n_nodes, tpts.size], dtype=np.float32)
+ftiss = CBF * np.ones([surf_model.n_nodes, 1], dtype=np.float32)
+deltiss = ATT * np.ones([surf_model.n_nodes, 1], dtype=np.float32)
+tpts = asl_model.tpts()
 
-sess = tf.Session()
-surf_data = sess.run(asl_model.evaluate([ftiss, deltiss], tpts))
-sess.close()
+with tf.Session() as sess:
+    surf_data = sess.run(asl_model.evaluate([ftiss, deltiss], tpts))
+
 vol_data = projector.surf2vol(surf_data)
 vol_data += np.random.normal(0, NOISE_VAR, vol_data.shape)
 pvs = projector.flat_pvs()
 vox_idx = np.argmax(pvs[:,0])
-vol_data = vol_data.reshape(*ref_spc.size, tpts.size)
+vol_data = vol_data.reshape(*ref_spc.size, tpts.shape[-1])
 
 # Fit options common to both runs 
 options = {
@@ -115,7 +116,7 @@ options = {
     "epochs" : 1000,
     "log_stream" : sys.stdout,
     "prior_type": "N",
-    "mask" : vol_mask,
+    "mask" : mask,
     "projector" : projector,
     "surfaces" : { 'LMS': mid_surf }, 
     "plds": plds, 
@@ -133,10 +134,10 @@ options = {
 
 # Fit amp1 and r1 in M mode: spatial prior 
 runtime, svb, training_history = run(
-    vol_data, "asl", 
+    vol_data, "aslrest",
     "example_out_cov", 
     param_overrides={
-        "ftiss" : { "prior_type": "M" }, 
+        "ftiss" : { "prior_type": "M" },
         "delttiss" : { "prior_type": "M" }
     },
     **options)
