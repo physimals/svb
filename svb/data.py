@@ -204,6 +204,15 @@ class DataModel(LogBase):
         """
         raise NotImplementedError()
 
+    def uncache_tensors(self):
+        """
+        Delete any saved references to tensors
+
+        Used when building a new graph using an existing DataModel
+        Yes this is a hack. Got a better idea? Let me know.
+        """
+        pass
+
 class VolumetricModel(DataModel):
 
     def __init__(self, data, mask=None, **kwargs):
@@ -327,8 +336,8 @@ class SurfaceModel(DataModel):
         s2v = proj.surf2vol_matrix().astype(NP_DTYPE)
         v2s = proj.vol2surf_matrix(edge_correction=True).astype(NP_DTYPE)
         assert mask.size == s2v.shape[0], 'Mask size does not match projector'
-        self.n2v_coo = s2v[mask,:].tocoo()
-        self.v2n_coo = v2s[:,mask].tocoo()
+        self.n2v_coo = s2v[self.mask_flattened > 0,:].tocoo()
+        self.v2n_coo = v2s[:,self.mask_flattened > 0].tocoo()
 
         if len(self.n2v_coo.shape) != 2:
             raise ValueError("Vertex-to-voxel mapping must be a matrix")
@@ -377,3 +386,9 @@ class SurfaceModel(DataModel):
         assert len(tensor.shape) == 3, 'not a 3D tensor'
         result = tf.map_fn(self.voxels_to_nodes, tf.transpose(tensor, [2, 0, 1]))
         return tf.transpose(result, [1, 2, 0])
+
+    def uncache_tensors(self):
+        if hasattr(self, "_n2v_tensor"):
+            delattr(self, "_n2v_tensor")
+        if hasattr(self, "_v2n_tensor"):
+            delattr(self, "_v2n_tensor")
