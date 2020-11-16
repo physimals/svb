@@ -96,16 +96,13 @@ class Model(LogBase):
         """
         Get the full set of timeseries time values
 
-        :param n_tpts: Number of time points required for the data to be fitted
-        :param shape: Shape of source data which may affect the times assigned
-
         By default this is a linear space using the attributes ``t0`` and ``dt``.
         Some models may have time values fixed by some other configuration. If
         the number of time points is fixed by the model it must match the
         supplied value ``n_tpts``.
 
-        :return: Either a Numpy array of shape [n_tpts] or a Numpy array of shape
-                 shape + [n_tpts] for voxelwise timepoints
+        :return: Either a Numpy array of shape [N] or a Numpy array of shape
+                 [W, N] for nodewise timepoints.
         """
         return np.linspace(self.t0, self.t0+self.data_model.n_tpts*self.dt, num=self.data_model.n_tpts, endpoint=False, dtype=NP_DTYPE)
 
