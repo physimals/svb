@@ -146,7 +146,7 @@ class DataModel(LogBase):
         self.log.info("Posterior mean shape: %s, cov shape: %s", mean.shape, cov.shape)
         return mean, cov
 
-    def nodes_to_voxels(self, tensor):
+    def nodes_to_voxels(self, tensor, pv_sum=True):
         """
         Map parameter node-based data to voxels
 
@@ -157,12 +157,16 @@ class DataModel(LogBase):
         defined on 'nodes'.
 
         :param tensor: Tensor with axis 0 representing indexing over nodes
+        :param pv_sum: If True, values in tensor are intended to be summed
+                       over partial volumes, e.g. perfusion, signal intensity.
+                       If False, values are intended to be weighted averaged
+                       over partial volumes, e.g. delay times. 
 
         :return: Tensor with axis 0 representing indexing over voxels
         """
         raise NotImplementedError()
 
-    def nodes_to_voxels_ts(self, tensor):
+    def nodes_to_voxels_ts(self, tensor, pv_sum=True):
         """
         Map parameter node-based timeseries data to voxels
 
@@ -174,24 +178,26 @@ class DataModel(LogBase):
 
         :param tensor: 3D tensor of which axis 0 represents indexing over
                        parameter nodes, and axis 2 represents a time series
+        :param pv_sum: See :func:`~svb.data.DataModel.nodes_to_voxels`
 
         :return: 3D tensor with axis 0 representing indexing over voxels
         """
         raise NotImplementedError()
 
-    def voxels_to_nodes(self, tensor, vertex_axis=0):
+    def voxels_to_nodes(self, tensor, pv_sum=True):
         """
         Map voxel-based data to nodes
 
         See :func:`~svb.data.DataModel.nodes_to_voxels`
 
         :param tensor: Tensor of which axis 0 represents indexing over voxels
+        :param pv_sum: See :func:`~svb.data.DataModel.nodes_to_voxels`
 
         :return: Tensor with axis 0 representing indexing over nodes
         """
         raise NotImplementedError()
 
-    def voxels_to_nodes_ts(self, tensor, vertex_axis=0):
+    def voxels_to_nodes_ts(self, tensor, pv_sum=True):
         """
         Map voxel-based timeseries data to nodes
 
@@ -199,6 +205,7 @@ class DataModel(LogBase):
 
         :param tensor: 3D tensor of which axis 0 represents indexing over
                        voxels, and axis 2 represents a time series
+        :param pv_sum: See :func:`~svb.data.DataModel.nodes_to_voxels`
 
         :return: 3D tensor with axis 0 representing indexing over nodes
         """
@@ -335,9 +342,11 @@ class SurfaceModel(DataModel):
         proj = kwargs['projector']
         s2v = proj.surf2vol_matrix().astype(NP_DTYPE)
         v2s = proj.vol2surf_matrix(edge_correction=True).astype(NP_DTYPE)
+        v2s_noedge = proj.vol2surf_matrix(edge_correction=False).astype(NP_DTYPE)
         assert mask.size == s2v.shape[0], 'Mask size does not match projector'
         self.n2v_coo = s2v[self.mask_flattened > 0,:].tocoo()
         self.v2n_coo = v2s[:,self.mask_flattened > 0].tocoo()
+        self.v2n_noedge_coo = v2s_noedge[:,self.mask_flattened > 0].tocoo()
 
         if len(self.n2v_coo.shape) != 2:
             raise ValueError("Vertex-to-voxel mapping must be a matrix")
@@ -371,20 +380,35 @@ class SurfaceModel(DataModel):
                 dense_shape=self.v2n_coo.shape)
         return self._v2n_tensor
 
-    def nodes_to_voxels(self, tensor):
-        return tf.sparse.sparse_dense_matmul(self.n2v_tensor, tensor)
+    @property
+    def v2n_noedge_tensor(self):
+        if not hasattr(self, "_v2n_noedge_tensor"):
+            self._v2n_noedge_tensor = tf.SparseTensor(
+                indices=np.array([self.v2n_noedge_coo.row, self.v2n_noedge_coo.col]).T,
+                values=self.v2n_noedge_coo.data,
+                dense_shape=self.v2n_noedge_coo.shape)
+        return self._v2n_noedge_tensor
 
-    def nodes_to_voxels_ts(self, tensor):
+    def nodes_to_voxels(self, tensor, pv_sum=True):
+        if pv_sum:
+            return tf.sparse.sparse_dense_matmul(self.n2v_tensor, tensor)
+        else:
+            raise NotImplementedError()
+
+    def nodes_to_voxels_ts(self, tensor, pv_sum=True):
         assert len(tensor.shape) == 3, 'not a 3D tensor'
-        result = tf.map_fn(self.nodes_to_voxels, tf.transpose(tensor, [2, 0, 1]))
+        result = tf.map_fn(lambda t: self.nodes_to_voxels(t, pv_sum), tf.transpose(tensor, [2, 0, 1]))
         return tf.transpose(result, [1, 2, 0])
 
-    def voxels_to_nodes(self, tensor):
-        return tf.sparse.sparse_dense_matmul(self.v2n_tensor, tensor)
+    def voxels_to_nodes(self, tensor, pv_sum=True):
+        if pv_sum:
+            return tf.sparse.sparse_dense_matmul(self.v2n_tensor, tensor)
+        else:
+            return tf.sparse.sparse_dense_matmul(self.v2n_noedge_tensor, tensor)
 
-    def voxels_to_nodes_ts(self, tensor):
+    def voxels_to_nodes_ts(self, tensor, pv_sum=True):
         assert len(tensor.shape) == 3, 'not a 3D tensor'
-        result = tf.map_fn(self.voxels_to_nodes, tf.transpose(tensor, [2, 0, 1]))
+        result = tf.map_fn(lambda t: self.voxels_to_nodes(t, pv_sum), tf.transpose(tensor, [2, 0, 1]))
         return tf.transpose(result, [1, 2, 0])
 
     def uncache_tensors(self):
