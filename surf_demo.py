@@ -63,13 +63,11 @@ if not os.path.exists('proj.pkl'):
 else: 
     with open('proj.pkl', 'rb') as f:
         projector = pickle.load(f)
-projector.surf2vol_matrix().shape
-
 
 # %%
-vertices_per_voxel = (projector.surf2vol_matrix() > 0).sum(1).A.flatten()
+vertices_per_voxel = (projector.surf2vol_matrix(True) > 0).sum(1).A.flatten()
 vol_mask = (vertices_per_voxel > 0)
-surf2vol_weights = projector.surf2vol_matrix()[vol_mask,:]
+surf2vol_weights = projector.surf2vol_matrix(True)[vol_mask,:]
 print("Mean vertices per voxel:", (surf2vol_weights > 0).sum(1).mean())
 
 from scipy import sparse
@@ -102,7 +100,7 @@ tpts = asl_model.tpts()
 with tf.Session() as sess:
     surf_data = sess.run(asl_model.evaluate([ftiss, deltiss], tpts))
 
-vol_data = projector.surf2vol(surf_data)
+vol_data = projector.surf2vol(surf_data, pv_weight=True)
 vol_data += np.random.normal(0, NOISE_VAR, vol_data.shape)
 pvs = projector.flat_pvs()
 vox_idx = np.argmax(pvs[:,0])
