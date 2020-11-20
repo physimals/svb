@@ -249,16 +249,16 @@ class VolumetricModel(DataModel):
         assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
         self.laplacian = lap.tocoo()
 
-    def nodes_to_voxels_ts(self, tensor):
+    def nodes_to_voxels_ts(self, tensor, pv_sum=True):
         return tensor
 
-    def nodes_to_voxels(self, tensor):
+    def nodes_to_voxels(self, tensor, pv_sum=True):
         return tensor
 
-    def voxels_to_nodes(self, tensor):
+    def voxels_to_nodes(self, tensor, pv_sum=True):
         return tensor
 
-    def voxels_to_nodes_ts(self, tensor):
+    def voxels_to_nodes_ts(self, tensor, pv_sum=True):
         return tensor
 
     def _calc_adjacency_matrix(self):
