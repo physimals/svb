@@ -68,6 +68,10 @@ class DataModel(LogBase):
         Note that if some of the posterior is factorized or 
         covariance is not being inferred some or all of the covariances
         will be zero.
+
+        :param mean: Posterior mean values as Numpy array [W, P]
+        :param cov: Posterior covariance as Numpy array [W, P, P]
+        :return: MVN structure as Numpy array [W, Q] where Q is the number of upper triangle elements
         """
         if cov.shape[0] != self.n_unmasked_voxels or mean.shape[0] != self.n_unmasked_voxels:
             raise ValueError("Posterior data has %i voxels - inconsistent with data model containing %i unmasked voxels" % (cov.shape[0], self.n_unmasked_voxels))
@@ -80,7 +84,7 @@ class DataModel(LogBase):
         for row in range(num_params):
             vols.append(mean[:, row])
         vols.append(np.ones(mean.shape[0]))
-        return np.array(vols).transpose((1, 0))
+        return np.stack(vols, axis=-1)
 
     def _get_data(self, data):
         if isinstance(data, six.string_types):
