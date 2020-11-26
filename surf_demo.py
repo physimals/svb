@@ -225,4 +225,3 @@ runtime, svb, training_history = run(
 #     axes[idx].set_ylabel('post var')
 # plt.show()
 
-
