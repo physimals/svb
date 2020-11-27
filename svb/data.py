@@ -37,7 +37,7 @@ class DataModel(LogBase):
             self.mask_flattened = self.mask_vol.flatten()
             self.data_flattened = self.data_flattened[self.mask_flattened > 0]
         else:
-            self.mask_vol = np.ones(self.shape)
+            self.mask_vol = np.ones(self.shape, dtype=np.bool)
             self.mask_flattened = self.mask_vol.flatten()
 
         self.n_unmasked_voxels = self.data_flattened.shape[0]
@@ -348,7 +348,7 @@ class SurfaceModel(DataModel):
         s2v_nopv = proj.surf2vol_matrix(pv_weight=False).astype(NP_DTYPE)
         v2s = proj.vol2surf_matrix(edge_correction=True).astype(NP_DTYPE)
         v2s_noedge = proj.vol2surf_matrix(edge_correction=False).astype(NP_DTYPE)
-        assert mask.size == s2v.shape[0], 'Mask size does not match projector'
+        assert self.mask_flattened.size == s2v.shape[0], 'Mask size does not match projector'
         self.n2v_coo = s2v[self.mask_flattened > 0,:].tocoo()
         self.n2v_nopv_coo = s2v_nopv[self.mask_flattened > 0,:].tocoo()
         self.v2n_coo = v2s[:,self.mask_flattened > 0].tocoo()
