@@ -19,7 +19,7 @@ import nibabel as nib
 from . import __version__, SvbFit, get_model_class
 from .model import assert_param_overrides_used
 from .utils import ValueList
-from .data import SurfaceModel, VolumetricModel
+from .data import SurfaceModel, VolumetricModel, HybridModel
 
 USAGE = "svb <options>"
 
@@ -241,7 +241,8 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     if surfaces is None: 
         data_model = VolumetricModel(data, mask, **kwargs)
     else:
-        data_model = SurfaceModel(data, surfaces, mask, **kwargs)
+        # data_model = SurfaceModel(data, surfaces, mask, **kwargs)
+        data_model = HybridModel(data, surfaces, mask, **kwargs)
     
     # Set the default "data_space" for parameters. This is set by 
     # the data_model, "voxel" means voxelwise inference, "node" means

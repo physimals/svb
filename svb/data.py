@@ -9,6 +9,7 @@ import numpy as np
 import nibabel as nib
 import tensorflow as tf
 from scipy import sparse
+from toblerone.utils import is_symmetric, is_nsd, sparse_normalise
 
 from .utils import LogBase, TF_DTYPE, NP_DTYPE
 
@@ -427,7 +428,108 @@ class SurfaceModel(DataModel):
         return tf.transpose(result, [1, 2, 0])
 
     def uncache_tensors(self):
-        if hasattr(self, "_n2v_tensor"):
-            delattr(self, "_n2v_tensor")
-        if hasattr(self, "_v2n_tensor"):
-            delattr(self, "_v2n_tensor")
+        for attrname in ["_n2v_tensor", "_n2v_nopv_tensor",
+                        "_v2n_tensor", "_v2n_noedge_tensor"]:
+            if hasattr(self, attrname):
+                delattr(self, attrname)
+
+    
+class HybridModel(SurfaceModel):
+
+    def __init__(self, data, surfaces, mask=None, **kwargs):
+
+        DataModel.__init__(self, data, mask, **kwargs)
+
+        # TODO: only accepts one hemisphere
+        self.surfaces = surfaces['LMS']
+        
+        # Process the projector, apply the mask 
+        proj = kwargs['projector']
+        n2v = proj.node2vol_matrix(pv_weight=True).astype(NP_DTYPE)
+        n2v_nopv = proj.node2vol_matrix(pv_weight=False).astype(NP_DTYPE)
+        v2n = proj.vol2node_matrix(edge_correction=True).astype(NP_DTYPE)
+        v2n_noedge = proj.vol2node_matrix(edge_correction=False).astype(NP_DTYPE)
+
+        if not self.mask_flattened.size == n2v.shape[0]: 
+            raise ValueError('Mask size does not match projector')
+        if not self.mask_flattened.size + self.surfaces.points.shape[0] == n2v.shape[1]:
+            raise ValueError('Mask size does not match projector')
+
+        # Knock out rows from the projection matrices that are not in the mask
+        self.n2v_coo = n2v[self.mask_flattened > 0,:].tocoo()
+        self.n2v_nopv_coo = n2v_nopv[self.mask_flattened > 0,:].tocoo()
+        self.v2n_coo = v2n[:,self.mask_flattened > 0].tocoo()
+        self.v2n_noedge_coo = v2n_noedge[:,self.mask_flattened > 0].tocoo()
+
+        if len(self.n2v_coo.shape) != 2:
+            raise ValueError("Vertex-to-voxel mapping must be a matrix")
+        if self.n2v_coo.shape[0] != self.n_unmasked_voxels:
+            raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
+        self.n_nodes = self.n2v_coo.shape[1]
+
+        if kwargs.get("initial_posterior", None):
+            self.post_init = self._get_posterior_data(kwargs["initial_posterior"])
+        else:
+            self.post_init = None
+
+        # self.adj_matrix = self.surfaces.adjacency_matrix().tocoo()
+        # self.laplacian = self.surfaces.mesh_laplacian(distance_weight=1).tocoo()
+
+        # TODO: distance weighting on volumetric laplacian 
+        # NSD on combined laplacian, or simply ensure each individual block
+        # is NSD?
+
+        self.adj_matrix = self._new_adj_matrix()
+        assert is_symmetric(self.adj_matrix)
+        self.laplacian = self._construct_laplacian()
+
+    def _construct_laplacian(self):
+
+        # Set the laplacian here 
+        lap = self.adj_matrix.todok(copy=True)
+        lap[np.diag_indices(lap.shape[0])] = -lap.sum(1).T
+        assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
+        vol_laplacian = lap.tocoo()
+        surf_laplacian = self.surfaces.mesh_laplacian(distance_weight=1).tocoo()
+
+        n_vox = vol_laplacian.shape[0]
+        n_vert = surf_laplacian.shape[0]
+        size = n_vox + n_vert
+        laplacian = sparse.dok_matrix((size, size), dtype=NP_DTYPE)
+        laplacian[:n_vert,:n_vert] = surf_laplacian
+        laplacian[n_vert:,n_vert:] = vol_laplacian
+
+        assert not (laplacian[np.diag_indices(size)] > 0).max()
+        return laplacian.tocoo()
+
+
+    def _new_adj_matrix(self, vox_size=np.ones(3)):
+        cardinal_neighbours = np.array([
+            [-1,0,0],[1,0,0],[0,-1,0],
+            [0,1,0],[0,0,-1],[0,0,1]], 
+            dtype=np.int32)
+
+        dist_weights = 1 / np.tile(vox_size, (2,1)).T.flatten()
+        shape = self.data_vol.shape[:3]
+        size = np.prod(shape)
+        flat_mask = np.flatnonzero(self.mask_flattened)
+        rows, cols, entries = [], [], []
+        for idx,vijk in zip(flat_mask, 
+                    np.array(np.unravel_index(flat_mask, shape)).T):
+            neighbours = vijk + cardinal_neighbours
+            fltr = (neighbours >= 0).all(-1) & (neighbours < shape).all(-1)
+            neighbours = neighbours[fltr,:]
+            neighbours_inds = np.ravel_multi_index(neighbours.T, shape)
+            rows += neighbours_inds.size * [idx]
+            cols += neighbours_inds.tolist()
+            entries += dist_weights[fltr].tolist()
+        
+        entries = np.array(entries)
+        cols = np.array(cols, dtype=np.int32)
+        adj_mat = sparse.coo_matrix((entries, (rows, cols)), 
+                                    shape=(size, size))
+        
+        adj_mat = adj_mat.tocsr()[flat_mask,:]
+        adj_mat = adj_mat.tocsc()[:,flat_mask]
+        return adj_mat.tocoo()
+
