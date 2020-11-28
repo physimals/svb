@@ -378,6 +378,15 @@ class SurfaceModel(DataModel):
         return self._n2v_tensor
 
     @property
+    def n2v_nopv_tensor(self):
+        if not hasattr(self, "_n2v_nopv_tensor"):
+            self._n2v_nopv_tensor = tf.SparseTensor(
+                indices=np.array([self.n2v_nopv_coo.row, self.n2v_nopv_coo.col]).T,
+                values=self.n2v_nopv_coo.data,
+                dense_shape=self.n2v_nopv_coo.shape)
+        return self._n2v_nopv_tensor
+
+    @property
     def v2n_tensor(self):
         if not hasattr(self, "_v2n_tensor"):
             self._v2n_tensor = tf.SparseTensor(
