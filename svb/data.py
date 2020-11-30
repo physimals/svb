@@ -409,7 +409,7 @@ class SurfaceModel(DataModel):
         if pv_sum:
             return tf.sparse.sparse_dense_matmul(self.n2v_tensor, tensor)
         else:
-            raise NotImplementedError()
+            raise tf.sparse.sparse_dense_matmul(self.n2v_nopv_tensor, tensor)
 
     def nodes_to_voxels_ts(self, tensor, pv_sum=True):
         assert len(tensor.shape) == 3, 'not a 3D tensor'
