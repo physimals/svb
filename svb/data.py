@@ -9,7 +9,7 @@ import numpy as np
 import nibabel as nib
 import tensorflow as tf
 from scipy import sparse
-from toblerone.utils import is_symmetric, is_nsd, sparse_normalise
+from toblerone.utils import NP_FLOAT, is_symmetric, is_nsd, slice_sparse
 
 from .utils import LogBase, TF_DTYPE, NP_DTYPE
 
@@ -240,8 +240,9 @@ class VolumetricModel(DataModel):
         else:
             self.post_init = None
 
-        self._calc_adjacency_matrix()
-        self._calc_laplacian()
+        self.adj_matrix = _calc_volumetric_adjacency(self.mask_vol, distance_weight=0)
+        self.laplacian = _convert_adjacency_to_laplacian(
+                            _calc_volumetric_adjacency(self.mask_vol, distance_weight=1))
 
     def nodes_to_voxels_ts(self, tensor, pv_scale=True):
         return tensor
@@ -255,74 +256,6 @@ class VolumetricModel(DataModel):
     def voxels_to_nodes_ts(self, tensor, edge_correct=True):
         return tensor
 
-    def _calc_adjacency_matrix(self):
-        """
-        Generate adjacency matrix for voxel nearest neighbours.
-        Note the result will be a square sparse COO matrix of size 
-        (n_unmasked voxels), indexed according to voxels in the mask
-        (so index 0 refers to the first un-masked voxel). 
-        
-        These are required for spatial priors and in practice do not
-        take long to calculate so we provide them as a matter of course
-        """
-        def add_if_unmasked(x, y, z, masked_indices, nns):
-            # Check that potential neighbour is not masked and if so
-            # add it to the list of nearest neighbours
-            idx  = masked_indices[x, y, z]
-            if idx >= 0:
-                nns.append(idx)
-
-        # Generate a Numpy array which contains -1 for voxels which
-        # are not in the mask, and for those which are contains the
-        # voxel index, starting at 0 and ordered in row-major ordering
-        # Note that the indices are for unmasked voxels only so 0 is
-        # the index of the first unmasked voxel, 1 the second, etc.
-        # Note that Numpy uses (by default) C-style row-major ordering
-        # for voxel indices so the the Z co-ordinate varies fastest
-        masked_indices = np.full(self.shape, -1, dtype=np.int)
-        nx, ny, nz = tuple(self.shape)
-        voxel_idx = 0
-        for x in range(nx):
-            for y in range(ny):
-                for z in range(nz):
-                    if self.mask_vol[x, y, z] > 0:
-                        masked_indices[x, y, z] = voxel_idx
-                        voxel_idx += 1
-
-        # Now generate the nearest neighbour lists.
-        voxel_nns = []
-        indices_nn = []
-        voxel_idx = 0
-        for x in range(nx):
-            for y in range(ny):
-                for z in range(nz):
-                    if self.mask_vol[x, y, z] > 0:
-                        nns = []
-                        if x > 0: add_if_unmasked(x-1, y, z, masked_indices, nns)
-                        if x < nx-1: add_if_unmasked(x+1, y, z, masked_indices, nns)
-                        if y > 0: add_if_unmasked(x, y-1, z, masked_indices, nns)
-                        if y < ny-1: add_if_unmasked(x, y+1, z, masked_indices, nns)
-                        if z > 0: add_if_unmasked(x, y, z-1, masked_indices, nns)
-                        if z < nz-1: add_if_unmasked(x, y, z+1, masked_indices, nns)
-                        voxel_nns.append(nns)
-                        # For TensorFlow sparse tensor
-                        for nn in nns:
-                            indices_nn.append([voxel_idx, nn])
-                        voxel_idx += 1
-
-        # Edge case of no neighbours (e.g. single voxel often used in testing)
-        if len(indices_nn) == 0:
-            values = ([], [[], []])
-        else:
-            values = (np.ones(len(indices_nn)), (np.array(indices_nn).T))
-
-        self.adj_matrix = sparse.coo_matrix(
-            values,
-            shape=2*[self.n_unmasked_voxels], 
-            dtype=NP_DTYPE
-        )
-
-        assert not (self.adj_matrix.tocsr()[np.diag_indices(self.n_unmasked_voxels)] != 0).max()
 
 class SurfaceModel(DataModel):
 
@@ -354,8 +287,8 @@ class SurfaceModel(DataModel):
         else:
             self.post_init = None
 
-        self.adj_matrix = self.surfaces.adjacency_matrix().tocoo()
-        self.laplacian = self.surfaces.mesh_laplacian(distance_weight=1).tocoo()
+        self.adj_matrix = projector.adjacency_matrix(distance_weight=0).tocoo().astype(NP_DTYPE)
+        self.laplacian = projector.mesh_laplacian(distance_weight=1).tocoo().astype(NP_DTYPE)
 
     @property
     def n2v_tensor(self):
@@ -465,63 +398,129 @@ class HybridModel(SurfaceModel):
         else:
             self.post_init = None
 
-        self.adj_matrix = self._calc_adjacency_matrix(distance_weight=1)
-        self.laplacian = _convert_adjacency_to_laplacian(self.adj_matrix)
+        self.adj_matrix = self._calc_adjacency_matrix(distance_weight=0)
+        self.laplacian = self._calc_laplacian_matrix(distance_weight=1)
 
-    def _calc_adjacency_matrix(self, distance_weight=1, vox_size=np.ones(3)):
+    def _calc_adjacency_matrix(self, distance_weight=0, vox_size=np.ones(3)):
+        """
+        Construct adjacency matrix for surface and volumetric data. This is
+        formed by concatenating in block diagonal form the L surface, 
+        R surface and volumetric matrices, in that order. 
+
+        :param distance_weight: int > 0, apply inverse distance weighting, 
+            default 0 (do not weight, all egdes are unity), whereas positive
+            values will weight edges by 1 / d^n, where d is geometric 
+            distance between vertices. 
+        :param vox_size: array of 3 values, used for distance weighting of 
+            anisotropic voxel grids.   
+
+        :return: sparse COO matrix, of square size (n_verts + n_unmasked_voxels)      
+        """
         surf_adj = self.projector.adjacency_matrix(distance_weight)
         vol_adj = _calc_volumetric_adjacency(self.mask_vol, distance_weight, vox_size)
-        return sparse.block_diag([surf_adj, vol_adj]).tocoo().astype(NP_DTYPE)
+        return sparse.block_diag([surf_adj, vol_adj]).astype(NP_DTYPE)
+
+    def _calc_laplacian_matrix(self, distance_weight=1, vox_size=np.ones(3)):
+        """
+        Construct Laplacian matrix for surface and volumetric data. This is
+        formed by concatenating in block diagonal form the L surface, 
+        R surface and volumetric matrices, in that order. 
+
+        :param distance_weight: int > 0, apply inverse distance weighting, 
+            default 0 (do not weight, all egdes are unity), whereas positive
+            values will weight edges by 1 / d^n, where d is geometric 
+            distance between vertices. 
+        :param vox_size: array of 3 values, used for distance weighting of 
+            anisotropic voxel grids.   
+
+        :return: sparse COO matrix, of square size (n_verts + n_unmasked_voxels)      
+        """
+        surf_lap = self.projector.mesh_laplacian(distance_weight)
+        vol_adj = _calc_volumetric_adjacency(self.mask_vol, distance_weight, vox_size)
+        vol_lap = _convert_adjacency_to_laplacian(vol_adj)
+        return sparse.block_diag([surf_lap, vol_lap]).astype(NP_DTYPE)
 
 
 
-    def _construct_laplacian(self):
 
-        # Set the laplacian here 
-        lap = self.adj_matrix.todok(copy=True)
-        lap[np.diag_indices(lap.shape[0])] = -lap.sum(1).T
-        assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
-        vol_laplacian = lap.tocoo()
-        surf_laplacian = self.surfaces.mesh_laplacian(distance_weight=1).tocoo()
+def _convert_adjacency_to_laplacian(adj_matrix):
+    """
+    Convert an adjacency matrix into a Laplacian. This is done by setting
+    the diagonal as the negative sum of each row (note the sign convention
+    of positive off-diagonal, negative diagonal). 
 
-        n_vox = vol_laplacian.shape[0]
-        n_vert = surf_laplacian.shape[0]
-        size = n_vox + n_vert
-        laplacian = sparse.dok_matrix((size, size), dtype=NP_DTYPE)
-        laplacian[:n_vert,:n_vert] = surf_laplacian
-        laplacian[n_vert:,n_vert:] = vol_laplacian
+    :param adj_matrix: square sparse adjacency matrix of any type. 
 
-        assert not (laplacian[np.diag_indices(size)] > 0).max()
-        return laplacian.tocoo()
+    :return: sparse COO matrix
+    """
+    if not adj_matrix.shape[0] == adj_matrix.shape[1]: 
+        raise ValueError("Adjacency matrix is not square")
+
+    lap = adj_matrix.todok(copy=True)
+    lap[np.diag_indices(lap.shape[0])] = -lap.sum(1).T
+    assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
+    return lap.tocoo().astype(NP_DTYPE)
 
 
-    def _new_adj_matrix(self, vox_size=np.ones(3)):
-        cardinal_neighbours = np.array([
-            [-1,0,0],[1,0,0],[0,-1,0],
-            [0,1,0],[0,0,-1],[0,0,1]], 
-            dtype=np.int32)
+def _calc_volumetric_adjacency(mask, distance_weight=1, vox_size=np.ones(3)):
+    """
+    Generate adjacency matrix for voxel nearest neighbours.
+    Note the result will be indexed according to voxels in the mask (so 
+    index 0 refers to the first un-masked voxel). Inverse distance weighting 
+    can be applied for non-isotropic voxel sizes (1 / d^n). 
+    
+    :param distance_weight: int > 0, apply inverse distance weighting, 
+        default 0 (do not weight, all egdes are unity), whereas positive
+        values will weight edges by 1 / d^n, where d is geometric 
+        distance between vertices. 
+    :param vox_size: array of 3 values, used for distance weighting of 
+        anisotropic voxel grids. 
 
-        dist_weights = 1 / np.tile(vox_size, (2,1)).T.flatten()
-        shape = self.data_vol.shape[:3]
-        size = np.prod(shape)
-        flat_mask = np.flatnonzero(self.mask_flattened)
-        rows, cols, entries = [], [], []
-        for idx,vijk in zip(flat_mask, 
-                    np.array(np.unravel_index(flat_mask, shape)).T):
-            neighbours = vijk + cardinal_neighbours
-            fltr = (neighbours >= 0).all(-1) & (neighbours < shape).all(-1)
-            neighbours = neighbours[fltr,:]
-            neighbours_inds = np.ravel_multi_index(neighbours.T, shape)
-            rows += neighbours_inds.size * [idx]
-            cols += neighbours_inds.tolist()
-            entries += dist_weights[fltr].tolist()
-        
-        entries = np.array(entries)
-        cols = np.array(cols, dtype=np.int32)
-        adj_mat = sparse.coo_matrix((entries, (rows, cols)), 
-                                    shape=(size, size))
-        
-        adj_mat = adj_mat.tocsr()[flat_mask,:]
-        adj_mat = adj_mat.tocsc()[:,flat_mask]
-        return adj_mat.tocoo()
+    :return: square sparse COO matrix of size (mask.sum). 
+    """
 
+    # TODO: vectorise this: starting from mask flatnonzero, get all neighbours
+    # by adding/subtracting strides from indices, then apply fltr on neighbours
+    # array at once, then form CSR matrix directly (indptr is the cumsum of the 
+    # fltr row sum). 
+
+    # Voxel neighbours ±1 in each dimension from voxel [0,0,0]
+    cardinal_neighbours = np.array([
+        [-1,0,0],[1,0,0],[0,-1,0],
+        [0,1,0],[0,0,-1],[0,0,1]], 
+        dtype=np.int32)
+
+    # Distance weighting is 1 / d^n in each dimension (note the tiling here matches)
+    # the order of cardinal neighbours above, ie, XX YY ZZ. 
+    dist_weights = (1 / np.tile(vox_size, (2,1)).T.flatten()) ** distance_weight
+
+    # Construct matrix in COO (each entry with row and col index). Iterate only 
+    # over voxels we know are in the mask, but indexed into the complete grid
+    # (so the first voxel in the mask isn't necessarily voxel index 0)
+    shape = mask.shape
+    flat_mask = np.flatnonzero(mask)
+    rows, cols, entries = [], [], []
+
+    # For each voxel, get cardinal neighbours and mask out those not in
+    # the grid. Convert to flat indices, select the corresponding dist
+    # weights, and append into the matrix. We are constructing one row 
+    # at a time. 
+    for idx,vijk in zip(flat_mask, 
+                np.array(np.unravel_index(flat_mask, shape)).T):
+        neighbours = vijk + cardinal_neighbours
+        fltr = (neighbours >= 0).all(-1) & (neighbours < shape).all(-1)
+        neighbours = neighbours[fltr,:]
+        neighbours_inds = np.ravel_multi_index(neighbours.T, shape)
+        rows.append(neighbours_inds.size * [idx])
+        cols.append(neighbours_inds)
+        entries.append(dist_weights[fltr])
+    
+    size = np.prod(shape)
+    entries = np.concatenate(entries)
+    cols = np.concatenate(cols).astype(np.int32)
+    rows = np.concatenate(rows).astype(np.int32)
+    adj_mat = sparse.coo_matrix((entries, (rows, cols)), shape=(size,size))
+    
+    adj_mat = slice_sparse(adj_mat, flat_mask, flat_mask).tocoo()
+    assert is_symmetric(adj_mat), 'Volumetric adjacency not symmetric'
+    return adj_mat.tocoo().astype(NP_DTYPE)
