@@ -334,10 +334,14 @@ class SurfaceModel(DataModel):
         s2v_nopv = projector.surf2vol_matrix(pv_scale=False).astype(NP_DTYPE)
         v2s = projector.vol2surf_matrix(edge_correct=True).astype(NP_DTYPE)
         v2s_noedge = projector.vol2surf_matrix(edge_correct=False).astype(NP_DTYPE)
-        self.n2v_coo = s2v[self.mask_flattened > 0,:].tocoo()
-        self.n2v_nopv_coo = s2v_nopv[self.mask_flattened > 0,:].tocoo()
-        self.v2n_coo = v2s[:,self.mask_flattened > 0].tocoo()
-        self.v2n_noedge_coo = v2s_noedge[:,self.mask_flattened > 0].tocoo()
+        assert self.mask_flattened.size == s2v.shape[0], 'Mask size does not match projector'
+
+        # Knock out voxels not included in the mask. 
+        vox_inds = np.flatnonzero(self.mask_flattened)
+        self.n2v_coo = s2v[vox_inds,:].tocoo()
+        self.n2v_nopv_coo = s2v_nopv[vox_inds,:].tocoo()
+        self.v2n_coo = v2s[:,vox_inds].tocoo()
+        self.v2n_noedge_coo = v2s_noedge[:,vox_inds].tocoo()
 
         if len(self.n2v_coo.shape) != 2:
             raise ValueError("Vertex-to-voxel mapping must be a matrix")
@@ -439,13 +443,16 @@ class HybridModel(SurfaceModel):
         if not self.mask_flattened.size + projector.n_surf_points == n2v.shape[1]:
             raise ValueError('Mask size does not match projector')
 
-        # Knock out rows from the projection matrices that are not in the mask
-        vox_mask = np.flatnonzero(self.mask_flattened)
-        node_mask = np.concatenate((np.arange(projector.n_surf_points), vox_mask))
-        self.n2v_coo = slice_sparse(n2v, vox_mask, node_mask).tocoo()
-        self.n2v_nopv_coo = slice_sparse(n2v_nopv, vox_mask, node_mask).tocoo()
-        self.v2n_coo = slice_sparse(v2n, node_mask, vox_mask).tocoo()
-        self.v2n_noedge_coo = slice_sparse(v2n_noedge, node_mask, vox_mask).tocoo()
+        # Knock out voxels from projection matrices that are not in the mask
+        # We need to shift indices to account for the offset caused by having 
+        # all surface vertices come first (order is L surf, R surf, volume)
+        vox_inds = np.flatnonzero(self.mask_flattened)
+        node_inds = np.concatenate((np.arange(projector.n_surf_points), 
+                                    projector.n_surf_points + vox_inds))
+        self.n2v_coo = slice_sparse(n2v, vox_inds, node_inds).tocoo()
+        self.n2v_nopv_coo = slice_sparse(n2v_nopv, vox_inds, node_inds).tocoo()
+        self.v2n_coo = slice_sparse(v2n, node_inds, vox_inds).tocoo()
+        self.v2n_noedge_coo = slice_sparse(v2n_noedge, node_inds, vox_inds).tocoo()
 
         if len(self.n2v_coo.shape) != 2:
             raise ValueError("Vertex-to-voxel mapping must be a matrix")
