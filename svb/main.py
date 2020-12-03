@@ -217,7 +217,7 @@ def main():
         import traceback
         traceback.print_exc()
 
-def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
+def run(data, model_name, output, mask=None, **kwargs):
     """
     Run model fitting on a data set
 
@@ -238,11 +238,11 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
 
     # Initialize the data model which contains data dimensions, number of time
     # points, list of unmasked voxels, etc
-    if surfaces is None: 
-        data_model = VolumetricModel(data, mask, **kwargs)
+    if 'projector' not in kwargs: 
+        data_model = VolumetricModel(data, mask=mask, **kwargs)
     else:
         # data_model = SurfaceModel(data, surfaces, mask, **kwargs)
-        data_model = HybridModel(data, surfaces, mask, **kwargs)
+        data_model = HybridModel(data, mask=mask, **kwargs)
     
     # Set the default "data_space" for parameters. This is set by 
     # the data_model, "voxel" means voxelwise inference, "node" means

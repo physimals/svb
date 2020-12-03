@@ -337,12 +337,10 @@ class VolumetricModel(DataModel):
 
 class SurfaceModel(DataModel):
 
-    def __init__(self, data, surfaces, mask=None, **kwargs):
+    def __init__(self, data, projector, mask=None, **kwargs):
         super().__init__(data, mask=mask, **kwargs)
 
-        # TODO: only accepts one hemisphere
-        self.surfaces = surfaces['LMS']
-        
+        self.projector = projector 
         # Process the projector, apply the mask 
         proj = kwargs['projector']
         s2v = proj.surf2vol_matrix(pv_weight=True).astype(NP_DTYPE)
