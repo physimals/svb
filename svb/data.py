@@ -436,30 +436,29 @@ class SurfaceModel(DataModel):
     
 class HybridModel(SurfaceModel):
 
-    def __init__(self, data, surfaces, mask=None, **kwargs):
+    def __init__(self, data, projector, mask=None, **kwargs):
 
         DataModel.__init__(self, data, mask, **kwargs)
 
-        # TODO: only accepts one hemisphere
-        self.surfaces = surfaces['LMS']
-        
         # Process the projector, apply the mask 
-        proj = kwargs['projector']
-        n2v = proj.node2vol_matrix(pv_weight=True).astype(NP_DTYPE)
-        n2v_nopv = proj.node2vol_matrix(pv_weight=False).astype(NP_DTYPE)
-        v2n = proj.vol2node_matrix(edge_correction=True).astype(NP_DTYPE)
-        v2n_noedge = proj.vol2node_matrix(edge_correction=False).astype(NP_DTYPE)
+        self.projector = projector
+        n2v = projector.node2vol_matrix(pv_scale=True).astype(NP_DTYPE)
+        n2v_nopv = projector.node2vol_matrix(pv_scale=False).astype(NP_DTYPE)
+        v2n = projector.vol2node_matrix(edge_correction=True).astype(NP_DTYPE)
+        v2n_noedge = projector.vol2node_matrix(edge_correction=False).astype(NP_DTYPE)
 
         if not self.mask_flattened.size == n2v.shape[0]: 
             raise ValueError('Mask size does not match projector')
-        if not self.mask_flattened.size + self.surfaces.points.shape[0] == n2v.shape[1]:
+        if not self.mask_flattened.size + projector.n_surf_points == n2v.shape[1]:
             raise ValueError('Mask size does not match projector')
 
         # Knock out rows from the projection matrices that are not in the mask
-        self.n2v_coo = n2v[self.mask_flattened > 0,:].tocoo()
-        self.n2v_nopv_coo = n2v_nopv[self.mask_flattened > 0,:].tocoo()
-        self.v2n_coo = v2n[:,self.mask_flattened > 0].tocoo()
-        self.v2n_noedge_coo = v2n_noedge[:,self.mask_flattened > 0].tocoo()
+        vox_mask = np.flatnonzero(self.mask_flattened)
+        node_mask = np.concatenate((np.arange(projector.n_surf_points), vox_mask))
+        self.n2v_coo = slice_sparse(n2v, vox_mask, node_mask).tocoo()
+        self.n2v_nopv_coo = slice_sparse(n2v_nopv, vox_mask, node_mask).tocoo()
+        self.v2n_coo = slice_sparse(v2n, node_mask, vox_mask).tocoo()
+        self.v2n_noedge_coo = slice_sparse(v2n_noedge, node_mask, vox_mask).tocoo()
 
         if len(self.n2v_coo.shape) != 2:
             raise ValueError("Vertex-to-voxel mapping must be a matrix")
@@ -472,16 +471,15 @@ class HybridModel(SurfaceModel):
         else:
             self.post_init = None
 
-        # self.adj_matrix = self.surfaces.adjacency_matrix().tocoo()
-        # self.laplacian = self.surfaces.mesh_laplacian(distance_weight=1).tocoo()
+        self.adj_matrix = self._calc_adjacency_matrix(distance_weight=1)
+        self.laplacian = _convert_adjacency_to_laplacian(self.adj_matrix)
 
-        # TODO: distance weighting on volumetric laplacian 
-        # NSD on combined laplacian, or simply ensure each individual block
-        # is NSD?
+    def _calc_adjacency_matrix(self, distance_weight=1, vox_size=np.ones(3)):
+        surf_adj = self.projector.adjacency_matrix(distance_weight)
+        vol_adj = _calc_volumetric_adjacency(self.mask_vol, distance_weight, vox_size)
+        return sparse.block_diag([surf_adj, vol_adj]).tocoo().astype(NP_DTYPE)
 
-        self.adj_matrix = self._new_adj_matrix()
-        assert is_symmetric(self.adj_matrix)
-        self.laplacian = self._construct_laplacian()
+
 
     def _construct_laplacian(self):
 
