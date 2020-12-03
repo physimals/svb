@@ -151,7 +151,7 @@ class DataModel(LogBase):
         self.log.info("Posterior mean shape: %s, cov shape: %s", mean.shape, cov.shape)
         return mean, cov
 
-    def nodes_to_voxels(self, tensor, pv_sum=True):
+    def nodes_to_voxels(self, tensor, pv_scale=True):
         """
         Map parameter node-based data to voxels
 
@@ -161,17 +161,17 @@ class DataModel(LogBase):
         data is defined in terms of 'voxels' while the parameter estimation is
         defined on 'nodes'.
 
-        :param tensor: Tensor with axis 0 representing indexing over nodes
-        :param pv_sum: If True, values in tensor are intended to be summed
-                       over partial volumes, e.g. perfusion, signal intensity.
-                       If False, values are intended to be weighted averaged
-                       over partial volumes, e.g. delay times. 
+        :param tensor:    Tensor with axis 0 representing indexing over nodes
+        :param pv_scale:  If True, values in tensor are intended to scale with 
+                          partial volumes, e.g. perfusion, signal intensity.
+                          If False, values are intended to be averaged
+                          over partial volumes, e.g. delay times. 
 
         :return: Tensor with axis 0 representing indexing over voxels
         """
         raise NotImplementedError()
 
-    def nodes_to_voxels_ts(self, tensor, pv_sum=True):
+    def nodes_to_voxels_ts(self, tensor, pv_scale=True):
         """
         Map parameter node-based timeseries data to voxels
 
@@ -181,36 +181,37 @@ class DataModel(LogBase):
         is batched over the outermost axis which is assumed to contain multiple
         independent tensors each requiring conversion.
 
-        :param tensor: 3D tensor of which axis 0 represents indexing over
-                       parameter nodes, and axis 2 represents a time series
-        :param pv_sum: See :func:`~svb.data.DataModel.nodes_to_voxels`
+        :param tensor:    3D tensor of which axis 0 represents indexing over
+                          parameter nodes, and axis 2 represents a time series
+        :param pv_scale:  See :func:`~svb.data.DataModel.nodes_to_voxels`
 
         :return: 3D tensor with axis 0 representing indexing over voxels
         """
         raise NotImplementedError()
 
-    def voxels_to_nodes(self, tensor, pv_sum=True):
+    def voxels_to_nodes(self, tensor, egde_correct=True):
         """
-        Map voxel-based data to nodes
+        Map voxel-based data to nodes. Approximate inverse of :func:`~svb.data.DataModel.nodes_to_voxels`
 
-        See :func:`~svb.data.DataModel.nodes_to_voxels`
-
-        :param tensor: Tensor of which axis 0 represents indexing over voxels
-        :param pv_sum: See :func:`~svb.data.DataModel.nodes_to_voxels`
+        :param tensor:       Tensor of which axis 0 represents indexing over voxels
+        :param egde_correct: If True, voxels with brain PV < 1 will be up-scaled 
+                             to compenste for 'missing' signal (eg, magentisation).
+                             If False, no scaling will be applied to these voxels
+                             (eg timing information). 
 
         :return: Tensor with axis 0 representing indexing over nodes
         """
         raise NotImplementedError()
 
-    def voxels_to_nodes_ts(self, tensor, pv_sum=True):
+    def voxels_to_nodes_ts(self, tensor, egde_correct=True):
         """
         Map voxel-based timeseries data to nodes
 
         See :func:`~svb.data.DataModel.nodes_to_voxels_ts`
 
-        :param tensor: 3D tensor of which axis 0 represents indexing over
-                       voxels, and axis 2 represents a time series
-        :param pv_sum: See :func:`~svb.data.DataModel.nodes_to_voxels`
+        :param tensor:       3D tensor of which axis 0 represents indexing over
+                             voxels, and axis 2 represents a time series
+        :param egde_correct: See :func:`~svb.data.DataModel.voxels_to_nodes`
 
         :return: 3D tensor with axis 0 representing indexing over nodes
         """
@@ -242,28 +243,16 @@ class VolumetricModel(DataModel):
         self._calc_adjacency_matrix()
         self._calc_laplacian()
 
-    def _calc_laplacian(self):
-        """
-        Laplacian matrix. Note the sign convention is negatives
-        on the diagonal, and positive values off diagonal. 
-        """
-
-        # Set the laplacian here 
-        lap = self.adj_matrix.todok(copy=True)
-        lap[np.diag_indices(lap.shape[0])] = -lap.sum(1).T
-        assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
-        self.laplacian = lap.tocoo()
-
-    def nodes_to_voxels_ts(self, tensor, pv_sum=True):
+    def nodes_to_voxels_ts(self, tensor, pv_scale=True):
         return tensor
 
-    def nodes_to_voxels(self, tensor, pv_sum=True):
+    def nodes_to_voxels(self, tensor, pv_scale=True):
         return tensor
 
-    def voxels_to_nodes(self, tensor, pv_sum=True):
+    def voxels_to_nodes(self, tensor, edge_correct=True):
         return tensor
 
-    def voxels_to_nodes_ts(self, tensor, pv_sum=True):
+    def voxels_to_nodes_ts(self, tensor, edge_correct=True):
         return tensor
 
     def _calc_adjacency_matrix(self):
@@ -341,13 +330,10 @@ class SurfaceModel(DataModel):
         super().__init__(data, mask=mask, **kwargs)
 
         self.projector = projector 
-        # Process the projector, apply the mask 
-        proj = kwargs['projector']
-        s2v = proj.surf2vol_matrix(pv_weight=True).astype(NP_DTYPE)
-        s2v_nopv = proj.surf2vol_matrix(pv_weight=False).astype(NP_DTYPE)
-        v2s = proj.vol2surf_matrix(edge_correction=True).astype(NP_DTYPE)
-        v2s_noedge = proj.vol2surf_matrix(edge_correction=False).astype(NP_DTYPE)
-        assert self.mask_flattened.size == s2v.shape[0], 'Mask size does not match projector'
+        s2v = projector.surf2vol_matrix(pv_scale=True).astype(NP_DTYPE)
+        s2v_nopv = projector.surf2vol_matrix(pv_scale=False).astype(NP_DTYPE)
+        v2s = projector.vol2surf_matrix(edge_correct=True).astype(NP_DTYPE)
+        v2s_noedge = projector.vol2surf_matrix(edge_correct=False).astype(NP_DTYPE)
         self.n2v_coo = s2v[self.mask_flattened > 0,:].tocoo()
         self.n2v_nopv_coo = s2v_nopv[self.mask_flattened > 0,:].tocoo()
         self.v2n_coo = v2s[:,self.mask_flattened > 0].tocoo()
@@ -398,31 +384,34 @@ class SurfaceModel(DataModel):
     def v2n_noedge_tensor(self):
         if not hasattr(self, "_v2n_noedge_tensor"):
             self._v2n_noedge_tensor = tf.SparseTensor(
-                indices=np.array([self.v2n_noedge_coo.row, self.v2n_noedge_coo.col]).T,
+                indices=np.array([self.v2n_noedge_coo.row, 
+                                  self.v2n_noedge_coo.col]).T,
                 values=self.v2n_noedge_coo.data,
                 dense_shape=self.v2n_noedge_coo.shape)
         return self._v2n_noedge_tensor
 
-    def nodes_to_voxels(self, tensor, pv_sum=True):
-        if pv_sum:
+    def nodes_to_voxels(self, tensor, pv_scale=True):
+        if pv_scale:
             return tf.sparse.sparse_dense_matmul(self.n2v_tensor, tensor)
         else:
             raise tf.sparse.sparse_dense_matmul(self.n2v_nopv_tensor, tensor)
 
-    def nodes_to_voxels_ts(self, tensor, pv_sum=True):
+    def nodes_to_voxels_ts(self, tensor, pv_scale=True):
         assert len(tensor.shape) == 3, 'not a 3D tensor'
-        result = tf.map_fn(lambda t: self.nodes_to_voxels(t, pv_sum), tf.transpose(tensor, [2, 0, 1]))
+        result = tf.map_fn(lambda t: self.nodes_to_voxels(t, pv_scale), 
+                                            tf.transpose(tensor, [2, 0, 1]))
         return tf.transpose(result, [1, 2, 0])
 
-    def voxels_to_nodes(self, tensor, pv_sum=True):
-        if pv_sum:
+    def voxels_to_nodes(self, tensor, edge_correct=True):
+        if edge_correct:
             return tf.sparse.sparse_dense_matmul(self.v2n_tensor, tensor)
         else:
             return tf.sparse.sparse_dense_matmul(self.v2n_noedge_tensor, tensor)
 
-    def voxels_to_nodes_ts(self, tensor, pv_sum=True):
+    def voxels_to_nodes_ts(self, tensor, edge_correct=True):
         assert len(tensor.shape) == 3, 'not a 3D tensor'
-        result = tf.map_fn(lambda t: self.voxels_to_nodes(t, pv_sum), tf.transpose(tensor, [2, 0, 1]))
+        result = tf.map_fn(lambda t: self.voxels_to_nodes(t, edge_correct), 
+                                            tf.transpose(tensor, [2, 0, 1]))
         return tf.transpose(result, [1, 2, 0])
 
     def uncache_tensors(self):
@@ -442,8 +431,8 @@ class HybridModel(SurfaceModel):
         self.projector = projector
         n2v = projector.node2vol_matrix(pv_scale=True).astype(NP_DTYPE)
         n2v_nopv = projector.node2vol_matrix(pv_scale=False).astype(NP_DTYPE)
-        v2n = projector.vol2node_matrix(edge_correction=True).astype(NP_DTYPE)
-        v2n_noedge = projector.vol2node_matrix(edge_correction=False).astype(NP_DTYPE)
+        v2n = projector.vol2node_matrix(edge_correct=True).astype(NP_DTYPE)
+        v2n_noedge = projector.vol2node_matrix(edge_correct=False).astype(NP_DTYPE)
 
         if not self.mask_flattened.size == n2v.shape[0]: 
             raise ValueError('Mask size does not match projector')
