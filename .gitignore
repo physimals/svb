@@ -14,3 +14,5 @@ _version.py
 proj.pkl 
 .ipynb_checkpoints/surf_demo-checkpoint.ipynb
 build
+scratch.py
+.DS_Store
