@@ -91,7 +91,7 @@ with tf.Session() as sess:
         ATT * np.ones([mask.size, 1], dtype=np.float32)
     ], tpts))
 
-vol_data = projector.surf2vol(cortex_data, pv_weight=True)
+vol_data = projector.surf2vol(cortex_data, edge_scale=True)
 vol_data += (subcortex_data * projector.flat_pvs()[:,1,None])
 vol_data += np.random.normal(0, NOISE_VAR, vol_data.shape)
 vol_data = vol_data.reshape(*ref_spc.size, tpts.shape[-1])
