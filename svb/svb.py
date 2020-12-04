@@ -495,7 +495,7 @@ class SvbFit(LogBase):
         
     def train(self, tpts, data,
               batch_size=None, sequential_batches=False,
-              epochs=100, fit_only_epochs=0, display_step=1,
+              epochs=100, fit_only_epochs=0, display_step=10,
               learning_rate=0.1, lr_decay_rate=1.0,
               sample_size=None, ss_increase_factor=1.0,
               revert_post_trials=50, revert_post_final=True,
@@ -586,21 +586,48 @@ class SvbFit(LogBase):
         if revert_post_trials > 0:
             self.log.info(" - Posterior reversion after %i trials", revert_post_trials)
 
-        initial_cost = np.mean(self.evaluate(self.mean_cost))
-        initial_param_means = np.mean(self.evaluate(self.model_means), axis=1) 
-        initial_param_vars = np.mean(self.evaluate(self.post.var), axis=0)
-        initial_noise_ = np.array([ self.evaluate(self.noise_mean).mean(),
-                                    self.evaluate(self.noise_var).mean() ])
+        initial_cost = self.evaluate(self.mean_cost).mean()
+        initial_param_means = self.evaluate(self.model_means).T.mean(0)
+        initial_param_vars = self.evaluate(self.post.var).mean(0)
+        initial_noise = np.array([ self.evaluate(self.noise_mean),
+                                    self.evaluate(self.noise_var) ]).T.mean(0)
 
         initial_latent = (np.mean(self.evaluate(self.param_latent_loss))
                           + np.mean(self.evaluate(self.noise_latent_loss)))
         initial_reconstr = np.mean(self.evaluate(self.reconstr_loss))
         start_time = time.time()
-        self.log.info(" - Start 0000: mean cost=%f (latent=%f, reconstr=%f)"
-                        + " param means=%s param vars=%s noise mean/var=%s", 
-                        initial_cost, initial_latent, initial_reconstr, initial_param_means, 
-                        initial_param_vars, initial_noise_)
-        for epoch in range(epochs):
+
+        # TODO: update here. 
+        if self.data_model.is_volumetric: 
+            vol_inds = slice(self.data_model.n_nodes)
+            surf_inds = None 
+        elif self.data_model.is_pure_surface: 
+            vol_inds = None 
+            surf_inds = slice(self.data_model.n_nodes)
+        else: 
+            n_surf = self.data_model.projector.n_surf_points
+            surf_inds = slice(n_surf)
+            vol_inds = slice(n_surf, n_surf + n_voxels)
+
+        first_str = (" - Start 0000: mean cost=%f (latent=%f, reconstr=%f)" 
+                        % (initial_cost, initial_latent, initial_reconstr))
+
+        space_strings = []
+        with np.printoptions(precision=3):
+            if vol_inds is not None: 
+                vmean = initial_param_means[vol_inds,:].mean(0)
+                vvar = initial_param_vars[vol_inds,:].mean(0)
+                space_strings.append("Volume: param means=%s, param vars=%s" 
+                                    % (vmean, vvar))
+            if surf_inds is not None: 
+                smean = initial_param_means[surf_inds,:].mean(0)
+                svar = initial_param_vars[surf_inds,:].mean(0)
+                space_strings.append("Surface: param means=%s, param vars=%s" 
+                                    % (smean, svar))
+            end_str = "noise mean/var=%s" % initial_noise
+
+        state_str = ("\n"+10*" ").join((first_str, *space_strings, end_str))
+        self.log.info(state_str + "\n")
             try:
                 err = False
                 total_param_latent = np.zeros([n_nodes])
@@ -752,6 +779,9 @@ class SvbFit(LogBase):
         self.log.info(" - Best batch-averaged cost: %f", best_cost)
         self.log.info(" - Final model params: %s", param_means.mean(1))
         self.log.info(" - Final noise variance: %s", mean_noise_params[0])
+
+        print(param_means[:,:162].T)
+        print(param_means[:,162:-1:5].T)
 
         training_history["mean_model_params"][-1, :] = param_means.mean(1)
         training_history["model_params"][:, -1, :] = param_means.T

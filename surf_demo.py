@@ -123,7 +123,7 @@ if not os.path.exists('simdata.nii.gz'):
 
 # Fit options common to both runs 
 options = {
-    "learning_rate" : 0.1,
+    "learning_rate" : 0.05,
     "batch_size" : plds.size,
     "sample_size" : 5,
     "epochs" : 1000,
