@@ -85,25 +85,41 @@ plds = np.arange(0.25, 1.75, 0.25)
 repeats = 8
 data = np.zeros(3*[sq_len] + [ repeats * plds.size ])
 mask = vol_mask.reshape(data.shape[:3])
-surf_model = SurfaceModel(data, surfaces={'LMS': mid_surf}, projector=projector, mask=mask)
-asl_model = AslRestModel(surf_model, plds=plds, repeats=repeats, casl=True) 
+# mask = np.ones_like(mask, dtype=np.bool)
 
-CBF = 60 
+cortex_model = AslRestModel(
+        SurfaceModel(data, projector=projector), 
+        plds=plds, repeats=repeats, casl=True) 
+subcortex_model = AslRestModel(
+            VolumetricModel(data), plds=plds, repeats=repeats, casl=True)
+
+GM_CBF = 60 
+WM_CBF = 20
 ATT = 0.75
-NOISE_VAR = 1
+NOISE_VAR = 0.5
 
-ftiss = CBF * np.ones([surf_model.n_nodes, 1], dtype=np.float32)
-deltiss = ATT * np.ones([surf_model.n_nodes, 1], dtype=np.float32)
-tpts = asl_model.tpts()
-
+tpts = cortex_model.tpts()
 with tf.Session() as sess:
-    surf_data = sess.run(asl_model.evaluate([ftiss, deltiss], tpts))
+    cortex_data = sess.run(cortex_model.evaluate([
+        GM_CBF * np.ones([mid_surf.points.shape[0], 1], dtype=np.float32),
+        ATT * np.ones([mid_surf.points.shape[0], 1], dtype=np.float32)
+    ], tpts))
 
-vol_data = projector.surf2vol(surf_data, edge_scale=True)
+tpts = subcortex_model.tpts()
+with tf.Session() as sess:
+    subcortex_data = sess.run(subcortex_model.evaluate([
+        WM_CBF * np.ones([mask.size, 1], dtype=np.float32),
+        ATT * np.ones([mask.size, 1], dtype=np.float32)
+    ], tpts))
+
+vol_data = projector.surf2vol(cortex_data, edge_scale=True)
+vol_data += (subcortex_data * projector.flat_pvs()[:,1,None])
 vol_data += np.random.normal(0, NOISE_VAR, vol_data.shape)
 pvs = projector.flat_pvs()
 vox_idx = np.argmax(pvs[:,0])
 vol_data = vol_data.reshape(*ref_spc.size, tpts.shape[-1])
+if not os.path.exists('simdata.nii.gz'):
+    ref_spc.save_image(vol_data, 'simdata.nii.gz')
 
 # Fit options common to both runs 
 options = {
