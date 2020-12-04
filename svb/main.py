@@ -241,8 +241,8 @@ def run(data, model_name, output, mask=None, **kwargs):
     if 'projector' not in kwargs: 
         data_model = VolumetricModel(data, mask=mask, **kwargs)
     else:
-        data_model = SurfaceModel(data, mask=mask, **kwargs)
-        # data_model = HybridModel(data, mask=mask, **kwargs)
+        # data_model = SurfaceModel(data, mask=mask, **kwargs)
+        data_model = HybridModel(data, mask=mask, **kwargs)
     
     # Set the default "data_space" for parameters. This is set by 
     # the data_model, "voxel" means voxelwise inference, "node" means
