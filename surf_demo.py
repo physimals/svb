@@ -96,7 +96,7 @@ subcortex_model = AslRestModel(
 GM_CBF = 60 
 WM_CBF = 20
 ATT = 0.75
-NOISE_VAR = 0.5
+NOISE_VAR = 1
 
 tpts = cortex_model.tpts()
 with tf.Session() as sess:
@@ -121,9 +121,10 @@ vol_data = vol_data.reshape(*ref_spc.size, tpts.shape[-1])
 if not os.path.exists('simdata.nii.gz'):
     ref_spc.save_image(vol_data, 'simdata.nii.gz')
 
+# TODO: pass in nibabel volume instead of nifti array 
 # Fit options common to both runs 
 options = {
-    "learning_rate" : 0.01,
+    "learning_rate" : 0.02,
     "batch_size" : plds.size,
     "sample_size" : 5,
     "epochs" : 1000,

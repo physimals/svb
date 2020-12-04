@@ -587,10 +587,10 @@ class SvbFit(LogBase):
             self.log.info(" - Posterior reversion after %i trials", revert_post_trials)
 
         initial_cost = self.evaluate(self.mean_cost).mean()
-        initial_param_means = self.evaluate(self.model_means).T.mean(0)
-        initial_param_vars = self.evaluate(self.post.var).mean(0)
+        initial_param_means = self.evaluate(self.model_means).T
+        initial_param_vars = self.evaluate(self.post.var)
         initial_noise = np.array([ self.evaluate(self.noise_mean),
-                                    self.evaluate(self.noise_var) ]).T.mean(0)
+                                    self.evaluate(self.noise_var) ]).T
 
         initial_latent = (np.mean(self.evaluate(self.param_latent_loss))
                           + np.mean(self.evaluate(self.noise_latent_loss)))
@@ -609,7 +609,7 @@ class SvbFit(LogBase):
             surf_inds = slice(n_surf)
             vol_inds = slice(n_surf, n_surf + n_voxels)
 
-        first_str = (" - Start 0000: mean cost=%f (latent=%f, reconstr=%f)" 
+        first_str = (" - Start 0000: mean cost %.4g (latent %.4g, reconstr %.4g)" 
                         % (initial_cost, initial_latent, initial_reconstr))
 
         space_strings = []
@@ -617,17 +617,19 @@ class SvbFit(LogBase):
             if vol_inds is not None: 
                 vmean = initial_param_means[vol_inds,:].mean(0)
                 vvar = initial_param_vars[vol_inds,:].mean(0)
-                space_strings.append("Volume: param means=%s, param vars=%s" 
+                space_strings.append("Volume: param means %s, param vars %s" 
                                     % (vmean, vvar))
             if surf_inds is not None: 
                 smean = initial_param_means[surf_inds,:].mean(0)
                 svar = initial_param_vars[surf_inds,:].mean(0)
-                space_strings.append("Surface: param means=%s, param vars=%s" 
+                space_strings.append("Surface: param means %s, param vars %s" 
                                     % (smean, svar))
-            end_str = "noise mean/var=%s" % initial_noise
+            end_str = "noise mean/var %s" % initial_noise.mean(0)
 
         state_str = ("\n"+10*" ").join((first_str, *space_strings, end_str))
-        self.log.info(state_str + "\n")
+        self.log.info(state_str)
+
+        for epoch in range(epochs):
             try:
                 err = False
                 total_param_latent = np.zeros([n_nodes])
@@ -676,19 +678,16 @@ class SvbFit(LogBase):
             # End of epoch
             # Extract model parameter estimates
             current_lr, current_ss = self.evaluate(self.learning_rate, self.sample_size)
-            param_means = self.evaluate(self.model_means) # [P, W]
+            param_means = self.evaluate(self.model_means).T # [W, P]
             param_vars = self.evaluate(self.post.var) # [W, P]
-            mean_params = param_means.mean(1)
-            median_params = np.median(param_means, axis=1)
-            mean_var = np.mean(param_vars, axis=0)
 
             # Extract noise parameter estimates. 
             # The noise_mean is actually the 'best' estimate of noise variance, 
             # whereas noise_var is the variance of the noise vairance - yes, confusing!
             # We generally only care about the former 
             noise_params = np.array([ self.evaluate(self.noise_mean), 
-                                      self.evaluate(self.noise_var) ])
-            mean_noise_params = noise_params.mean(1)
+                                      self.evaluate(self.noise_var) ]).T
+            mean_noise_params = noise_params.mean(0)
 
             # Assembele total, mean and median costs. 
             # Note that param_latent is sized according to nodes, 
@@ -715,17 +714,17 @@ class SvbFit(LogBase):
             # mean of model parameter posterior distribution for each node 
             # mean across voxels of (mean of noise variance posterior)
             # mean of noise variance posterior in each voxel 
-            training_history["mean_model_params"][epoch, :] = mean_params
-            training_history["model_params"][:, epoch, :] = param_means.T
-            training_history["mean_noise_params"][epoch] = mean_noise_params[0]
-            training_history["noise_params"][:, epoch] = noise_params[0,:]
+            training_history["mean_model_params"][epoch, :] = param_means.mean(0)
+            training_history["model_params"][:, epoch, :] = param_means
+            # training_history["mean_noise_params"][epoch] = mean_noise_params[0]
+            training_history["noise_params"][:, epoch] = noise_params[:,0]
             try:
                 ak = self.evaluate("ak")
                 training_history["ak"][epoch] = ak
             except:
                 ak = 0
 
-            if err or np.isnan(mean_total_cost) or np.any(np.isnan(mean_params)):
+            if err or np.isnan(mean_total_cost) or np.isnan(param_means).any():
                 # Numerical errors while processing this epoch. Revert to best saved params if possible
                 if best_state is not None:
                     self.set_state(best_state)
@@ -754,37 +753,58 @@ class SvbFit(LogBase):
                     outcome = "Not saving"
 
             if epoch % display_step == 0:
-                state_str = ("mean/median cost=%f/%f, (latent=%f, reconstr=%f), param means=%s,"
-                             + " param vars=%s, noise mean/var=%s, ak=%f, lr=%f, ss=%i") % (
-                    mean_total_cost, median_total_cost, mean_total_latent, mean_total_reconst, median_params, mean_var, mean_noise_params, ak, current_lr, current_ss)
-                self.log.info(" - Epoch %04d: %s - %s", (epoch+1), state_str, outcome)
+                first_line = (("mean/median cost %.4g/%.4g, (latent %.4g, reconstr %.4g)") 
+                                % (mean_total_cost, median_total_cost, mean_total_latent,
+                                    mean_total_reconst))
+
+                space_strings = []
+                with np.printoptions(precision=3):
+                    if vol_inds is not None: 
+                        vmean = param_means[vol_inds,:].mean(0)
+                        vvar = param_vars[vol_inds,:].mean(0)
+                        space_strings.append("Volume: param means %s, param vars %s" 
+                                            % (vmean, vvar))
+                    if surf_inds is not None: 
+                        smean = param_means[surf_inds,:].mean(0)
+                        svar = param_vars[surf_inds,:].mean(0)
+                        space_strings.append("Surface: param means %s, param vars %s" 
+                                            % (smean, svar))
+                    end_str = ("noise mean/var %s, ak %.4g, lr %.4g, ss %.4g" 
+                                % (mean_noise_params, ak, current_lr, current_ss))
+                state_str = ("\n"+10*" ").join((first_line, *space_strings, end_str))
+                self.log.info(" - Epoch %04d: %s - %s", epoch, state_str, outcome)
 
             epoch_end_time = time.time()
             training_history["runtime"][epoch] = float(epoch_end_time - start_time)
 
+        self.log.info(" - End of optimisation. ")
         if revert_post_final and best_state is not None:
             # At the end of training we revert to the state with best mean cost and write a final history step
             # with these values. Note that the cost may not be as reported earlier as this was based on a
             # mean over the training batches whereas here we recalculate the cost for the whole data set.
-            self.log.info("Reverting to best batch-averaged cost")
+            self.log.info(" - Reverting to best batch-averaged cost")
             self.set_state(best_state)
 
         self.feed_dict[self.data_train] = data
         self.feed_dict[self.tpts_train] = tpts
-        param_means = self.evaluate(self.model_means) # [P, W]
+        param_means = self.evaluate(self.model_means).T # [W, P]
         noise_params = np.array([ self.evaluate(self.noise_mean), 
                                   self.evaluate(self.noise_var) ])
-        mean_noise_params = noise_params.mean(1)
+        mean_noise_params = noise_params.mean(0)
 
-        self.log.info(" - Best batch-averaged cost: %f", best_cost)
-        self.log.info(" - Final model params: %s", param_means.mean(1))
-        self.log.info(" - Final noise variance: %s", mean_noise_params[0])
+        with np.printoptions(precision=3):
+            final_str = ["   Best batch-averaged cost: %.4g" % best_cost]
+            mean_str = []
+            if vol_inds is not None: 
+                mean_str.append("%s in volume" % param_means[vol_inds,:].mean(0))
+            if surf_inds is not None: 
+                mean_str.append("%s on surface" % param_means[surf_inds,:].mean(0))
+            final_str.append("Final parameter means: " + ", ".join(mean_str))
+            final_str.append("Final noise variance in volume: %.4g" % mean_noise_params[0])
 
-        print(param_means[:,:162].T)
-        print(param_means[:,162:-1:5].T)
-
-        training_history["mean_model_params"][-1, :] = param_means.mean(1)
-        training_history["model_params"][:, -1, :] = param_means.T
+        self.log.info(("\n"+10*" ").join(final_str))
+        training_history["mean_model_params"][-1, :] = param_means.mean(0)
+        training_history["model_params"][:, -1, :] = param_means
         training_history["mean_noise_params"][-1] = mean_noise_params[0]
         training_history["noise_params"][:, -1] = noise_params[0,:]
         try:
