@@ -4,6 +4,7 @@ Definition of prior distribution
 import numpy as np
 from numpy.lib.arraysetops import isin
 
+from toblerone.utils import is_symmetric, is_nsd
 try:
     import tensorflow.compat.v1 as tf
 except ImportError:
@@ -60,6 +61,9 @@ class Prior(LogBase):
         self.data_space = data_space
 
         if data_model is not None: 
+            # TODO: currently this NN tensor is only required for the Fabber
+            # priors (not the full SVB prior) - remove? This is also the only
+            # reason we require the adj_matrix on the DataModel 
             self.nn = tf.SparseTensor(
                 indices=np.array(
                     [data_model.adj_matrix.row, 
@@ -74,6 +78,11 @@ class Prior(LogBase):
             if (diags > 0).any():
                 raise ValueError("Sign convention on Laplacian matrix: " +
                 "diagonal elements should be negative, off-diag positive.")
+
+            # One day we may be able to relax these constraints, but for 
+            # now we are going to be cautious with them!
+            assert is_nsd(data_model.laplacian), 'Laplacian not NSD'
+            assert is_symmetric(data_model.laplacian), 'Laplacian not symmetric'
 
             self.laplacian = tf.SparseTensor(
                 indices=np.array([
