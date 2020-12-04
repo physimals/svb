@@ -9,7 +9,7 @@ import numpy as np
 import nibabel as nib
 import tensorflow as tf
 from scipy import sparse
-from toblerone.utils import NP_FLOAT, is_symmetric, is_nsd, slice_sparse
+from toblerone.utils import is_symmetric, is_nsd, slice_sparse
 
 from .utils import LogBase, TF_DTYPE, NP_DTYPE
 
@@ -46,6 +46,14 @@ class DataModel(LogBase):
     @property
     def is_volumetric(self):
         return isinstance(self, VolumetricModel)
+
+    @property
+    def is_pure_surface(self):
+        return type(self) is SurfaceModel
+
+    @property
+    def is_hybrid(self):
+        return type(self) is HybridModel
 
     def nifti_image(self, data):
         """
