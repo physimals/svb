@@ -105,6 +105,10 @@ class DataModel(LogBase):
                 raise NotImplementedError()
             self.log.info("Loaded data from %s", data)
         else:
+            # We are assuming volume geometry information for the data, 
+            # in particular a 3mm isotropic voxel size. 
+            aff = np.identity(4)
+            aff[range(3), range(3)] = 3
             nii = nib.Nifti1Image(data.astype(np.int8), np.identity(4))
             data_vol = data
         return nii, data_vol.astype(NP_DTYPE)
@@ -491,47 +495,47 @@ def _calc_volumetric_adjacency(mask, distance_weight=1, vox_size=np.ones(3)):
     :return: square sparse COO matrix of size (mask.sum). 
     """
 
-    # TODO: vectorise this: starting from mask flatnonzero, get all neighbours
-    # by adding/subtracting strides from indices, then apply fltr on neighbours
-    # array at once, then form CSR matrix directly (indptr is the cumsum of the 
-    # fltr row sum). 
-
-    # Voxel neighbours ±1 in each dimension from voxel [0,0,0]
     cardinal_neighbours = np.array([
         [-1,0,0],[1,0,0],[0,-1,0],
         [0,1,0],[0,0,-1],[0,0,1]], 
         dtype=np.int32)
+    dist_weight = np.array((vox_size, vox_size)).T.flatten()
+    dist_weight = 1 / (dist_weight ** distance_weight)
 
-    # Distance weighting is 1 / d^n in each dimension (note the tiling here matches)
-    # the order of cardinal neighbours above, ie, XX YY ZZ. 
-    dist_weights = (1 / np.tile(vox_size, (2,1)).T.flatten()) ** distance_weight
+    # Generate a Vx3 array of all voxel indices (IJK, 000, 001 etc)
+    # Add the vector of cardinal numbers to each to get the neighbourhood
+    # Mask out negative indices or those outside the mask shape. 
+    # Test is applied along final dimension to give a Vx6 bool mask, the 
+    # 6 neighbours of each voxel. 
+    vox_ijk = np.moveaxis(np.indices(mask.shape), 0, 3).reshape(-1,3)
+    vox_neighbours = vox_ijk[:,None,:] + cardinal_neighbours[None,:,:]
+    in_grid = ((vox_neighbours >= 0) & (vox_neighbours < mask.shape)).all(-1)
 
-    # Construct matrix in COO (each entry with row and col index). Iterate only 
-    # over voxels we know are in the mask, but indexed into the complete grid
-    # (so the first voxel in the mask isn't necessarily voxel index 0)
-    shape = mask.shape
-    flat_mask = np.flatnonzero(mask)
-    rows, cols, entries = [], [], []
+    # Flatnonzero and mod division of the mask array gives us numbers in 
+    # the range [0,5] for each accepted neighbour in the mask. These numbers
+    # correspond to X,Y,Z in the distance weights, so this gives us the 
+    # entries for the final adjacency matrix 
+    xyz = np.mod(np.flatnonzero(in_grid), 6)
+    data = dist_weight[xyz]
 
-    # For each voxel, get cardinal neighbours and mask out those not in
-    # the grid. Convert to flat indices, select the corresponding dist
-    # weights, and append into the matrix. We are constructing one row 
-    # at a time. 
-    for idx,vijk in zip(flat_mask, 
-                np.array(np.unravel_index(flat_mask, shape)).T):
-        neighbours = vijk + cardinal_neighbours
-        fltr = (neighbours >= 0).all(-1) & (neighbours < shape).all(-1)
-        neighbours = neighbours[fltr,:]
-        neighbours_inds = np.ravel_multi_index(neighbours.T, shape)
-        rows.append(neighbours_inds.size * [idx])
-        cols.append(neighbours_inds)
-        entries.append(dist_weights[fltr])
-    
-    size = np.prod(shape)
-    entries = np.concatenate(entries)
-    cols = np.concatenate(cols).astype(np.int32)
-    rows = np.concatenate(rows).astype(np.int32)
-    adj_mat = sparse.coo_matrix((entries, (rows, cols)), shape=(size,size))
+    # Column indices are found by converting IJK indices of each accepted
+    # neighbour into flat indices 
+    # Indptr: see sparse.csr_matrix documentation, must be of size rows+1, 
+    # where the first entry is always 0. The entries are found by taking
+    # the cumulative sum of the number of accepted neighbours per voxel, ie, 
+    # sum along columns of the mask. 
+    col = np.ravel_multi_index(vox_neighbours[in_grid,:].T, mask.shape)
+    indptr = np.concatenate(([0], np.cumsum(in_grid.sum(1))))
+
+    # Form CSR matrix 
+    size = np.prod(mask.shape)
+    mat = sparse.csr_matrix((data, col, indptr), shape=(size, size))    
+
+    # Slice out rows/cols not in the mask 
+    mask_flat = np.flatnonzero(mask)
+    mat = slice_sparse(mat, mask_flat, mask_flat)
+
+    return mat
     
     adj_mat = slice_sparse(adj_mat, flat_mask, flat_mask).tocoo()
     assert is_symmetric(adj_mat), 'Volumetric adjacency not symmetric'
