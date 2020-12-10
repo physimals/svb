@@ -150,7 +150,8 @@ class NormalPrior(Prior):
         the variance is no longer fixed and this term must be included.
         """
         dx = tf.subtract(samples, tf.reshape(self.mean, [self.nnodes, 1, 1])) # [W, 1, N]
-        z = tf.div(tf.square(dx), tf.reshape(self.var, [self.nnodes, 1, 1])) # [W, 1, N]
+        z = tf.math.divide(tf.square(dx), 
+                           tf.reshape(self.var, [self.nnodes, 1, 1])) # [W, 1, N]
         term1 = self.log_tf(-0.5*tf.log(tf.reshape(self.var, [self.nnodes, 1, 1])), name="term1")
         term2 = self.log_tf(-0.5*z, name="term2")
         log_pdf = term1 + term2 # [W, 1, N]
