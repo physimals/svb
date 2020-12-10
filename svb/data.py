@@ -99,16 +99,17 @@ class DataModel(LogBase):
         if isinstance(data, six.string_types):
             nii = nib.load(data)
             if data.endswith(".nii") or data.endswith(".nii.gz"):
-                data_vol = nii.get_data()
+                data_vol = nii.get_fdata()
             elif data.endswith(".gii"):
                 # FIXME
                 raise NotImplementedError()
             self.log.info("Loaded data from %s", data)
+        elif isinstance(data, nib.Nifti1Image):
+            data_vol = data.get_fdata()
+            nii = data 
         else:
             # We are assuming volume geometry information for the data, 
             # in particular a 3mm isotropic voxel size. 
-            aff = np.identity(4)
-            aff[range(3), range(3)] = 3
             nii = nib.Nifti1Image(data.astype(np.int8), np.identity(4))
             data_vol = data
         return nii, data_vol.astype(NP_DTYPE)
@@ -256,9 +257,13 @@ class VolumetricModel(DataModel):
         else:
             self.post_init = None
 
-        self.adj_matrix = _calc_volumetric_adjacency(self.mask_vol, distance_weight=0)
+        # The Laplacian is constructed from the adjacency matrix, but has 
+        # distance weighting applied (whereas the adjacency does not)
+        self.adj_matrix = _calc_volumetric_adjacency(self.mask_vol, 
+            self.nii.header['pixdim'][1:4], distance_weight=0)
         self.laplacian = _convert_adjacency_to_laplacian(
-                            _calc_volumetric_adjacency(self.mask_vol, distance_weight=1))
+            _calc_volumetric_adjacency(self.mask_vol, 
+            self.nii.header['pixdim'][1:4], distance_weight=1))
 
     def nodes_to_voxels_ts(self, tensor, edge_scale=True):
         return tensor
@@ -278,6 +283,15 @@ class SurfaceModel(DataModel):
     def __init__(self, data, projector, mask=None, **kwargs):
         super().__init__(data, mask=mask, **kwargs)
 
+        # If data isn't a nibabel image, we need an explicit voxel size 
+        # This is for consistency of Laplacians in surface/volume
+        if isinstance(data, np.ndarray) and ('vox_size' not in kwargs):
+            raise ValueError("'vox_size' kwarg (voxel size) is required in "
+            "Surface/Hybrid mode when data is a np.ndarray. Alternatively, "
+            "pass a Nibabel Nifti image with an appropriate header.")
+        vox_size = kwargs.get('vox_size', None)
+        if vox_size is None: vox_size = self.nii.header['pixdim'][1:4]
+            
         self.projector = projector 
         s2v = projector.surf2vol_matrix(edge_scale=True).astype(NP_DTYPE)
         s2v_noedge = projector.surf2vol_matrix(edge_scale=False).astype(NP_DTYPE)
@@ -380,6 +394,15 @@ class HybridModel(SurfaceModel):
 
         DataModel.__init__(self, data, mask, **kwargs)
 
+        # If data isn't a nibabel image, we need an explicit voxel size 
+        # This is for consistency of Laplacians in surface/volume
+        if isinstance(data, np.ndarray) and ('vox_size' not in kwargs):
+            raise ValueError("'vox_size' kwarg (voxel size) is required in "
+            "Surface/Hybrid mode when data is a np.ndarray. Alternatively, "
+            "pass a Nibabel Nifti image with an appropriate header.")
+        vox_size = kwargs.get('vox_size', None)
+        if vox_size is None: vox_size = self.nii.header['pixdim'][1:4]
+
         # Process the projector, apply the mask 
         self.projector = projector
         n2v = projector.node2vol_matrix(edge_scale=True).astype(NP_DTYPE)
@@ -414,45 +437,45 @@ class HybridModel(SurfaceModel):
         else:
             self.post_init = None
 
-        self.adj_matrix = self._calc_adjacency_matrix(distance_weight=0)
-        self.laplacian = self._calc_laplacian_matrix(distance_weight=1)
+        self.adj_matrix = self._calc_adjacency_matrix(vox_size, distance_weight=0)
+        self.laplacian = self._calc_laplacian_matrix(vox_size, distance_weight=1)
 
-    def _calc_adjacency_matrix(self, distance_weight=0, vox_size=np.ones(3)):
+    def _calc_adjacency_matrix(self, vox_size, distance_weight=0):
         """
         Construct adjacency matrix for surface and volumetric data. This is
         formed by concatenating in block diagonal form the L surface, 
         R surface and volumetric matrices, in that order. 
 
+        :param vox_size: array of 3 values, used for distance weighting of 
+            anisotropic voxel grids.   
         :param distance_weight: int > 0, apply inverse distance weighting, 
             default 0 (do not weight, all egdes are unity), whereas positive
             values will weight edges by 1 / d^n, where d is geometric 
             distance between vertices. 
-        :param vox_size: array of 3 values, used for distance weighting of 
-            anisotropic voxel grids.   
 
         :return: sparse COO matrix, of square size (n_verts + n_unmasked_voxels)      
         """
         surf_adj = self.projector.adjacency_matrix(distance_weight)
-        vol_adj = _calc_volumetric_adjacency(self.mask_vol, distance_weight, vox_size)
+        vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, distance_weight)
         return sparse.block_diag([surf_adj, vol_adj]).astype(NP_DTYPE)
 
-    def _calc_laplacian_matrix(self, distance_weight=1, vox_size=np.ones(3)):
+    def _calc_laplacian_matrix(self, vox_size, distance_weight=1):
         """
         Construct Laplacian matrix for surface and volumetric data. This is
         formed by concatenating in block diagonal form the L surface, 
         R surface and volumetric matrices, in that order. 
 
+        :param vox_size: array of 3 values, used for distance weighting of 
+            anisotropic voxel grids.   
         :param distance_weight: int > 0, apply inverse distance weighting, 
             default 0 (do not weight, all egdes are unity), whereas positive
             values will weight edges by 1 / d^n, where d is geometric 
             distance between vertices. 
-        :param vox_size: array of 3 values, used for distance weighting of 
-            anisotropic voxel grids.   
 
         :return: sparse COO matrix, of square size (n_verts + n_unmasked_voxels)      
         """
         surf_lap = self.projector.mesh_laplacian(distance_weight)
-        vol_adj = _calc_volumetric_adjacency(self.mask_vol, distance_weight, vox_size)
+        vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, distance_weight)
         vol_lap = _convert_adjacency_to_laplacian(vol_adj)
         return sparse.block_diag([surf_lap, vol_lap]).astype(NP_DTYPE)
 
@@ -478,19 +501,19 @@ def _convert_adjacency_to_laplacian(adj_matrix):
     return lap.tocoo().astype(NP_DTYPE)
 
 
-def _calc_volumetric_adjacency(mask, distance_weight=1, vox_size=np.ones(3)):
+def _calc_volumetric_adjacency(mask, vox_size, distance_weight=1):
     """
     Generate adjacency matrix for voxel nearest neighbours.
     Note the result will be indexed according to voxels in the mask (so 
     index 0 refers to the first un-masked voxel). Inverse distance weighting 
     can be applied for non-isotropic voxel sizes (1 / d^n). 
     
+    :param vox_size: array of 3 values, used for distance weighting of 
+        anisotropic voxel grids. 
     :param distance_weight: int > 0, apply inverse distance weighting, 
         default 0 (do not weight, all egdes are unity), whereas positive
         values will weight edges by 1 / d^n, where d is geometric 
         distance between vertices. 
-    :param vox_size: array of 3 values, used for distance weighting of 
-        anisotropic voxel grids. 
 
     :return: square sparse COO matrix of size (mask.sum). 
     """
@@ -534,9 +557,6 @@ def _calc_volumetric_adjacency(mask, distance_weight=1, vox_size=np.ones(3)):
     # Slice out rows/cols not in the mask 
     mask_flat = np.flatnonzero(mask)
     mat = slice_sparse(mat, mask_flat, mask_flat)
-
-    return mat
     
-    adj_mat = slice_sparse(adj_mat, flat_mask, flat_mask).tocoo()
-    assert is_symmetric(adj_mat), 'Volumetric adjacency not symmetric'
-    return adj_mat.tocoo().astype(NP_DTYPE)
+    assert is_symmetric(mat), 'Volumetric adjacency not symmetric'
+    return mat.tocoo().astype(NP_DTYPE)

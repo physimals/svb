@@ -88,7 +88,7 @@ mask = vol_mask.reshape(data.shape[:3])
 # mask = np.ones_like(mask, dtype=np.bool)
 
 cortex_model = AslRestModel(
-        SurfaceModel(data, projector=projector), 
+        SurfaceModel(ref_spc.make_nifti(data), projector=projector), 
         plds=plds, repeats=repeats, casl=True) 
 subcortex_model = AslRestModel(
             VolumetricModel(data), plds=plds, repeats=repeats, casl=True)
@@ -121,7 +121,7 @@ vol_data = vol_data.reshape(*ref_spc.size, tpts.shape[-1])
 if not os.path.exists('simdata.nii.gz'):
     ref_spc.save_image(vol_data, 'simdata.nii.gz')
 
-# TODO: pass in nibabel volume instead of nifti array 
+# TODO: pass in nibabel volume instead of np array 
 # Fit options common to both runs 
 options = {
     "learning_rate" : 0.02,
@@ -136,7 +136,7 @@ options = {
     "repeats": repeats, 
     "casl": True, 
     "ak": 1e-4, 
-    "infer_ak": True 
+    "infer_ak": True, 
 }
 
 # # Fit all parameters in N mode: no spatial prior, ie independent voxel fit 
@@ -147,7 +147,7 @@ options = {
 
 # Fit amp1 and r1 in M mode: spatial prior 
 runtime, svb, training_history = run(
-    vol_data, "aslrest",
+    ref_spc.make_nifti(vol_data), "aslrest",
     "example_out_cov", 
     param_overrides={
         "ftiss" : { "prior_type": "M" },
