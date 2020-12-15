@@ -9,9 +9,11 @@ import numpy as np
 import nibabel as nib
 import tensorflow as tf
 from scipy import sparse
-from toblerone.utils import is_symmetric, is_nsd, slice_sparse
+import toblerone
+from toblerone import utils
+from regtricks import ImageSpace
 
-from .utils import LogBase, TF_DTYPE, NP_DTYPE
+from .utils import LogBase, NP_DTYPE
 
 class DataModel(LogBase):
     """
@@ -280,7 +282,7 @@ class VolumetricModel(DataModel):
 
 class SurfaceModel(DataModel):
 
-    def __init__(self, data, projector, mask=None, **kwargs):
+    def __init__(self, data, mask=None, **kwargs):
         super().__init__(data, mask=mask, **kwargs)
 
         # If data isn't a nibabel image, we need an explicit voxel size 
@@ -291,12 +293,12 @@ class SurfaceModel(DataModel):
             "pass a Nibabel Nifti image with an appropriate header.")
         vox_size = kwargs.get('vox_size', None)
         if vox_size is None: vox_size = self.nii.header['pixdim'][1:4]
-            
-        self.projector = projector 
-        s2v = projector.surf2vol_matrix(edge_scale=True).astype(NP_DTYPE)
-        s2v_noedge = projector.surf2vol_matrix(edge_scale=False).astype(NP_DTYPE)
-        v2s = projector.vol2surf_matrix(edge_scale=True).astype(NP_DTYPE)
-        v2s_noedge = projector.vol2surf_matrix(edge_scale=False).astype(NP_DTYPE)
+
+        self.projector = self.load_or_create_projector(**kwargs)
+        s2v = self.projector.surf2vol_matrix(edge_scale=True).astype(NP_DTYPE)
+        s2v_noedge = self.projector.surf2vol_matrix(edge_scale=False).astype(NP_DTYPE)
+        v2s = self.projector.vol2surf_matrix(edge_scale=True).astype(NP_DTYPE)
+        v2s_noedge = self.projector.vol2surf_matrix(edge_scale=False).astype(NP_DTYPE)
         assert self.mask_flattened.size == s2v.shape[0], 'Mask size does not match projector'
 
         # Knock out voxels not included in the mask. 
@@ -317,8 +319,8 @@ class SurfaceModel(DataModel):
         else:
             self.post_init = None
 
-        self.adj_matrix = projector.adjacency_matrix(distance_weight=0).tocoo().astype(NP_DTYPE)
-        self.laplacian = projector.mesh_laplacian(distance_weight=1).tocoo().astype(NP_DTYPE)
+        self.adj_matrix = self.projector.adjacency_matrix(distance_weight=0).tocoo().astype(NP_DTYPE)
+        self.laplacian = self.projector.mesh_laplacian(distance_weight=1).tocoo().astype(NP_DTYPE)
 
     @property
     def n2v_tensor(self):
@@ -387,10 +389,32 @@ class SurfaceModel(DataModel):
             if hasattr(self, attrname):
                 delattr(self, attrname)
 
-    
+    def load_or_create_projector(self, **kwargs):
+
+        if 'projector' not in kwargs:
+            # TODO: update to accept CLI args 
+            factor = 10
+            cores = 8 
+            s2r = np.eye(4)
+            hemispheres = utils.load_surfs_to_hemispheres(**kwargs)
+            for h in hemispheres: h.apply_transform(s2r)
+            projector = toblerone.Projector(hemispheres, ImageSpace(self.nii), 
+            factor, cores)
+        elif isinstance(kwargs['projector'], six.string_types): 
+            projector = toblerone.Projector.load(kwargs['projector'])
+        elif isinstance(kwargs['projector'], toblerone.Projector):
+            projector = kwargs['projector']
+        else: 
+            raise ValueError("'projector' kwarg must be a path or Projector object")
+
+        if projector.spc != ImageSpace(self.nii):
+            raise ValueError("Reference voxel grid of projector does not "
+            "match that of supplied NIFTI data volume. Projectors must be "
+            "initialised using the voxel grid of the data volume.")
+ 
 class HybridModel(SurfaceModel):
 
-    def __init__(self, data, projector, mask=None, **kwargs):
+    def __init__(self, data, mask=None, **kwargs):
 
         DataModel.__init__(self, data, mask, **kwargs)
 
@@ -403,28 +427,27 @@ class HybridModel(SurfaceModel):
         vox_size = kwargs.get('vox_size', None)
         if vox_size is None: vox_size = self.nii.header['pixdim'][1:4]
 
-        # Process the projector, apply the mask 
-        self.projector = projector
-        n2v = projector.node2vol_matrix(edge_scale=True).astype(NP_DTYPE)
-        n2v_noedge = projector.node2vol_matrix(edge_scale=False).astype(NP_DTYPE)
-        v2n = projector.vol2node_matrix(edge_scale=True).astype(NP_DTYPE)
-        v2n_noedge = projector.vol2node_matrix(edge_scale=False).astype(NP_DTYPE)
+        self.projector = self.load_or_create_projector(**kwargs)
+        n2v = self.projector.node2vol_matrix(edge_scale=True).astype(NP_DTYPE)
+        n2v_noedge = self.projector.node2vol_matrix(edge_scale=False).astype(NP_DTYPE)
+        v2n = self.projector.vol2node_matrix(edge_scale=True).astype(NP_DTYPE)
+        v2n_noedge = self.projector.vol2node_matrix(edge_scale=False).astype(NP_DTYPE)
 
         if not self.mask_flattened.size == n2v.shape[0]: 
             raise ValueError('Mask size does not match projector')
-        if not self.mask_flattened.size + projector.n_surf_points == n2v.shape[1]:
+        if not self.mask_flattened.size + self.projector.n_surf_points == n2v.shape[1]:
             raise ValueError('Mask size does not match projector')
 
         # Knock out voxels from projection matrices that are not in the mask
         # We need to shift indices to account for the offset caused by having 
         # all surface vertices come first (order is L surf, R surf, volume)
         vox_inds = np.flatnonzero(self.mask_flattened)
-        node_inds = np.concatenate((np.arange(projector.n_surf_points), 
-                                    projector.n_surf_points + vox_inds))
-        self.n2v_coo = slice_sparse(n2v, vox_inds, node_inds).tocoo()
-        self.n2v_noedge_coo = slice_sparse(n2v_noedge, vox_inds, node_inds).tocoo()
-        self.v2n_coo = slice_sparse(v2n, node_inds, vox_inds).tocoo()
-        self.v2n_noedge_coo = slice_sparse(v2n_noedge, node_inds, vox_inds).tocoo()
+        node_inds = np.concatenate((np.arange(self.projector.n_surf_points), 
+                                    self.projector.n_surf_points + vox_inds))
+        self.n2v_coo = utils.slice_sparse(n2v, vox_inds, node_inds).tocoo()
+        self.n2v_noedge_coo = utils.slice_sparse(n2v_noedge, vox_inds, node_inds).tocoo()
+        self.v2n_coo = utils.slice_sparse(v2n, node_inds, vox_inds).tocoo()
+        self.v2n_noedge_coo = utils.slice_sparse(v2n_noedge, node_inds, vox_inds).tocoo()
 
         if len(self.n2v_coo.shape) != 2:
             raise ValueError("Vertex-to-voxel mapping must be a matrix")
@@ -556,7 +579,7 @@ def _calc_volumetric_adjacency(mask, vox_size, distance_weight=1):
 
     # Slice out rows/cols not in the mask 
     mask_flat = np.flatnonzero(mask)
-    mat = slice_sparse(mat, mask_flat, mask_flat)
+    mat = utils.slice_sparse(mat, mask_flat, mask_flat)
     
-    assert is_symmetric(mat), 'Volumetric adjacency not symmetric'
+    assert utils.is_symmetric(mat), 'Volumetric adjacency not symmetric'
     return mat.tocoo().astype(NP_DTYPE)

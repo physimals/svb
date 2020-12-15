@@ -13,8 +13,6 @@ import pyvista as pv
 from pyvista import PlotterITK
 from svb_models_asl import AslRestModel 
 from svb.data import SurfaceModel, VolumetricModel
-import pickle
-
 
 try:
     import tensorflow.compat.v1 as tf
@@ -40,7 +38,7 @@ out_r = ((sq_len * vox_size) - 1) / 2
 in_r = out_r - ctx_thickness
 mid_r = out_r - (ctx_thickness / 2)
 mesh = trimesh.creation.icosphere(2, 1)
-shift = 1.5 * (np.random.rand(*mesh.vertices.shape) - 0.5)
+shift = 1 * (np.random.rand(*mesh.vertices.shape) - 0.5)
 orig = (ref_spc.fov_size / 2)
 
 out_surf = tob.Surface.manual((out_r * mesh.vertices) + orig + shift, mesh.faces)
@@ -55,31 +53,17 @@ print("Mean vertex spacing on midsurface {:.2f}mm".format(vertex_dist))
 
 # %%
 hemi = tob.Hemisphere(in_surf, out_surf, 'L')
-if not os.path.exists('proj.pkl'):
-    projector = tob.projection.Projector(hemi, ref_spc)
-    with open('proj.pkl', 'wb') as f:
-        pickle.dump(projector, f)
+if not os.path.exists('proj.h5'):
+    projector = tob.Projector(hemi, ref_spc)
+    projector.save('proj.h5')
 else: 
-    with open('proj.pkl', 'rb') as f:
-        projector = pickle.load(f)
+   projector = tob.Projector.load('proj.h5')
 
 # %%
 vertices_per_voxel = (projector.surf2vol_matrix(True) > 0).sum(1).A.flatten()
 vol_mask = (vertices_per_voxel > 0)
 surf2vol_weights = projector.surf2vol_matrix(True)[vol_mask,:]
 print("Mean vertices per voxel:", (surf2vol_weights > 0).sum(1).mean())
-
-from scipy import sparse
-gp = mid_surf.mesh_laplacian(distance_weight=1)
-
-def sym(a):
-    return not ((np.abs(a - a.T) >= 1e-6).max())
-
-def is_nsd(a):
-    return not (sparse.linalg.eigs(a)[0] > 0).any()
-
-assert sym(gp)
-assert is_nsd(gp)
 
 plds = np.arange(0.25, 1.75, 0.25)
 repeats = 8
@@ -124,6 +108,7 @@ if not os.path.exists('simdata.nii.gz'):
 # TODO: pass in nibabel volume instead of np array 
 # Fit options common to both runs 
 options = {
+    "mode": 'hybrid',
     "learning_rate" : 0.02,
     "batch_size" : plds.size,
     "sample_size" : 5,

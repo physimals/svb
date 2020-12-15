@@ -45,6 +45,9 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          help="Timeseries input data")
         group.add_argument("--mask",
                          help="Optional voxel mask")
+        group.add_argument("--mode", 
+                         help="""Inference domain. For 'surface' or 'hybrid', see further options below.""", 
+                         choices=['volume', 'surface', 'hybrid'], default='volume')
         group.add_argument("--post-init", dest="initial_posterior",
                          help="Initialize posterior from data file saved using --output-post")
         group.add_argument("--model", dest="model_name",
@@ -58,6 +61,22 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          help="Optional logging configuration file, overrides --log-level")
         group.add_argument("--help", action="store_true", default=False,
                          help="Display help")
+
+        group = self.add_argument_group("Surface or hybrid inference options (note that --projector overrides all of the following)")
+        group.add_argument("--projector", help="""Path to a toblerone projector file 
+            (see 'toblerone -prepare-projector'). This replaces all below options.""")
+        group.add_argument("--fsdir", help="""Required if no --projector specified. Path to FreeSurfer
+            subject directory, from which all cortical surfaces will be loaded""")
+        group.add_argument("--LPS", help="Alternative to --fsdir, path to left pial surface")
+        group.add_argument("--LWS", help="Alternative to --fsdir, path to left white surface")
+        group.add_argument("--RPS", help="Alternative to --fsdir, path to right pial surface")
+        group.add_argument("--RWS", help="Alternative to --fsdir, path to right white surface")
+        group.add_argument("--struct2ref", 
+            help="""Required if no --projector specified. Registration transform to align surfaces with the --data volume. Must be in world or FSL FLIRT convention (if FLIRT, also set --flirt).""")
+        group.add_argument("--flirt", help="""Set if --struct2ref is a FSL FLIRT
+            transform (not in world convention). Also set --struct.""", action='store_true')
+        group.add_argument("--struct", help="""Path to source image of --struct2ref
+            transform, ie image surfaces are currently aligned to.""")
         
         group = self.add_argument_group("Inference options")
         group.add_argument("--no-covar", 
@@ -96,6 +115,12 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          type=float, default=0.00001)
 
         group = self.add_argument_group("Output options")
+        # TODO: check over this again
+        group.add_argument("--out-format", choices=['nii', 'gii', 'cii'], 
+            nargs='+', help="""Output format for saving results (NIFTI, GIFTI, CIFTI).
+            In 'volume' mode, only 'nii' can be specified; in 'surface' and 'hybrid' 
+            mode multiple formats can be specified.""")
+
         group.add_argument("--save-var",
                          help="Save parameter variance",
                          action="store_true", default=False)
@@ -236,11 +261,15 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     # Initialize the data model which contains data dimensions, number of time
     # points, list of unmasked voxels, etc
-    if 'projector' not in kwargs: 
+    mode = kwargs.get('mode', 'volume')
+    if mode == 'volume': 
         data_model = VolumetricModel(data, mask=mask, **kwargs)
-    else:
-        # data_model = SurfaceModel(data, mask=mask, **kwargs)
+    elif mode == 'surface':
+        data_model = SurfaceModel(data, mask=mask, **kwargs)
+    elif mode =='hybrid': 
         data_model = HybridModel(data, mask=mask, **kwargs)
+    else: 
+        raise ValueError("'mode' must be 'volume', 'surface' or 'hybrid'")
     
     # Set the default "data_space" for parameters. This is set by 
     # the data_model, "voxel" means voxelwise inference, "node" means
