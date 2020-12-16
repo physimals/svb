@@ -109,6 +109,7 @@ if not os.path.exists('simdata.nii.gz'):
 # Fit options common to both runs 
 options = {
     "mode": 'hybrid',
+    "outformat": ['nii', 'cii'],
     "learning_rate" : 0.02,
     "batch_size" : plds.size,
     "sample_size" : 5,
@@ -122,6 +123,17 @@ options = {
     "casl": True, 
     "ak": 1e-4, 
     "infer_ak": True, 
+    "save_mean": True, 
+    "save_var": True, 
+    "save_std": True, 
+    "save_cost": True, 
+    "save_cost_history": True, 
+    "save_param_history": True, 
+    "save_model_fit": True, 
+    "save_post": True, 
+    "save_runtime": True, 
+    "save_input_data": True, 
+    "save_noise": True
 }
 
 # # Fit all parameters in N mode: no spatial prior, ie independent voxel fit 
