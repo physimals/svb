@@ -551,8 +551,8 @@ class SvbFit(LogBase):
             "reconstruction_cost" : np.zeros([n_voxels, epochs+1]),
             "param_latent_loss" : np.zeros([n_nodes, epochs+1]), 
             "noise_latent_loss" : np.zeros([n_voxels, epochs+1]),
-            "model_params" : np.zeros([n_nodes, epochs+1, self.n_model_params]),
-            "mean_model_params" : np.zeros([epochs+1, self.n_model_params]),
+            "node_params" : np.zeros([n_nodes, epochs+1, self.n_model_params]),
+            "mean_node_params" : np.zeros([epochs+1, self.n_model_params]),
             "noise_params": np.zeros([n_voxels, epochs+1]),
             "mean_noise_params": np.zeros([epochs+1]),
             "ak" : np.zeros([epochs+1]),
@@ -578,7 +578,7 @@ class SvbFit(LogBase):
 
         # Each epoch passes through the whole data but it may do this in 'batches' so there may be
         # multiple training iterations per epoch, one for each batch
-        self.log.info("Training model...")
+        self.log.info("Starting inference...")
         self.log.info(" - Number of training epochs: %i", epochs)
         self.log.info(" - %i voxels of %i time points (processed in %i batches of target size %i)" , n_voxels, n_timepoints, n_batches, batch_size)
         self.log.info(" - Initial learning rate: %.5f (decay rate %.3f)", learning_rate, lr_decay_rate)
@@ -629,7 +629,7 @@ class SvbFit(LogBase):
         state_str = ("\n"+10*" ").join((first_str, *space_strings, end_str))
         self.log.info(state_str)
 
-        for epoch in range(epochs):
+        for epoch in range(1,epochs+1):
             try:
                 err = False
                 total_param_latent = np.zeros([n_nodes])
@@ -714,8 +714,8 @@ class SvbFit(LogBase):
             # mean of model parameter posterior distribution for each node 
             # mean across voxels of (mean of noise variance posterior)
             # mean of noise variance posterior in each voxel 
-            training_history["mean_model_params"][epoch, :] = param_means.mean(0)
-            training_history["model_params"][:, epoch, :] = param_means
+            training_history["mean_node_params"][epoch, :] = param_means.mean(0)
+            training_history["node_params"][:, epoch, :] = param_means
             # training_history["mean_noise_params"][epoch] = mean_noise_params[0]
             training_history["noise_params"][:, epoch] = noise_params[:,0]
             try:
@@ -777,7 +777,7 @@ class SvbFit(LogBase):
             epoch_end_time = time.time()
             training_history["runtime"][epoch] = float(epoch_end_time - start_time)
 
-        self.log.info(" - End of optimisation. ")
+        self.log.info(" - End of inference. ")
         if revert_post_final and best_state is not None:
             # At the end of training we revert to the state with best mean cost and write a final history step
             # with these values. Note that the cost may not be as reported earlier as this was based on a
@@ -803,8 +803,8 @@ class SvbFit(LogBase):
             final_str.append("Final noise variance in volume: %.4g" % mean_noise_params[0])
 
         self.log.info(("\n"+10*" ").join(final_str))
-        training_history["mean_model_params"][-1, :] = param_means.mean(0)
-        training_history["model_params"][:, -1, :] = param_means
+        training_history["mean_node_params"][-1, :] = param_means.mean(0)
+        training_history["node_params"][:, -1, :] = param_means
         training_history["mean_noise_params"][-1] = mean_noise_params[0]
         training_history["noise_params"][:, -1] = noise_params[0,:]
         try:
