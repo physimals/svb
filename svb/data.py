@@ -84,8 +84,6 @@ class DataModel(LogBase):
         :param cov: Posterior covariance as Numpy array [W, P, P]
         :return: MVN structure as Numpy array [W, Q] where Q is the number of upper triangle elements
         """
-        if cov.shape[0] != self.n_unmasked_voxels or mean.shape[0] != self.n_unmasked_voxels:
-            raise ValueError("Posterior data has %i voxels - inconsistent with data model containing %i unmasked voxels" % (cov.shape[0], self.n_unmasked_voxels))
 
         num_params = mean.shape[1]
         vols = []
@@ -279,6 +277,10 @@ class VolumetricModel(DataModel):
     def voxels_to_nodes_ts(self, tensor, edge_scale=True):
         return tensor
 
+    @property
+    def vol_slicer(self):
+        """Slicer to access all volumetric nodes within data model"""
+        return slice(self.n_unmasked_voxels)
 
 class SurfaceModel(DataModel):
 
@@ -412,6 +414,41 @@ class SurfaceModel(DataModel):
             "match that of supplied NIFTI data volume. Projectors must be "
             "initialised using the voxel grid of the data volume.")
  
+        return projector
+
+    @property
+    def surf_slicer(self):
+        """Slicer to access all surface nodes (regardless of hemisphere)"""
+        return slice(self.n_nodes)
+
+    def gifti_image(self, data, side):
+        """
+        Preapre a GIFTI functional file (shape of vertices x N, ie timeseries)
+        """
+
+        if not data.shape[0] == self.projector.hemi_dict[side].n_points: 
+            raise ValueError("Incorrect data shape for surface")
+
+        meta = {'Description': f'{side} cortex parameter estimates produced by svb'}
+        arr = nib.gifti.GiftiDataArray(data.astype(np.float32), 
+            intent='NIFTI_INTENT_ESTIMATE',  
+            datatype='NIFTI_TYPE_FLOAT32', 
+            meta=meta)
+        gii = nib.GiftiImage(darrays=[arr])
+        return gii 
+
+    @property
+    def iter_hemi_slicers(self):
+        """
+        Slicers to access the nodes corresponding to each hemisphere 
+        that is present in the projector
+        """
+        start = 0 
+        for hemi in self.projector.iter_hemis:
+            end = start + hemi.n_points
+            yield slice(start, end)
+            start += end 
+
 class HybridModel(SurfaceModel):
 
     def __init__(self, data, mask=None, **kwargs):
@@ -502,6 +539,20 @@ class HybridModel(SurfaceModel):
         vol_lap = _convert_adjacency_to_laplacian(vol_adj)
         return sparse.block_diag([surf_lap, vol_lap]).astype(NP_DTYPE)
 
+    @property
+    def vol_slicer(self):
+        """Slicer to access all volumetric nodes within data model"""
+        n = self.n_nodes
+        return slice(n - self.n_unmasked_voxels, n)
+
+    @property
+    def surf_slicer(self):
+        """
+        Slicer to access all surface nodes within data model 
+        (either hemisphere)
+        """
+        n = self.n_nodes
+        return slice(n - self.n_unmasked_voxels)
 
 
 

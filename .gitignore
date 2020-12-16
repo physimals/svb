@@ -11,8 +11,9 @@ dist/
 _version.py
 *logfile*
 .vscode 
-proj.pkl 
+*.h5
 .ipynb_checkpoints/surf_demo-checkpoint.ipynb
 build
 scratch.py
 .DS_Store
+example_out*

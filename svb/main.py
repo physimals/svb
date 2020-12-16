@@ -12,6 +12,7 @@ import logging
 import logging.config
 import argparse
 import re
+from functools import partial
 
 import numpy as np
 import nibabel as nib
@@ -115,12 +116,6 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          type=float, default=0.00001)
 
         group = self.add_argument_group("Output options")
-        # TODO: check over this again
-        group.add_argument("--out-format", choices=['nii', 'gii', 'cii'], 
-            nargs='+', help="""Output format for saving results (NIFTI, GIFTI, CIFTI).
-            In 'volume' mode, only 'nii' can be specified; in 'surface' and 'hybrid' 
-            mode multiple formats can be specified.""")
-
         group.add_argument("--save-var",
                          help="Save parameter variance",
                          action="store_true", default=False)
@@ -131,7 +126,7 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          help="Save parameter history by epoch",
                          action="store_true", default=False)
         group.add_argument("--save-noise",
-                         help="Save noise parameter",
+                         help="Save noise parameter (in 'nii' format only)",
                          action="store_true", default=False)
         group.add_argument("--save-cost",
                          help="Save cost",
@@ -145,6 +140,17 @@ class SvbArgumentParser(argparse.ArgumentParser):
         group.add_argument("--save-post", "--save-posterior",
                          help="Save full posterior distribution",
                          action="store_true", default=False)
+        # FIXME: this is chunky... make sense?
+        group.add_argument("--out-format", choices=['nii', 'gii', 'cii', 'flatnii'], 
+            nargs='+', help="""Output format for model parameters except noise (multiple 
+            may be set). The default (and only choice) for volume mode is 'nii' (NIFTI). 
+            The default for surface mode is 'gii' (GIFTI). 
+            The default for hybrid mode is 'nii gii' (subcortex and cortex
+            respectively). 'cii' (CIFTI) may only be set in hybrid mode. 
+            'flatnii' may be set in surface or hybrid mode and projects surface 
+            data back into voxel space (and in the case of hybrid mode, merges it
+            with existing volume data). 
+            """)
 
     def parse_args(self, argv=None, namespace=None):
         # Parse built-in fixed options but skip unrecognized options as they may be
@@ -209,7 +215,7 @@ class SvbArgumentParser(argparse.ArgumentParser):
                         consume_next_arg = (param, thing)
                 else:
                     raise ValueError("Unrecognized argument: %s" % arg)
-
+                
         return options
 
 def main():
@@ -259,17 +265,36 @@ def run(data, model_name, output, mask=None, **kwargs):
     log = logging.getLogger(__name__)
     log.info("SVB %s", __version__)
 
+    # Set defaults for mode and outformat if not supplied. 
+    # If no outformat, set as None, and if there is one, 
+    # make sure it is a list 
+    mode = kwargs.get('mode', 'volume')
+    outformat = kwargs.get('outformat', None)
+    if outformat and not isinstance(outformat, list):
+        outformat = [outformat]
+
     # Initialize the data model which contains data dimensions, number of time
     # points, list of unmasked voxels, etc
-    mode = kwargs.get('mode', 'volume')
     if mode == 'volume': 
+        if outformat is None: 
+            outformat = ['nii']
+        elif outformat != ['nii']:
+            raise ValueError("outformat must be 'nii' in volume mode")
         data_model = VolumetricModel(data, mask=mask, **kwargs)
     elif mode == 'surface':
+        if outformat is None: 
+            outformat = ['gii']
+        elif (set(outformat) & set(['cii', 'nii'])): 
+            illegal = list(set(outformat) & set(['cii', 'nii']))
+            raise ValueError("outformat cannot be {} in surface mode"
+                                .format(illegal))
         data_model = SurfaceModel(data, mask=mask, **kwargs)
     elif mode =='hybrid': 
+        if outformat is None: 
+            outformat = ['nii', 'gii']
         data_model = HybridModel(data, mask=mask, **kwargs)
     else: 
-        raise ValueError("'mode' must be 'volume', 'surface' or 'hybrid'")
+        raise ValueError("mode must be 'volume', 'surface' or 'hybrid'")
     
     # Set the default "data_space" for parameters. This is set by 
     # the data_model, "voxel" means voxelwise inference, "node" means
@@ -300,55 +325,145 @@ def run(data, model_name, output, mask=None, **kwargs):
     else:
         params = fwd_model.params
 
-    # # TODO: all output stages need to be updated for surf/gifti usage. 
-    # # Write out parameter mean and variance images
-    # means = svb.evaluate(svb.model_means)
-    # variances = svb.evaluate(svb.model_vars)
-    # for idx, param in enumerate(params):
-    #     if kwargs.get("save_mean", False):
-    #         data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param.name))
-    #     if kwargs.get("save_var", False):
-    #         data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param.name))
-    #     if kwargs.get("save_std", False):
-    #         data_model.nifti_image(np.sqrt(variances[idx])).to_filename(os.path.join(output, "std_%s.nii.gz" % param.name))
+    # Prepare to write out results
+    means = svb.evaluate(svb.model_means)
+    variances = svb.evaluate(svb.model_vars)
+    noise = svb.evaluate(svb.noise_mean)
 
-    # # Write out reconstruction cost history
-    # cost_history_v = training_history["reconstruction_cost"]
-    # if kwargs.get("save_cost", False):
-    #     data_model.nifti_image(cost_history_v[..., -1]).to_filename(os.path.join(output, "cost.nii.gz"))
-    # if kwargs.get("save_cost_history", False):
-    #     data_model.nifti_image(cost_history_v).to_filename(os.path.join(output, "cost_history.nii.gz"))
+    # Get the formats for output (can be multiple formats), sanity check. 
 
-    # # Write out voxelwise parameter history
-    # if kwargs.get("save_param_history", False):
-    #     param_history_v = training_history["voxel_params"]
-    #     for idx, param in enumerate(params):
-    #         data_model.nifti_image(param_history_v[:, :, idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param.name))
+    if 'gii' in outformat: assert (data_model.is_hybrid or data_model.is_hybrid)
+    if 'cii' in outformat: assert (data_model.is_hybrid or data_model.is_hybrid)
+    if 'nii' in outformat: assert not (data_model.is_pure_surface)
+    if 'flatnii' in outformat: assert not (data_model.is_volumetric)
 
-    # # Write out modelfit
-    # if kwargs.get("save_model_fit", False):
-    #     modelfit = svb.evaluate(svb.modelfit)
-    #     data_model.nifti_image(modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
+    # In hybrid mode, the inference nodes representing volume and surface are 
+    # concatenated together (the data model takes care of this). For extracting 
+    # the surface and volume components out, the data model provides slice objects.
+    vslice, sslice = slice(0), slice(0) 
+    if hasattr(data_model, 'vol_slicer'): 
+        vslice = data_model.vol_slicer
+    if hasattr(data_model, 'surf_slicer'):
+        sslice = data_model.surf_slicer
 
-    # # Write out posterior
-    # if kwargs.get("save_post", False):
-    #     post_data = data_model.posterior_data(svb.evaluate(svb.post.mean), svb.evaluate(svb.post.cov))
-    #     log.info("Posterior data shape: %s", post_data.shape)
-    #     data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
+    # Helper functions for constructing output paths in terms of parameter 
+    # name and whether data is volumetric or surface. The partial function
+    # gifti_write is pre-configured to split the surface data across each 
+    # hemisphere of the cortex, if two are present. 
+    makepathbase = lambda s: os.path.join(output, s)
+    makevpath = lambda s: makepathbase(f"{s}.nii.gz")
+    makespath = lambda s,side: makepathbase(f"{s}_{side}_cortex.func.gii")
+    gifti_writer = partial(_write_giftis, 
+                            data_model=data_model, path_gen=makespath)
 
-    # # Write out runtime
-    # if kwargs.get("save_runtime", False):
-    #     with open(os.path.join(output, "runtime"), "w") as runtime_f:
-    #         runtime_f.write("%f\n" % runtime)
+    # Output model parameters 
+    for idx, param in enumerate(params):
 
-    #     runtime_history = training_history["runtime"]
-    #     with open(os.path.join(output, "runtime_history"), "w") as runtime_f:
-    #         for epoch_time in runtime_history:
-    #             runtime_f.write("%f\n" % epoch_time)
+        # Mean parameter values 
+        if kwargs.get("save_mean", False):
+            mean = means[idx]
+            name = f"mean_{param.name}"
+            if 'nii' in outformat: 
+                p = makevpath(name)
+                data_model.nifti_image(mean[vslice]).to_filename(p)
+            if 'gii' in outformat:
+                gifti_writer(mean[sslice], name)
 
-    # # Write out input data
-    # if kwargs.get("save_input_data", False):
-    #     data_model.nifti_image(data_model.data_flattened).to_filename(os.path.join(output, "input_data.nii.gz"))
+        # Variances   
+        if kwargs.get("save_var", False):
+            var = variances[idx]
+            name = f"var_{param.name}"
+            if 'nii' in outformat: 
+                p = makevpath(name)
+                data_model.nifti_image(var[vslice]).to_filename(p)
+            if 'gii' in outformat:
+                sdata = variances[idx][sslice]
+                gifti_writer(sdata, name)
+
+        # Std deviations
+        if kwargs.get("save_std", False):
+            std = np.sqrt(variances[idx])
+            name = f"std_{param.name}"
+            if 'nii' in outformat: 
+                p = makevpath(name)
+                data_model.nifti_image(std[vslice]).to_filename(p)
+            if 'gii' in outformat:
+                gifti_writer(std[sslice], name)
+
+    # Noise (volumetric only)
+    if kwargs.get("save_noise", False):
+        p = makevpath("noise")
+        data_model.nifti_image(noise).to_filename(p)
+
+    # Reconstruction cost (volumetric only)
+    cost_history_v = training_history["reconstruction_cost"]
+    if kwargs.get("save_cost", False):
+        data_model.nifti_image(cost_history_v[..., -1]).to_filename(makevpath("cost"))
+    if kwargs.get("save_cost_history", False):
+        data_model.nifti_image(cost_history_v).to_filename(makevpath("cost_history"))
+
+    # Node-wise parameter history 
+    if kwargs.get("save_param_history", False):
+        param_history = training_history["node_params"]
+        for idx, param in enumerate(params):
+            phist = param_history[...,idx]
+            name = f"mean_{param.name}_history"
+            if 'nii' in outformat: 
+                p = makevpath(name)
+                data_model.nifti_image(phist[vslice,:]).to_filename(p)
+            if 'gii' in outformat:
+                gifti_writer(phist[sslice,:], name)
+
+    # Model fit 
+    if kwargs.get("save_model_fit", False):
+        modelfit = svb.evaluate(svb.modelfit)
+        name = "modelfit"
+        if 'nii' in outformat: 
+            p = makevpath(name)
+            data_model.nifti_image(modelfit[vslice]).to_filename(p)
+        if 'gii' in outformat:
+            gifti_writer(modelfit[sslice], name)
+
+    # Posterior (means and upper half of covariance matrix)
+    # FIXME: surface is written out as a GIFTI series following the same 
+    # convention as for volume. 
+    if kwargs.get("save_post", False):
+        name = "posterior.nii.gz"
+        if 'nii' in outformat: 
+            p = makevpath(name)
+            post_data = data_model.posterior_data(
+                svb.evaluate(svb.post.mean)[vslice,:], 
+                svb.evaluate(svb.post.cov)[vslice,:])
+            data_model.nifti_image(post_data).to_filename(p)
+            log.info("Volumetric posterior data shape: %s", post_data.shape)
+        if 'gii' in outformat:
+            post_data = data_model.posterior_data(
+                svb.evaluate(svb.post.mean)[sslice,:], 
+                svb.evaluate(svb.post.cov)[sslice,:])
+            gifti_writer(post_data, name)
+            log.info("Surface posterior data shape: %s", post_data.shape)
+
+    # Runtime (text files)
+    # FIXME: added .txt extensions
+    if kwargs.get("save_runtime", False):
+        with open(os.path.join(output, "runtime.txt"), "w") as runtime_f:
+            runtime_f.write("%f\n" % runtime)
+
+        runtime_history = training_history["runtime"]
+        with open(os.path.join(output, "runtime_history.txt"), "w") as runtime_f:
+            for epoch_time in runtime_history:
+                runtime_f.write("%f\n" % epoch_time)
+
+    # Input data (volumetric only)
+    if kwargs.get("save_input_data", False):
+        p = makevpath("input_data")
+        data_model.nifti_image(data_model.data_flattened).to_filename(p)
+
+    # Projector, if it exists. 
+    # FIXME: a nice thing to do for repeat runs? this way the user can re-use it if anything
+    # goes wrong, but it would be nice to let them know this is default behaviour. 
+    if hasattr(data_model, "projector"):
+        data_model.projector.save(os.path.join(output, "projector.h5"))
 
     log.info("Output written to: %s", output)
     return runtime, svb, training_history
@@ -408,5 +523,27 @@ def _makedirs(data_vol, exist_ok=False):
         if not exist_ok or exc.errno != errno.EEXIST:
             raise
 
+def _write_giftis(sdata, name_base, data_model, path_gen):
+    """
+    Helper for writing surface data across one or both 
+    hemispheres that are present within a data model. Use 
+    a partial function call with data_model and path_gen 
+    to make a simple 'writer' function. 
+
+    :param sdata: data array, shape (all surface nodes x N). 
+    :param name_base: file base name, eg 'mean_ftiss'
+    :param data_model: data model used for SVB run 
+    :param path_gen: callable that accepts name_base and side, 
+                    both strings, and returns a string path
+
+    """
+    for hemi, hslice in zip(data_model.projector.iter_hemis, 
+                            data_model.iter_hemi_slicers): 
+        d = sdata[hslice]
+        p = path_gen(name_base, hemi.side)
+        g = data_model.gifti_image(d, hemi.side)
+        nib.save(g, p)
+
+ 
 if __name__ == "__main__":
     main()
