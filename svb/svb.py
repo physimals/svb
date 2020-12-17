@@ -624,12 +624,14 @@ class SvbFit(LogBase):
                 svar = initial_param_vars[surf_inds,:].mean(0)
                 space_strings.append("Surface: param means %s, param vars %s" 
                                     % (smean, svar))
-            end_str = "noise mean/var %s" % initial_noise.mean(0)
+            end_str = "Noise mean/var %s" % initial_noise.mean(0)
 
         state_str = ("\n"+10*" ").join((first_str, *space_strings, end_str))
         self.log.info(state_str)
 
-        for epoch in range(1,epochs+1):
+        # Potential for a bug here: don't use range(1, epochs+1) as it 
+        # interacts badly with training the ak parameter. 
+        for epoch in range(epochs):
             try:
                 err = False
                 total_param_latent = np.zeros([n_nodes])
@@ -752,7 +754,7 @@ class SvbFit(LogBase):
                 else:
                     outcome = "Not saving"
 
-            if epoch % display_step == 0:
+            if (epoch % display_step == 0) and (epoch > 0):
                 first_line = (("mean/median cost %.4g/%.4g, (latent %.4g, reconstr %.4g)") 
                                 % (mean_total_cost, median_total_cost, mean_total_latent,
                                     mean_total_reconst))
