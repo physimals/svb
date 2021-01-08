@@ -90,7 +90,13 @@ class SvbArgumentParser(argparse.ArgumentParser):
         group.add_argument("--allow-nan",
                          dest="suppress_nan",
                          help="Do not suppress NaN values in posterior",
-                         action="store_false", default=True)
+                         action="store_false", default=True)      
+        group.add_argument("--pvcorr", 
+                         help="Perform PVEc (volumetric mode only, this is automatic in surface or hybrid mode)", action='store_true', default=False)
+        group.add_argument("--pvgm", 
+                         help="GM PV estimates for PVEc")     
+        group.add_argument("--pvwm", 
+                         help="GM PV estimates for PVEc")     
 
         group = self.add_argument_group("Training options")
         group.add_argument("--epochs",
@@ -305,7 +311,8 @@ def run(data, model_name, output, mask=None, **kwargs):
         data_space = kwargs.pop("data_space")
 
     # Create the generative model
-    fwd_model = get_model_class(model_name)(data_model, data_space=data_space, **kwargs)
+    fwd_model = get_model_class(model_name)
+    fwd_model = fwd_model(data_model, data_space=data_space, **kwargs)
     fwd_model.log_config()
 
     # Check that any parameter overrides actually match parameters in the model
