@@ -2,6 +2,7 @@
 
 # %%
 import os
+import os.path as op 
 import sys 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,8 +12,9 @@ import trimesh
 from svb.main import run
 import pyvista as pv 
 from pyvista import PlotterITK
-from svb_models_asl import AslRestModel 
 from svb.data import SurfaceModel, VolumetricModel
+from svb_models_asl import AslRestModel 
+
 
 try:
     import tensorflow.compat.v1 as tf
@@ -60,64 +62,57 @@ else:
    projector = tob.Projector.load('proj.h5')
 
 # %%
-vertices_per_voxel = (projector.surf2vol_matrix(True) > 0).sum(1).A.flatten()
-vol_mask = (vertices_per_voxel > 0)
-surf2vol_weights = projector.surf2vol_matrix(True)[vol_mask,:]
-print("Mean vertices per voxel:", (surf2vol_weights > 0).sum(1).mean())
+flat_pvs = projector.flat_pvs()
+flat_mask = flat_pvs[:,:2].any(-1)
+mask = flat_mask.reshape(ref_spc.size)
 
-plds = np.arange(0.25, 1.75, 0.25)
+plds = np.arange(0.5, 2, 0.25)
 repeats = 8
 data = np.zeros(3*[sq_len] + [ repeats * plds.size ])
-mask = vol_mask.reshape(data.shape[:3])
-# mask = np.ones_like(mask, dtype=np.bool)
-
-cortex_model = AslRestModel(
-        SurfaceModel(ref_spc.make_nifti(data), projector=projector), 
-        plds=plds, repeats=repeats, casl=True) 
-subcortex_model = AslRestModel(
-            VolumetricModel(data), plds=plds, repeats=repeats, casl=True)
 
 GM_CBF = 60 
 WM_CBF = 20
-ATT = 0.75
+GM_ATT = 1.3
+WM_ATT = 1.6
 NOISE_VAR = 1
+
+pvs = flat_pvs.reshape(*ref_spc.size,3)
+
+cortex_model = AslRestModel(
+        VolumetricModel(ref_spc.make_nifti(data), mask=mask), 
+        plds=plds, repeats=repeats, casl=True, pvcorr=True, 
+        pvgm=flat_pvs[flat_mask,0], pvwm=flat_pvs[flat_mask,1])
+        # pvgm=0, pvwm=1)
 
 tpts = cortex_model.tpts()
 with tf.Session() as sess:
-    cortex_data = sess.run(cortex_model.evaluate([
-        GM_CBF * np.ones([mid_surf.points.shape[0], 1], dtype=np.float32),
-        ATT * np.ones([mid_surf.points.shape[0], 1], dtype=np.float32)
+    ones = np.ones([flat_mask.sum(), 1], dtype=np.float32)
+    brain_data = sess.run(cortex_model.evaluate([
+        GM_CBF * ones, GM_ATT * ones, WM_CBF * ones, WM_ATT * ones
     ], tpts))
 
-tpts = subcortex_model.tpts()
-with tf.Session() as sess:
-    subcortex_data = sess.run(subcortex_model.evaluate([
-        WM_CBF * np.ones([mask.size, 1], dtype=np.float32),
-        ATT * np.ones([mask.size, 1], dtype=np.float32)
-    ], tpts))
 
-vol_data = projector.surf2vol(cortex_data, edge_scale=True)
-vol_data += (subcortex_data * projector.flat_pvs()[:,1,None])
-vol_data += np.random.normal(0, NOISE_VAR, vol_data.shape)
-pvs = projector.flat_pvs()
-vox_idx = np.argmax(pvs[:,0])
+brain_data += np.random.normal(0, NOISE_VAR, brain_data.shape)
+vol_data = np.zeros((ref_spc.size.prod(), tpts.shape[1]))
+vol_data[flat_mask,:] = brain_data
 vol_data = vol_data.reshape(*ref_spc.size, tpts.shape[-1])
-if not os.path.exists('simdata.nii.gz'):
-    ref_spc.save_image(vol_data, 'simdata.nii.gz')
+ref_spc.save_image(vol_data, 'simdata.nii.gz')
+ref_spc.save_image(pvs, 'pvs.nii.gz')
 
-# TODO: pass in nibabel volume instead of np array 
-# Fit options common to both runs 
 options = {
-    "mode": 'hybrid',
-    "outformat": ['nii', 'cii'],
+    # "mode": 'hybrid',
+    # "outformat": ['nii', 'cii'],
     "learning_rate" : 0.02,
     "batch_size" : plds.size,
-    "sample_size" : 5,
+    "sample_size" : 8,
     "epochs" : 1000,
     "log_stream" : sys.stdout,
-    "prior_type": "N",
+    "prior_type": "M",
     "mask" : mask,
-    "projector" : projector,
+    "pvcorr" : True,
+    "pvgm" : pvs[...,0],
+    "pvwm": pvs[...,1],
+    "pvcorr": True,
     "plds": plds, 
     "repeats": repeats, 
     "casl": True, 
@@ -146,10 +141,10 @@ options = {
 runtime, svb, training_history = run(
     ref_spc.make_nifti(vol_data), "aslrest",
     "example_out_cov", 
-    param_overrides={
-        "ftiss" : { "prior_type": "M" },
-        "delttiss" : { "prior_type": "M" }
-    },
+    # param_overrides={
+    #     "ftiss" : { "prior_type": "M" },
+    #     "delttiss" : { "prior_type": "M" }
+    # },
     **options)
 
 
