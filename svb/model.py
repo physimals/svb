@@ -195,4 +195,9 @@ class Model(LogBase):
             log = self.log
         log.info("Model: %s", str(self))
         for option in self.OPTIONS:
-            log.info(" - %s: %s", option.desc, str(getattr(self, option.attr_name)))
+            attr = getattr(self, option.attr_name)
+            if isinstance(attr, np.ndarray):
+                msg = f"array of shape {attr.shape}"
+            else: 
+                msg = str(attr)
+            log.info(" - %s: %s", option.desc, msg)
