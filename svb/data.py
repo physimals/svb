@@ -315,9 +315,9 @@ class SurfaceModel(DataModel):
         self.v2n_noedge_coo = v2s_noedge[:,vox_inds].tocoo()
 
         if len(self.n2v_coo.shape) != 2:
-            raise ValueError("Vertex-to-voxel mapping must be a matrix")
+            raise ValueError("Node-voxel mapping must be a matrix")
         if self.n2v_coo.shape[0] != self.n_unmasked_voxels:
-            raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
+            raise ValueError("Node-voxel matrix - number of columns must match number of unmasked voxels")
         self.n_nodes = self.n2v_coo.shape[1]
 
         if kwargs.get("initial_posterior", None):
@@ -490,10 +490,11 @@ class HybridModel(SurfaceModel):
         self.v2n_coo = utils.slice_sparse(v2n, node_inds, vox_inds).tocoo()
         self.v2n_noedge_coo = utils.slice_sparse(v2n_noedge, node_inds, vox_inds).tocoo()
 
+        # FIXME: should read node, not vertex
         if len(self.n2v_coo.shape) != 2:
-            raise ValueError("Vertex-to-voxel mapping must be a matrix")
+            raise ValueError("Node-voxel mapping must be a matrix")
         if self.n2v_coo.shape[0] != self.n_unmasked_voxels:
-            raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
+            raise ValueError("Node-voxel matrix - number of columns must match number of unmasked voxels")
         self.n_nodes = self.n2v_coo.shape[1]
 
         if kwargs.get("initial_posterior", None):
