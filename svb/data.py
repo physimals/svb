@@ -282,6 +282,10 @@ class VolumetricModel(DataModel):
         return tensor
 
     @property
+    def node_labels(self):
+        return [ (slice(self.n_nodes), "mixed") ]
+
+    @property
     def vol_slicer(self):
         """Slicer to access all volumetric nodes within data model"""
         return slice(self.n_unmasked_voxels)
@@ -451,7 +455,12 @@ class SurfaceModel(DataModel):
         for hemi in self.projector.iter_hemis:
             end = start + hemi.n_points
             yield slice(start, end)
-            start += end 
+            start += end
+
+    @property
+    def node_labels(self):
+        return [ (slice(self.n_nodes), "GM") ]
+
 
 class HybridModel(SurfaceModel):
 
@@ -558,6 +567,12 @@ class HybridModel(SurfaceModel):
         """
         n = self.n_nodes
         return slice(n - self.n_unmasked_voxels)
+
+    @property
+    def node_labels(self):
+        n = self.n_nodes
+        return [ (slice(n - self.n_unmasked_voxels), "GM"), 
+                 (slice(n - self.n_unmasked_voxels, n), "WM") ]
 
 
 
