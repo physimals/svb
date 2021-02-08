@@ -242,8 +242,6 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     # Get the time points from the model
     tpts = fwd_model.tpts()
-    if tpts.ndim > 1 and tpts.shape[0] > 1:
-        tpts = tpts[data_model.mask_flattened > 0]
 
     # Train model
     svb = SvbFit(data_model, fwd_model, **kwargs)
