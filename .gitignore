@@ -17,3 +17,6 @@ build
 scratch.py
 .DS_Store
 example_out*
+*out*
+*.ipynb
+*.nii.gz
