@@ -339,8 +339,8 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     # Get the formats for output (can be multiple formats), sanity check. 
 
-    if 'gii' in outformat: assert (data_model.is_hybrid or data_model.is_hybrid)
-    if 'cii' in outformat: assert (data_model.is_hybrid or data_model.is_hybrid)
+    if 'gii' in outformat: assert (data_model.is_hybrid or data_model.is_pure_surface)
+    if 'cii' in outformat: assert (data_model.is_hybrid or data_model.is_pure_surface)
     if 'nii' in outformat: assert not (data_model.is_pure_surface)
     if 'flatnii' in outformat: assert not (data_model.is_volumetric)
 
