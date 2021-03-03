@@ -143,7 +143,10 @@ class SvbArgumentParser(argparse.ArgumentParser):
                 if model_option.type == bool:
                     kwargs["action"] = "store_true"
                     kwargs.pop("type")
-                group.add_argument(*model_option.clargs, **kwargs)
+                clargs = model_option.clargs
+                if not isinstance(clargs, (list, tuple)):
+                    clargs = [clargs]
+                group.add_argument(*clargs, **kwargs)
             options, extras = argparse.ArgumentParser.parse_known_args(self, argv, namespace)
 
         if options.help:
