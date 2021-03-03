@@ -31,6 +31,12 @@ def get_model_class(model_name):
     model_class = MODELS.get(model_name, None)
     if model_class is None:
         raise ValueError("No such model: %s" % model_name)
+    
+    # import sys 
+    # import os.path as op
+    # sys.path.append(op.join(op.abspath(__file__), '../svb_models_asl'))
+    # from svb_models_asl import AslRestModel 
+    # model_class = AslRestModel 
 
     return model_class
 
@@ -195,4 +201,9 @@ class Model(LogBase):
             log = self.log
         log.info("Model: %s", str(self))
         for option in self.OPTIONS:
-            log.info(" - %s: %s", option.desc, str(getattr(self, option.attr_name)))
+            attr = getattr(self, option.attr_name)
+            if isinstance(attr, np.ndarray):
+                msg = f"array of shape {attr.shape}"
+            else: 
+                msg = str(attr)
+            log.info(" - %s: %s", option.desc, msg)

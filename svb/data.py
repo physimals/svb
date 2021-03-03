@@ -36,9 +36,13 @@ class DataModel(LogBase):
 
         # If there is a mask load it and use it to mask the data
         if mask is not None:
+            if mask.size != np.prod(self.shape):
+                raise ValueError("Mask size does not match number of data voxels")
             mask_nii, self.mask_vol = self._get_data(mask)
+            self.mask_vol = self.mask_vol.reshape(self.shape).astype(np.bool)
             self.mask_flattened = self.mask_vol.flatten()
             self.data_flattened = self.data_flattened[self.mask_flattened > 0]
+            # FIXME: why keep the float version of mask_vol hanging around, and not a bool one?
         else:
             self.mask_vol = np.ones(self.shape, dtype=np.bool)
             self.mask_flattened = self.mask_vol.flatten()
@@ -278,6 +282,10 @@ class VolumetricModel(DataModel):
         return tensor
 
     @property
+    def node_labels(self):
+        return [ (slice(self.n_nodes), "mixed") ]
+
+    @property
     def vol_slicer(self):
         """Slicer to access all volumetric nodes within data model"""
         return slice(self.n_unmasked_voxels)
@@ -311,9 +319,9 @@ class SurfaceModel(DataModel):
         self.v2n_noedge_coo = v2s_noedge[:,vox_inds].tocoo()
 
         if len(self.n2v_coo.shape) != 2:
-            raise ValueError("Vertex-to-voxel mapping must be a matrix")
+            raise ValueError("Node-voxel mapping must be a matrix")
         if self.n2v_coo.shape[0] != self.n_unmasked_voxels:
-            raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
+            raise ValueError("Node-voxel matrix - number of columns must match number of unmasked voxels")
         self.n_nodes = self.n2v_coo.shape[1]
 
         if kwargs.get("initial_posterior", None):
@@ -447,7 +455,12 @@ class SurfaceModel(DataModel):
         for hemi in self.projector.iter_hemis:
             end = start + hemi.n_points
             yield slice(start, end)
-            start += end 
+            start += end
+
+    @property
+    def node_labels(self):
+        return [ (slice(self.n_nodes), "GM") ]
+
 
 class HybridModel(SurfaceModel):
 
@@ -486,10 +499,11 @@ class HybridModel(SurfaceModel):
         self.v2n_coo = utils.slice_sparse(v2n, node_inds, vox_inds).tocoo()
         self.v2n_noedge_coo = utils.slice_sparse(v2n_noedge, node_inds, vox_inds).tocoo()
 
+        # FIXME: should read node, not vertex
         if len(self.n2v_coo.shape) != 2:
-            raise ValueError("Vertex-to-voxel mapping must be a matrix")
+            raise ValueError("Node-voxel mapping must be a matrix")
         if self.n2v_coo.shape[0] != self.n_unmasked_voxels:
-            raise ValueError("Vertex-to-voxel matrix - number of columns must match number of unmasked voxels")
+            raise ValueError("Node-voxel matrix - number of columns must match number of unmasked voxels")
         self.n_nodes = self.n2v_coo.shape[1]
 
         if kwargs.get("initial_posterior", None):
@@ -553,6 +567,12 @@ class HybridModel(SurfaceModel):
         """
         n = self.n_nodes
         return slice(n - self.n_unmasked_voxels)
+
+    @property
+    def node_labels(self):
+        n = self.n_nodes
+        return [ (slice(n - self.n_unmasked_voxels), "GM"), 
+                 (slice(n - self.n_unmasked_voxels, n), "WM") ]
 
 
 
