@@ -367,7 +367,7 @@ def run(data, model_name, output, mask=None, **kwargs):
     for idx, param in enumerate(params):
 
         # Mean parameter values 
-        if kwargs.get("save_mean", False):
+        if kwargs.get("save_mean", True):
             mean = means[idx]
             name = f"mean_{param.name}"
             if 'nii' in outformat: 
