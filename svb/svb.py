@@ -791,7 +791,7 @@ class SvbFit(LogBase):
         self.feed_dict[self.tpts_train] = tpts
         param_means = self.evaluate(self.model_means).T # [W, P]
         noise_params = np.array([ self.evaluate(self.noise_mean), 
-                                  self.evaluate(self.noise_var) ])
+                                  self.evaluate(self.noise_var) ]).T
         mean_noise_params = noise_params.mean(0)
 
         with np.printoptions(precision=3):
@@ -808,7 +808,7 @@ class SvbFit(LogBase):
         training_history["mean_node_params"][-1, :] = param_means.mean(0)
         training_history["node_params"][:, -1, :] = param_means
         training_history["mean_noise_params"][-1] = mean_noise_params[0]
-        training_history["noise_params"][:, -1] = noise_params[0,:]
+        training_history["noise_params"][:, -1] = noise_params[:,0]
         try:
             training_history["ak"][-1] = self.evaluate("ak")
         except:
