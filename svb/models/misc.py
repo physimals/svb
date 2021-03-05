@@ -22,7 +22,6 @@ class ConstantModel(Model):
         self.params += [
             get_parameter("mu", dist="Normal", mean=0.0,
                           prior_var=1e6, post_var=1.0, 
-                          data_space=self.data_space,
                           **options),
         ]
 
@@ -48,7 +47,6 @@ class PolyModel(Model):
                               dist="Normal", mean=0.0,
                               prior_var=1e6, post_var=1.0,
                               post_init=self._init_c0 if idx == 0 else None,
-                              data_space=self.data_space,
                               **options),
             )
 
