@@ -45,7 +45,8 @@ def assert_param_overrides_used(model_params, options):
         for pname in options['param_overrides'].keys():
             if (all([ (pname != p.name) for p in model_params ]) 
                 and (pname != 'noise')):
-                raise RuntimeError(f"Parameter override {pname} did not match any model parameter")
+                raise RuntimeError(f"Parameter override {pname} did not match any model parameter", 
+                    f"possible options are {[p.name for p in model_params]}")
 
 class ModelOption:
     def __init__(self, attr_name, desc, **kwargs):
@@ -202,8 +203,8 @@ class Model(LogBase):
         log.info("Model: %s", str(self))
         for option in self.OPTIONS:
             attr = getattr(self, option.attr_name)
-            if isinstance(attr, np.ndarray):
-                msg = f"array of shape {attr.shape}"
+            if isinstance(attr, np.ndarray) and (attr.size > 10):
+                msg = f"array of shape {attr.shape}, mean {attr.mean():.2g}"
             else: 
                 msg = str(attr)
             log.info(" - %s: %s", option.desc, msg)
