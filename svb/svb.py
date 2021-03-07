@@ -555,7 +555,7 @@ class SvbFit(LogBase):
             "mean_node_params" : np.zeros([epochs+1, self.n_model_params]),
             "noise_params": np.zeros([n_voxels, epochs+1]),
             "mean_noise_params": np.zeros([epochs+1]),
-            "ak" : np.zeros([epochs+1]),
+            "ak" : np.zeros([epochs+1, self.n_model_params]),
             "runtime" : np.zeros([epochs+1]),
         }
 
@@ -720,11 +720,15 @@ class SvbFit(LogBase):
             training_history["node_params"][:, epoch, :] = param_means
             # training_history["mean_noise_params"][epoch] = mean_noise_params[0]
             training_history["noise_params"][:, epoch] = noise_params[:,0]
-            try:
-                ak = self.evaluate("ak")
-                training_history["ak"][epoch] = ak
-            except:
-                ak = 0
+            aks = []
+            for idx, prior in enumerate(self.prior.priors):
+                try:
+                    ak = np.exp(self.evaluate(prior.logak))
+                except:
+                    ak = 0
+                training_history["ak"][epoch,idx] = ak
+                aks.append(ak)
+            aks = np.array(aks)
 
             if err or np.isnan(mean_total_cost) or np.isnan(param_means).any():
                 # Numerical errors while processing this epoch. Revert to best saved params if possible
@@ -771,8 +775,8 @@ class SvbFit(LogBase):
                         svar = param_vars[surf_inds,:].mean(0)
                         space_strings.append("Surface: param means %s, param vars %s" 
                                             % (smean, svar))
-                    end_str = ("noise mean/var %s, ak %.4g, lr %.4g, ss %.4g" 
-                                % (mean_noise_params, ak, current_lr, current_ss))
+                    end_str = ("noise mean/var %s, ak %s, lr %.4g, ss %.4g" 
+                                % (mean_noise_params, aks, current_lr, current_ss))
                 state_str = ("\n"+10*" ").join((first_line, *space_strings, end_str))
                 self.log.info(" - Epoch %04d: %s - %s", epoch, state_str, outcome)
 
