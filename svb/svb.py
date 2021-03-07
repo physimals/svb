@@ -84,6 +84,10 @@ class SvbFit(LogBase):
         # The model to use for inference
         self.model = fwd_model
 
+        # For debug purposes 
+        self.latent_only = kwargs.get('latent_only', False)
+        self.reconstruction_only = kwargs.get('reconstruction_only', False)
+
         # All the parameters to infer - model parameters. 
         # Noise is defined as a separate parameter in "voxel" space 
         # (never "node" - surface - as may be the case for the model) 
@@ -440,7 +444,14 @@ class SvbFit(LogBase):
 
         # Overall mean cost is taken as the sum of (mean voxel reconstruction loss) 
         # and the sum ((average latent over model) + (average latent over nosie))
-        self.mean_cost = tf.add(self.mean_reconstr_cost, self.mean_latent_loss)
+        if self.latent_only: 
+            self.log.info("Debug: latent cost only")
+            self.mean_cost = self.mean_latent_loss
+        elif self.reconstruction_only: 
+            self.log.info("Debug: reconstruction cost only")
+            self.mean_cost = self.mean_reconstr_cost
+        else: 
+            self.mean_cost = tf.add(self.mean_reconstr_cost, self.mean_latent_loss)
 
         # Set up ADAM to optimise over mean cost as defined above. 
         # It is also possible to optimize the total cost but this makes it harder to compare with
