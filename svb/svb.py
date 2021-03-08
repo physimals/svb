@@ -734,7 +734,7 @@ class SvbFit(LogBase):
             aks = []
             for idx, prior in enumerate(self.prior.priors):
                 try:
-                    ak = np.exp(self.evaluate(prior.logak))
+                    ak = self.evaluate(prior.ak)
                 except:
                     ak = 0
                 training_history["ak"][epoch,idx] = ak
