@@ -325,13 +325,7 @@ class SvbFit(LogBase):
         # model_means. This is distinct to producing a prediction for each samples. 
         self.model_means = self.log_tf(tf.identity(model_means, name="model_means"))
         self.model_vars = self.log_tf(tf.identity(model_vars, name="model_vars"))
-        self.modelfit_nodes = self.log_tf(tf.identity(self.model.evaluate(
-                                            tf.expand_dims(self.model_means, -1), 
-                                            self.tpts_train), "modelfit_nodes"))
         
-        # FIXME compatibility, this is used by an output stage, could be removed. 
-        self.modelfit = self.log_tf(self.modelfit_nodes, name="modelfit")
-
         return self.sample_predictions
 
     def _create_loss_optimizer(self):
@@ -824,10 +818,20 @@ class SvbFit(LogBase):
         training_history["node_params"][:, -1, :] = param_means
         training_history["mean_noise_params"][-1] = mean_noise_params[0]
         training_history["noise_params"][:, -1] = noise_params[:,0]
-        try:
-            training_history["ak"][-1] = self.evaluate("ak")
-        except:
-            pass
+        aks = []
+        for idx, prior in enumerate(self.prior.priors):
+            try:
+                ak = self.evaluate(prior.ak)
+            except:
+                ak = 0
+            aks.append(ak)
+        training_history["ak"][-1,:] = np.array(aks)
+
+        # Evaluate full model prediction across all time points 
+        with tf.Session() as sess: 
+            modelfit_n = self.model.evaluate([*param_means.T], self.model.tpts())
+            modelfit_v = self.data_model.nodes_to_voxels(modelfit_n)
+            self.modelfit = sess.run(modelfit_v)
 
         # Return training history
         return training_history

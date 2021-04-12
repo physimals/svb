@@ -591,7 +591,7 @@ def _convert_adjacency_to_laplacian(adj_matrix):
 
     lap = adj_matrix.todok(copy=True)
     lap[np.diag_indices(lap.shape[0])] = -lap.sum(1).T
-    assert lap.sum(1).max() == 0, 'Unweighted Laplacian matrix'
+    assert np.abs(lap.sum(1).max()) < 1e-9, 'Unweighted Laplacian matrix'
     return lap.tocoo().astype(NP_DTYPE)
 
 

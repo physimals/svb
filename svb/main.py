@@ -122,6 +122,9 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          type=float, default=0.00001)
 
         group = self.add_argument_group("Output options")
+        group.add_argument("--save-input",
+                         help="Save input data",
+                         action="store_true", default=False)
         group.add_argument("--save-var",
                          help="Save parameter variance",
                          action="store_true", default=False)
@@ -421,15 +424,10 @@ def run(data, model_name, output, mask=None, **kwargs):
             if 'gii' in outformat:
                 gifti_writer(phist[sslice,:], name)
 
-    # Model fit 
+    # Model fit across all timepoints (note this can only be a nii volume)
     if kwargs.get("save_model_fit", False):
-        modelfit = svb.evaluate(svb.modelfit)
-        name = "modelfit"
-        if 'nii' in outformat: 
-            p = makevpath(name)
-            data_model.nifti_image(modelfit[vslice]).to_filename(p)
-        if 'gii' in outformat:
-            gifti_writer(modelfit[sslice], name)
+        p = makevpath("modelfit")
+        data_model.nifti_image(svb.modelfit).to_filename(p)
 
     # Posterior (means and upper half of covariance matrix)
     # FIXME: surface is written out as a GIFTI series following the same 
@@ -462,7 +460,7 @@ def run(data, model_name, output, mask=None, **kwargs):
                 runtime_f.write("%f\n" % epoch_time)
 
     # Input data (volumetric only)
-    if kwargs.get("save_input_data", False):
+    if kwargs.get("save_input", False):
         p = makevpath("input_data")
         data_model.nifti_image(data_model.data_flattened).to_filename(p)
 

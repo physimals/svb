@@ -221,8 +221,9 @@ class FabberMRFSpatialPrior(NormalPrior):
 
         term2 = self.log_tf(tf.reduce_sum(swk * self.wK), name="term2") # [1]
 
-        gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1)
-        hk = tf.multiply(tf.cast(self.nnodes, TF_DTYPE), 0.5) + 1.0
+        q1, q2 = 1.0, 10
+        gk = 1 / (0.5 * trace_term + 0.5 * term2 + 1/q1)
+        hk = tf.multiply(tf.cast(self.nnodes, TF_DTYPE), 0.5) + q2
         self.ak = self.log_tf(tf.identity(gk * hk, name="ak"))
 
     def _setup_mean_var(self, post, nn):
@@ -255,8 +256,8 @@ class MRFSpatialPrior(Prior):
 
         # Set up spatial smoothing parameter calculation from posterior and neighbour lists
         # We infer the log of ak.
-        ak_init = kwargs.get("ak", 1e-2)
-        if  kwargs.get("infer_ak", True):
+        ak_init = kwargs.get("ak", 1e-1)
+        if kwargs.get("infer_ak", True):
             self.logak = tf.Variable(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
         else:
             self.logak = tf.constant(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
@@ -274,60 +275,17 @@ class MRFSpatialPrior(Prior):
         # Method 1: x * (D @ x), existing approach gives a node-wise quantity 
         # which is NOT the mathmetical SSD per node (but the sum across all 
         # nodes is equivalent)
-        # samples = tf.reshape(samples, (self.nnodes, -1)) # [W,N]
-        # D = self.laplacian # [W, W]
-        # Dx = self.log_tf(tf.sparse.sparse_dense_matmul(D, samples)) # [W,N]
-        # xDx = self.log_tf(samples * Dx, name="xDx") # [W,N]
-        # log_ak = tf.identity(0.5 * self.logak, name="log_ak")
-        # half_ak_xDx = tf.identity(0.5 * self.ak * xDx, name="half_ak_xDx")
-        # logP = log_ak + half_ak_xDx
-        # mean_logP = tf.reduce_mean(logP)
-
-        # # Method 2: x.T @ (D @ x), which gives the true SSD across all nodes 
-        # # as a single scalar value (not per node). Then normalise this to 
-        # # the number of nodes and distribute equally across all. 
-        # samples = tf.reshape(samples, (self.nnodes, -1)) # [W,N]
-        # D = self.laplacian # [W, W]
-        # Dx = self.log_tf(tf.sparse.sparse_dense_matmul(D, samples)) # [W,N]
-        # xDx = self.log_tf(tf.matmul(tf.transpose(samples), Dx), name="xDx") # [1]
-        # log_ak = tf.identity(0.5 * self.logak, name="log_ak")
-        # half_ak_xDx = tf.identity(0.5 * self.ak * xDx, name="half_ak_xDx")
-        # logP = log_ak + (half_ak_xDx / self.nnodes)
-        # mean_logP = tf.reduce_mean(logP) 
-
-        # Method 3: calculate the true SSD per node, not some aggregate quantity
         samples = tf.reshape(samples, (self.nnodes, -1)) # [W,N]
-        adj = self.data_model.adj_matrix 
-        D = tf.SparseTensor(
-            indices = np.array([adj.row, adj.col]).T, 
-            values=adj.data,
-            dense_shape=adj.shape
-        )
-
-        def _calc_ssd_2d(sample_slice):
-            if len(sample_slice.shape) != 2: 
-                raise RuntimeError("not a 2d tensor")
-
-            d1 = D.__mul__(sample_slice)
-            d2 = D.__mul__(tf.transpose(-sample_slice))
-            diffs = tf.sparse.add(d1, d2)
-            sq_diffs = tf.SparseTensor(
-                indices=diffs.indices, 
-                values=diffs.values ** 2,
-                dense_shape=diffs.shape
-            )
-
-            return tf.sparse.reduce_sum(sq_diffs, 1)
-
-        samples_sq = tf.tile(tf.expand_dims(samples, 1), [1, adj.shape[0], 1])
-        xDx = tf.map_fn(_calc_ssd_2d, tf.transpose(samples_sq, [2,0,1]))
+        D = self.laplacian # [W, W]
+        Dx = self.log_tf(tf.sparse.sparse_dense_matmul(D, samples)) # [W,N]
+        xDx = self.log_tf(samples * Dx, name="xDx") # [W,N]
         log_ak = tf.identity(0.5 * self.logak, name="log_ak")
         half_ak_xDx = tf.identity(0.5 * self.ak * xDx, name="half_ak_xDx")
-        logP = log_ak - half_ak_xDx
-        mean_logP = tf.reduce_mean(logP, axis=0)
+        logP = log_ak + half_ak_xDx
+        mean_logP = tf.reduce_mean(logP)
 
         # Optional extra: cost from gamma prior on ak. 
-        q1, q2 = 1.05, 100
+        q1, q2 = 1, 10
         mean_logP += (((q1-1) * self.logak) - self.ak / q2)
         return mean_logP
 
