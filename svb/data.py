@@ -485,16 +485,21 @@ class HybridModel(SurfaceModel):
 
         if not self.mask_flattened.size == n2v.shape[0]: 
             raise ValueError('Mask size does not match projector')
-        if not self.mask_flattened.size + self.projector.n_surf_points == n2v.shape[1]:
+        if not (self.mask_flattened.size 
+                + self.projector.n_surf_nodes 
+                + self.projector.n_subcortical_nodes) == n2v.shape[1]:
             raise ValueError('Mask size does not match projector')
 
         # Knock out voxels from projection matrices that are not in the mask
         # We need to shift indices to account for the offset caused by having 
         # all surface vertices come first (order is L surf, R surf, volume)
         vox_inds = np.flatnonzero(self.mask_flattened)
-        node_inds = np.concatenate((np.arange(self.projector.n_surf_points), 
-                                    self.projector.n_surf_points + vox_inds, 
-                                    np.arange(self.projector.n_subcortical_nodes)))
+        n_surf = self.projector.n_surf_nodes
+        n_roi = self.projector.n_subcortical_nodes
+        n_all_vox = self.projector.spc.size.prod()
+        node_inds = np.concatenate((np.arange(n_surf), 
+                                    n_surf + vox_inds, 
+                                    n_surf + n_all_vox + np.arange(n_roi)))
         self.n2v_coo = utils.slice_sparse(n2v, vox_inds, node_inds).tocoo()
         self.n2v_noedge_coo = utils.slice_sparse(n2v_noedge, vox_inds, node_inds).tocoo()
         self.v2n_coo = utils.slice_sparse(v2n, node_inds, vox_inds).tocoo()
@@ -532,7 +537,8 @@ class HybridModel(SurfaceModel):
         """
         surf_adj = self.projector.adjacency_matrix(distance_weight)
         vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, distance_weight)
-        roi_adj = sparse.csr_matrix(2 * [self.projector.n_subcortical_nodes], np.float32)
+        roi_adj = sparse.csr_matrix(2*(self.projector.n_subcortical_nodes,), 
+                                    dtype=np.float32)
         return sparse.block_diag([surf_adj, vol_adj, roi_adj]).astype(NP_DTYPE)
 
     def _calc_laplacian_matrix(self, vox_size, distance_weight=1):
@@ -553,7 +559,8 @@ class HybridModel(SurfaceModel):
         surf_lap = self.projector.mesh_laplacian(distance_weight)
         vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, distance_weight)
         vol_lap = _convert_adjacency_to_laplacian(vol_adj)
-        roi_lap = sparse.csr_matrix(2 * [self.projector.n_subcortical_nodes], np.float32)
+        roi_lap = sparse.csr_matrix(2*(self.projector.n_subcortical_nodes,), 
+                                    dtype=np.float32)
         return sparse.block_diag([surf_lap, vol_lap, roi_lap]).astype(NP_DTYPE)
 
     @property
@@ -571,7 +578,7 @@ class HybridModel(SurfaceModel):
         """
         n = self.n_nodes
         ns = self.projector.n_subcortical_nodes
-        return slice(n - self.n_unmasked_voxels - ns)
+        return slice(0, n - self.n_unmasked_voxels - ns)
 
     @property
     def subcortical_slicer(self):

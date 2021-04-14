@@ -35,7 +35,7 @@ def get_posterior(idx, param, t, data_model, **kwargs):
                  and (tensor_array_shape(initial_mean, 0) 
                         == data_model.n_unmasked_voxels)):
                 initial_mean = tf.squeeze(data_model.voxels_to_nodes(
-                    tf.expand_dims(initial_mean, -1), False))
+                    tf.expand_dims(initial_mean, -1), True))
             if ((isinstance(initial_var, (np.ndarray, tf.Tensor))) 
                  and (tensor_array_shape(initial_var, 0) 
                         == data_model.n_unmasked_voxels)):

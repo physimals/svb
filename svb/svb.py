@@ -604,15 +604,19 @@ class SvbFit(LogBase):
 
         # TODO: update here. 
         if self.data_model.is_volumetric: 
-            vol_inds = slice(self.data_model.n_nodes)
+            vol_inds = self.data_model.vol_slicer
             surf_inds = None 
+            subcort_inds = None 
         elif self.data_model.is_pure_surface: 
             vol_inds = None 
-            surf_inds = slice(self.data_model.n_nodes)
+            surf_inds = self.data_model.surf_slicer
+            subcort_inds = None 
         else: 
-            n_surf = self.data_model.projector.n_surf_points
-            surf_inds = slice(n_surf)
-            vol_inds = slice(n_surf, n_surf + n_voxels)
+            surf_inds = self.data_model.surf_slicer
+            vol_inds = self.data_model.vol_slicer
+            subcort_inds = self.data_model.subcortical_slicer
+            if subcort_inds.start == subcort_inds.stop: 
+                subcort_inds = None 
 
         first_str = (" - Start 0000: mean cost %.4g (latent %.4g, reconstr %.4g)" 
                         % (initial_cost, initial_latent, initial_reconstr))
@@ -629,6 +633,12 @@ class SvbFit(LogBase):
                 svar = initial_param_vars[surf_inds,:].mean(0)
                 space_strings.append("Surface: param means %s, param vars %s" 
                                     % (smean, svar))
+            if subcort_inds is not None: 
+                submean = initial_param_means[subcort_inds,:].mean(0)
+                subvar = initial_param_vars[subcort_inds,:].mean(0)
+                space_strings.append("ROIs: param means %s, param vars %s" 
+                                    % (submean, subvar))
+
             end_str = "Noise mean/var %s" % initial_noise.mean(0)
 
         state_str = ("\n"+10*" ").join((first_str, *space_strings, end_str))
@@ -780,6 +790,11 @@ class SvbFit(LogBase):
                         svar = param_vars[surf_inds,:].mean(0)
                         space_strings.append("Surface: param means %s, param vars %s" 
                                             % (smean, svar))
+                    if subcort_inds is not None: 
+                        submean = param_means[subcort_inds,:].mean(0)
+                        subvar = param_vars[subcort_inds,:].mean(0)
+                        space_strings.append("ROIs: param means %s, param vars %s" 
+                                            % (submean, subvar))
                     end_str = ("noise mean/var %s, ak %s, lr %.4g, ss %.4g" 
                                 % (mean_noise_params, aks, current_lr, current_ss))
                 state_str = ("\n"+10*" ").join((first_line, *space_strings, end_str))
