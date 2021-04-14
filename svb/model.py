@@ -23,20 +23,20 @@ def get_model_class(model_name):
     Get a model class by name
     """
     global _models_loaded
-    if not _models_loaded:
-        for model in pkg_resources.iter_entry_points('svb.models'):
-            MODELS[model.name] = model.load()
-        _models_loaded = True
+    # if not _models_loaded:
+    #     for model in pkg_resources.iter_entry_points('svb.models'):
+    #         MODELS[model.name] = model.load()
+    #     _models_loaded = True
 
-    model_class = MODELS.get(model_name, None)
-    if model_class is None:
-        raise ValueError("No such model: %s" % model_name)
+    # model_class = MODELS.get(model_name, None)
+    # if model_class is None:
+    #     raise ValueError("No such model: %s" % model_name)
     
-    # import sys 
-    # import os.path as op
-    # sys.path.append(op.join(op.abspath(__file__), '../svb_models_asl'))
-    # from svb_models_asl import AslRestModel 
-    # model_class = AslRestModel 
+    import sys 
+    import os.path as op
+    sys.path.append(op.join(op.abspath(__file__), '../svb_models_asl'))
+    from svb_models_asl import AslRestModel 
+    model_class = AslRestModel 
 
     return model_class
 

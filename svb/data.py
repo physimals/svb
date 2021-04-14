@@ -493,7 +493,8 @@ class HybridModel(SurfaceModel):
         # all surface vertices come first (order is L surf, R surf, volume)
         vox_inds = np.flatnonzero(self.mask_flattened)
         node_inds = np.concatenate((np.arange(self.projector.n_surf_points), 
-                                    self.projector.n_surf_points + vox_inds))
+                                    self.projector.n_surf_points + vox_inds, 
+                                    np.arange(self.projector.n_subcortical_nodes)))
         self.n2v_coo = utils.slice_sparse(n2v, vox_inds, node_inds).tocoo()
         self.n2v_noedge_coo = utils.slice_sparse(n2v_noedge, vox_inds, node_inds).tocoo()
         self.v2n_coo = utils.slice_sparse(v2n, node_inds, vox_inds).tocoo()
@@ -531,7 +532,8 @@ class HybridModel(SurfaceModel):
         """
         surf_adj = self.projector.adjacency_matrix(distance_weight)
         vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, distance_weight)
-        return sparse.block_diag([surf_adj, vol_adj]).astype(NP_DTYPE)
+        roi_adj = sparse.csr_matrix(2 * [self.projector.n_subcortical_nodes], np.float32)
+        return sparse.block_diag([surf_adj, vol_adj, roi_adj]).astype(NP_DTYPE)
 
     def _calc_laplacian_matrix(self, vox_size, distance_weight=1):
         """
@@ -551,13 +553,15 @@ class HybridModel(SurfaceModel):
         surf_lap = self.projector.mesh_laplacian(distance_weight)
         vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, distance_weight)
         vol_lap = _convert_adjacency_to_laplacian(vol_adj)
-        return sparse.block_diag([surf_lap, vol_lap]).astype(NP_DTYPE)
+        roi_lap = sparse.csr_matrix(2 * [self.projector.n_subcortical_nodes], np.float32)
+        return sparse.block_diag([surf_lap, vol_lap, roi_lap]).astype(NP_DTYPE)
 
     @property
     def vol_slicer(self):
         """Slicer to access all volumetric nodes within data model"""
         n = self.n_nodes
-        return slice(n - self.n_unmasked_voxels, n)
+        ns = self.projector.n_subcortical_nodes
+        return slice(n - self.n_unmasked_voxels - ns, n - ns)
 
     @property
     def surf_slicer(self):
@@ -566,13 +570,21 @@ class HybridModel(SurfaceModel):
         (either hemisphere)
         """
         n = self.n_nodes
-        return slice(n - self.n_unmasked_voxels)
+        ns = self.projector.n_subcortical_nodes
+        return slice(n - self.n_unmasked_voxels - ns)
+
+    @property
+    def subcortical_slicer(self):
+        """TODO""" 
+        n = self.n_nodes 
+        ns = self.projector.n_subcortical_nodes 
+        return slice(n - ns, n)
 
     @property
     def node_labels(self):
-        n = self.n_nodes
-        return [ (slice(n - self.n_unmasked_voxels), "GM"), 
-                 (slice(n - self.n_unmasked_voxels, n), "WM") ]
+        return [ (self.surf_slicer, "GM"), 
+                 (self.vol_slicer, "WM"), 
+                 (self.subcortical_slicer, "GM") ]
 
 
 

@@ -11,6 +11,12 @@ import numpy as np
 from .utils import LogBase, TF_DTYPE
 from . import dist
 
+def tensor_array_shape(obj, dim):
+    if isinstance(obj, np.ndarray):
+        return obj.shape[dim]
+    else:
+        return obj.shape.as_list()[dim]
+
 def get_posterior(idx, param, t, data_model, **kwargs):
     """
     Factory method to return a posterior
@@ -25,10 +31,14 @@ def get_posterior(idx, param, t, data_model, **kwargs):
         # If parameter defined on surface, project the volume init values
         # onto the surface
         if param.data_space == "node":
-            if initial_mean is not None:
+            if ((isinstance(initial_mean, (np.ndarray, tf.Tensor))) 
+                 and (tensor_array_shape(initial_mean, 0) 
+                        == data_model.n_unmasked_voxels)):
                 initial_mean = tf.squeeze(data_model.voxels_to_nodes(
-                    tf.expand_dims(initial_mean, -1)))
-            if initial_var is not None: 
+                    tf.expand_dims(initial_mean, -1), False))
+            if ((isinstance(initial_var, (np.ndarray, tf.Tensor))) 
+                 and (tensor_array_shape(initial_var, 0) 
+                        == data_model.n_unmasked_voxels)):
                 initial_var = tf.squeeze(data_model.voxels_to_nodes(
                     tf.expand_dims(initial_var, -1)))
 
