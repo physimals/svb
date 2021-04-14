@@ -25,12 +25,10 @@ class MultiExpModel(Model):
                               dist="LogNormal", mean=1.0, 
                               prior_var=1e6, post_var=1.5, 
                               post_init=self._init_amp,
-                              data_space=self.data_space,
                               **options),
                 get_parameter("r%i" % (idx+1), 
                               dist="LogNormal", mean=1.0, 
                               prior_var=1e6, post_var=1.5,
-                              data_space=self.data_space,
                               **options),
             ]
 

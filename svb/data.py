@@ -36,9 +36,9 @@ class DataModel(LogBase):
 
         # If there is a mask load it and use it to mask the data
         if mask is not None:
-            if mask.size != np.prod(self.shape):
-                raise ValueError("Mask size does not match number of data voxels")
             mask_nii, self.mask_vol = self._get_data(mask)
+            if self.mask_vol.size != np.prod(self.shape):
+                raise ValueError("Mask size does not match number of data voxels")
             self.mask_vol = self.mask_vol.reshape(self.shape).astype(np.bool)
             self.mask_flattened = self.mask_vol.flatten()
             self.data_flattened = self.data_flattened[self.mask_flattened > 0]
