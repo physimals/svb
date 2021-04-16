@@ -256,7 +256,7 @@ class MRFSpatialPrior(Prior):
 
         # Set up spatial smoothing parameter calculation from posterior and neighbour lists
         # We infer the log of ak.
-        ak_init = kwargs.get("ak", 1e-1)
+        ak_init = kwargs.get("ak", 1e-5)
         if kwargs.get("infer_ak", True):
             self.logak = tf.Variable(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
         else:
@@ -285,7 +285,7 @@ class MRFSpatialPrior(Prior):
         mean_logP = tf.reduce_mean(logP)
 
         # Optional extra: cost from gamma prior on ak. 
-        q1, q2 = 1, 10
+        q1, q2 = 1.1, 100
         mean_logP += (((q1-1) * self.logak) - self.ak / q2)
         return mean_logP
 

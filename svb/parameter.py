@@ -23,6 +23,10 @@ def get_parameter(name, **kwargs):
     custom_kwargs = kwargs.pop("param_overrides", {}).get(name, {})
     kwargs.update(custom_kwargs)
 
+    # FIXME: hack because when var = 1 the LogNormal gives inf latent cost during training
+    if (kwargs.get('dist') == 'LogNormal') and (kwargs.get('var') == 1.0):
+        raise RuntimeError('LogNormal distribution cannot have initial var = 1.0') 
+
     data_space = kwargs.get("data_space", "voxel")
     desc = kwargs.get("desc", "No description given")
     prior_dist = dist.get_dist(prefix="prior", **kwargs)

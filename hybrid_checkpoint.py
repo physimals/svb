@@ -33,7 +33,7 @@ pvs = projector.pvs()
 ref_spc.save_image(pvs, 'pvs.nii.gz')
 
 plds = np.arange(0.5, 1.75, 0.25)
-repeats = 8
+repeats = 10
 data = np.zeros((*ref_spc.size, plds.size * repeats))
 mask = (pvs[...,:2] > 0.01).any(-1)
 
@@ -43,15 +43,18 @@ asl_model = AslRestModel(data_model,
 
 CBF = [60, 20]
 ATT = [1.3, 1.6]
-NOISE_STD = 5
+NOISE_STD = 10
 
 tpts = asl_model.tpts()
 with tf.Session() as sess:
+
     cbf = CBF[0] * np.ones([data_model.n_nodes, 1], dtype=np.float32)
     cbf[data_model.vol_slicer] = CBF[1]
     # cbf[data_model.subcortical_slicer] = 10
     att = ATT[0] * np.ones([data_model.n_nodes, 1], dtype=np.float32)
     att[data_model.vol_slicer] = ATT[1]
+    # att[data_model.subcortical_slicer] = 1.6
+
     hybrid_data = sess.run(asl_model.evaluate([
         cbf, att
     ], tpts))
@@ -68,7 +71,7 @@ options = {
     "mode": "hybrid",
     "learning_rate" : 0.1,
     "batch_size" : plds.size,
-    "sample_size" : 3,
+    "sample_size" : 5,
     "epochs" : 1000,
     "log_stream" : sys.stdout,
     "mask" : mask,
@@ -79,6 +82,13 @@ options = {
     "prior_type": "M",
     "save_model_fit": True, 
     "display_step": 10, 
+
+    'attsd': 1.05, 
+    'param_overrides': {
+        'delttiss' : {
+            'dist': 'LogNormal'
+        }
+    }
 }
 
 
