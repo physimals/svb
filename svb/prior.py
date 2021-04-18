@@ -263,6 +263,9 @@ class MRFSpatialPrior(Prior):
             self.logak = tf.constant(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
         self.ak = self.log_tf(tf.exp(self.logak, name="ak"))
 
+        self.q1 = kwargs.get('gamma_q1', 1.0)
+        self.q2 = kwargs.get('gamma_q2', 10)
+
     def mean_log_pdf(self, samples):
         r"""
         mean log PDF for the MRF spatial prior.
@@ -285,8 +288,7 @@ class MRFSpatialPrior(Prior):
         mean_logP = tf.reduce_mean(logP)
 
         # Optional extra: cost from gamma prior on ak. 
-        q1, q2 = 1.1, 100
-        mean_logP += (((q1-1) * self.logak) - self.ak / q2)
+        mean_logP += (((self.q1-1) * self.logak) - self.ak / self.q2)
         return mean_logP
 
     def __str__(self):
