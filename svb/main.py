@@ -7,6 +7,7 @@ Examples::
         --model=aslrest --epochs=200 --output=svb_out
 """
 import os
+import os.path as op 
 import sys
 import logging
 import logging.config
@@ -428,7 +429,8 @@ def run(data, model_name, output, mask=None, **kwargs):
     # Model fit across all timepoints (note this can only be a nii volume)
     if kwargs.get("save_model_fit", False):
         p = makevpath("modelfit")
-        data_model.nifti_image(svb.modelfit).to_filename(p)
+        # FIXME: disabled 
+        # data_model.nifti_image(svb.modelfit).to_filename(p)
 
     # Posterior (means and upper half of covariance matrix)
     # FIXME: surface is written out as a GIFTI series following the same 

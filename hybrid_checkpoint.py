@@ -1,19 +1,14 @@
-
-
-# %%
 import os
 import sys 
 import numpy as np
 import toblerone as tob 
-import regtricks as rt
-import trimesh
 from svb.main import run
-from svb.data import SurfaceModel, VolumetricModel, HybridModel
-import pickle
+from svb.data import HybridModel
+from scipy import interpolate
 
-import sys 
-import os.path as op
-sys.path.append(op.join(op.dirname(__file__), '../svb_models_asl'))
+# import sys 
+# import os.path as op
+# sys.path.append(op.join(op.dirname(__file__), '../svb_models_asl'))
 from svb_models_asl import AslRestModel 
 
 try:
@@ -27,52 +22,72 @@ tf.set_random_seed(1)
 np.random.seed(1)
 
 
-projector = tob.Projector.load('proj.h5')
+projector = tob.Projector.load('103818_L_hemi.h5')
 ref_spc = projector.spc 
-pvs = projector.pvs() 
-ref_spc.save_image(pvs, 'pvs.nii.gz')
+LMS = tob.Surface('103818.L.very_inflated.32k_fs_LR.surf.gii')
+LMS = LMS.transform(ref_spc.world2vox)
 
-plds = np.arange(0.5, 1.75, 0.25)
+plds = np.arange(0.75, 2.0, 0.25)
+# plds = [1.5]
 repeats = 10
-data = np.zeros((*ref_spc.size, plds.size * repeats))
-mask = (pvs[...,:2] > 0.01).any(-1)
+data = np.zeros((*ref_spc.size, len(plds) * repeats))
+mask = (projector.pvs()[...,:2] > 0.01).any(-1)
 
-data_model = HybridModel(ref_spc.make_nifti(data), mask=mask, projector=projector)
+data_model = HybridModel(ref_spc.make_nifti(data), 
+                   projector=projector)
 asl_model = AslRestModel(data_model,
             plds=plds, repeats=repeats, casl=True)
 
-CBF = [60, 20]
 ATT = [1.3, 1.6]
-NOISE_STD = 10
+SNR = 20
+
+inds = np.indices(projector.spc.size)
+scale = 3
+sine = (np.sin(inds[1] / scale) 
+        + np.sin(inds[0] / scale) 
+        + np.sin(inds[2] / scale))
+sine = sine / sine.max()
+
+ctx_sine = interpolate.interpn(
+        points=[ np.arange(d) for d in ref_spc.size ], 
+        values=sine, 
+        xi=LMS.points
+    )
+
+ctx_cbf = 60 + (20 * np.maximum(ctx_sine, 0))
+ctx_att = 1.3 * np.ones_like(ctx_cbf)
+LMS.save_metric(ctx_cbf, 'L_ctx_sine.func.gii')
 
 tpts = asl_model.tpts()
+nvox = ref_spc.size.prod()
+
 with tf.Session() as sess:
 
-    cbf = CBF[0] * np.ones([data_model.n_nodes, 1], dtype=np.float32)
-    cbf[data_model.vol_slicer] = CBF[1]
-    # cbf[data_model.subcortical_slicer] = 10
-    att = ATT[0] * np.ones([data_model.n_nodes, 1], dtype=np.float32)
-    att[data_model.vol_slicer] = ATT[1]
-    # att[data_model.subcortical_slicer] = 1.6
+    cbf = np.concatenate([
+            ctx_cbf[:,None],
+            20 * np.ones([nvox, 1]), 
+    ])
+    att = np.concatenate([
+            ctx_att[:,None],
+            1.6 * np.ones([nvox, 1]), 
+    ])
+    data = sess.run(asl_model.evaluate(
+            [ cbf.astype(np.float32), att.astype(np.float32) ], tpts))
 
-    hybrid_data = sess.run(asl_model.evaluate([
-        cbf, att
-    ], tpts))
-    hv_data = data_model.nodes_to_voxels(hybrid_data, True)
-    data[mask,:] = sess.run(hv_data)
+data = projector.node2vol(data, edge_scale=True).reshape(*ref_spc.size, -1)
+noise_var = (data.max() * np.sqrt(repeats)) / SNR 
+data[mask,:] += np.random.normal(0, noise_var, size=data[mask,:].shape)
+ref_spc.save_image(data, 'hybrid_simdata.nii.gz')
 
-data += np.random.normal(0, NOISE_STD, data.shape)
-data = data.reshape(*ref_spc.size, tpts.shape[-1])
-if not os.path.exists('simdata.nii.gz') or True:
-    ref_spc.save_image(data, 'simdata.nii.gz')
-
+data_surf = projector.vol2surf(data.mean(-1).flatten(), edge_scale=False)
+LMS.save_metric(data_surf, 'hybrid_simdata_mean_proj.func.gii')
 
 options = {
     "mode": "hybrid",
     "learning_rate" : 0.1,
-    "batch_size" : plds.size,
+    "batch_size" : len(plds),
     "sample_size" : 5,
-    "epochs" : 1000,
+    "epochs" : 500,
     "log_stream" : sys.stdout,
     "mask" : mask,
     "projector" : projector,
@@ -82,13 +97,17 @@ options = {
     "prior_type": "M",
     "save_model_fit": True, 
     "display_step": 10, 
+    "save_param_history": True, 
 
-    'attsd': 1.05, 
-    'param_overrides': {
-        'delttiss' : {
-            'dist': 'LogNormal'
-        }
-    }
+    'gamma_q1': 1.0, 
+    'gamma_q2': 10, 
+
+    # "param_overrides": {
+    #     "delttiss": {
+    #         "prior_type": "N"
+    #     }
+    # }
+
 }
 
 

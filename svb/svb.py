@@ -377,6 +377,12 @@ class SvbFit(LogBase):
                                     model_prediction), name="model_prediction_voxels", 
                                     shape=True, force=False)
 
+        # FIXME for some reason the below code to evaluate model fit returns 
+        # an error currently - related to while loops and sparse matrices
+        # param_means = tf.expand_dims(tf.transpose(self.model_means), 2)
+        # modelfit_nodes = self._get_model_prediction(param_means)
+        # modelfit_voxels = self.data_model.nodes_to_voxels(modelfit_nodes[...,0])
+
         # Convert the noise samples from from internal to external representation.
         # Save the current moments of the noise posterior. 
         transformer = self.noise_param.post_dist.transform
