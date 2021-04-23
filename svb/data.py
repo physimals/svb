@@ -518,7 +518,10 @@ class HybridModel(SurfaceModel):
             self.post_init = None
 
         self.adj_matrix = self._calc_adjacency_matrix(vox_size, distance_weight=0)
-        self.laplacian = self._calc_laplacian_matrix(vox_size, distance_weight=1)
+        vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, 1)
+        self.laplacian = [ 
+            self.projector.mesh_laplacian(1),
+            _convert_adjacency_to_laplacian(vol_adj) ]
 
     def _calc_adjacency_matrix(self, vox_size, distance_weight=0):
         """

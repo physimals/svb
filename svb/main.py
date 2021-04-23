@@ -7,6 +7,7 @@ Examples::
         --model=aslrest --epochs=200 --output=svb_out
 """
 import os
+import os.path as op 
 import sys
 import logging
 import logging.config
@@ -415,19 +416,25 @@ def run(data, model_name, output, mask=None, **kwargs):
     # Node-wise parameter history 
     if kwargs.get("save_param_history", False):
         param_history = training_history["node_params"]
+        ak_history = training_history["ak"]
         for idx, param in enumerate(params):
             phist = param_history[...,idx]
             name = f"mean_{param.name}_history"
             if 'nii' in outformat: 
                 p = makevpath(name)
                 data_model.nifti_image(phist[vslice,:]).to_filename(p)
+                ak_name = op.join(output, f"ak_{param.name}_vol_history.txt")
+                np.savetxt(ak_name, ak_history["vol"][:,idx])
             if 'gii' in outformat:
                 gifti_writer(phist[sslice,:], name)
+                ak_name = op.join(output, f"ak_{param.name}_surf_history.txt")
+                np.savetxt(ak_name, ak_history["surf"][:,idx])
 
     # Model fit across all timepoints (note this can only be a nii volume)
     if kwargs.get("save_model_fit", False):
         p = makevpath("modelfit")
-        data_model.nifti_image(svb.modelfit).to_filename(p)
+        # FIXME: disabled 
+        # data_model.nifti_image(svb.modelfit).to_filename(p)
 
     # Posterior (means and upper half of covariance matrix)
     # FIXME: surface is written out as a GIFTI series following the same 

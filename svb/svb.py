@@ -377,6 +377,12 @@ class SvbFit(LogBase):
                                     model_prediction), name="model_prediction_voxels", 
                                     shape=True, force=False)
 
+        # FIXME for some reason the below code to evaluate model fit returns 
+        # an error currently - related to while loops and sparse matrices
+        # param_means = tf.expand_dims(tf.transpose(self.model_means), 2)
+        # modelfit_nodes = self._get_model_prediction(param_means)
+        # modelfit_voxels = self.data_model.nodes_to_voxels(modelfit_nodes[...,0])
+
         # Convert the noise samples from from internal to external representation.
         # Save the current moments of the noise posterior. 
         transformer = self.noise_param.post_dist.transform
@@ -497,6 +503,28 @@ class SvbFit(LogBase):
         :param state: State as returned by the ``state()`` method
         """
         self.evaluate(self.post.set_state(state))
+
+    def _extract_ak(self):
+        """
+        Spatial smoothing ak values. Returned in order of 
+        [param1_surf, param2_surf, ...], [param1_vol, ...]
+        Empty lists will be returned if the mode is not 
+        applicable (eg, surf = [] in pure volume mode)
+        """
+        sak, vak = [], []
+        for idx, prior in enumerate(self.prior.priors):
+            try: 
+                if self.data_model.is_hybrid: 
+                    aks = [ self.evaluate(a) for a in prior.ak ]
+                    sak.append(aks[0]); vak.append(aks[1])
+                elif self.data_model.is_volumetric: 
+                    vak.append(self.evaluate(prior.ak))
+                else: 
+                    sak.append(self.evaluate(prior.ak))
+            except: 
+                pass 
+        return np.array(sak), np.array(vak) 
+
         
     def train(self, tpts, data,
               batch_size=None, sequential_batches=False,
@@ -560,7 +588,10 @@ class SvbFit(LogBase):
             "mean_node_params" : np.zeros([epochs+1, self.n_model_params]),
             "noise_params": np.zeros([n_voxels, epochs+1]),
             "mean_noise_params": np.zeros([epochs+1]),
-            "ak" : np.zeros([epochs+1, self.n_model_params]),
+            "ak" : {
+                "surf": np.zeros([epochs+1, self.n_model_params]),
+                "vol": np.zeros([epochs+1, self.n_model_params]),
+            }, 
             "runtime" : np.zeros([epochs+1]),
         }
 
@@ -733,17 +764,10 @@ class SvbFit(LogBase):
             # mean of noise variance posterior in each voxel 
             training_history["mean_node_params"][epoch, :] = param_means.mean(0)
             training_history["node_params"][:, epoch, :] = param_means
-            # training_history["mean_noise_params"][epoch] = mean_noise_params[0]
             training_history["noise_params"][:, epoch] = noise_params[:,0]
-            aks = []
-            for idx, prior in enumerate(self.prior.priors):
-                try:
-                    ak = self.evaluate(prior.ak)
-                except:
-                    ak = 0
-                training_history["ak"][epoch,idx] = ak
-                aks.append(ak)
-            aks = np.array(aks)
+            sak, vak = self._extract_ak()
+            if sak.size: training_history["ak"]["surf"][epoch,:] = sak 
+            if vak.size: training_history["ak"]["vol"][epoch,:] = vak 
 
             if err or np.isnan(mean_total_cost) or np.isnan(param_means).any():
                 # Numerical errors while processing this epoch. Revert to best saved params if possible
@@ -783,20 +807,22 @@ class SvbFit(LogBase):
                     if vol_inds is not None: 
                         vmean = param_means[vol_inds,:].mean(0)
                         vvar = param_vars[vol_inds,:].mean(0)
-                        space_strings.append("Volume: param means %s, param vars %s" 
-                                            % (vmean, vvar))
+                        space_strings.append(
+                            "Volume: param means %s, param vars %s, ak %s"
+                            % (vmean, vvar, vak))
                     if surf_inds is not None: 
                         smean = param_means[surf_inds,:].mean(0)
                         svar = param_vars[surf_inds,:].mean(0)
-                        space_strings.append("Surface: param means %s, param vars %s" 
-                                            % (smean, svar))
+                        space_strings.append(
+                            "Surface: param means %s, param vars %s, ak %s" 
+                                            % (smean, svar, sak))
                     if subcort_inds is not None: 
                         submean = param_means[subcort_inds,:].mean(0)
                         subvar = param_vars[subcort_inds,:].mean(0)
                         space_strings.append("ROIs: param means %s, param vars %s" 
                                             % (submean, subvar))
-                    end_str = ("noise mean/var %s, ak %s, lr %.4g, ss %.4g" 
-                                % (mean_noise_params, aks, current_lr, current_ss))
+                    end_str = ("noise mean/var %s, lr %.4g, ss %.4g" 
+                                % (mean_noise_params, current_lr, current_ss))
                 state_str = ("\n"+10*" ").join((first_line, *space_strings, end_str))
                 self.log.info(" - Epoch %04d: %s - %s", epoch, state_str, outcome)
 
@@ -833,20 +859,9 @@ class SvbFit(LogBase):
         training_history["node_params"][:, -1, :] = param_means
         training_history["mean_noise_params"][-1] = mean_noise_params[0]
         training_history["noise_params"][:, -1] = noise_params[:,0]
-        aks = []
-        for idx, prior in enumerate(self.prior.priors):
-            try:
-                ak = self.evaluate(prior.ak)
-            except:
-                ak = 0
-            aks.append(ak)
-        training_history["ak"][-1,:] = np.array(aks)
-
-        # Evaluate full model prediction across all time points 
-        with tf.Session() as sess: 
-            modelfit_n = self.model.evaluate([*param_means.T], self.model.tpts())
-            modelfit_v = self.data_model.nodes_to_voxels(modelfit_n)
-            self.modelfit = sess.run(modelfit_v)
+        sak, vak = self._extract_ak()
+        if sak.size: training_history["ak"]["surf"][epoch,:] = sak 
+        if vak.size: training_history["ak"]["vol"][epoch,:] = vak 
 
         # Return training history
         return training_history

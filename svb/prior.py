@@ -10,7 +10,7 @@ try:
 except ImportError:
     import tensorflow as tf
 
-from .utils import LogBase, TF_DTYPE
+from .utils import LogBase, TF_DTYPE, scipy_to_tf_sparse
 from .dist import Normal
 
 PRIOR_TYPE_NONSPATIAL = "N"
@@ -72,25 +72,29 @@ class Prior(LogBase):
                 dense_shape=data_model.adj_matrix.shape, 
             )
 
+            # Vol and surface have a single laplcian, hybrid has 2 
+            # (for surface and volume, listed in that order). Pad
+            # the former case into a size-1 list 
+            if not data_model.is_hybrid: 
+                lap = [data_model.laplacian]
+            else: 
+                lap = data_model.laplacian 
+
             # Check sign convention on Laplacian
-            diags = data_model.laplacian.tocsr()[
-                np.diag_indices(data_model.laplacian.shape[0])]
-            if (diags > 0).any():
-                raise ValueError("Sign convention on Laplacian matrix: " +
-                "diagonal elements should be negative, off-diag positive.")
+            for l in lap: 
+                diags = l.tocsr()[np.diag_indices(l.shape[0])]
+                if (diags > 0).any():
+                    raise ValueError("Sign convention on Laplacian matrix: " +
+                    "diagonal elements should be negative, off-diag positive.")
+                assert is_nsd(l), 'Laplacian not NSD'
+                assert is_symmetric(l), 'Laplacian not symmetric'
 
-            # One day we may be able to relax these constraints, but for 
-            # now we are going to be cautious with them!
-            assert is_nsd(data_model.laplacian), 'Laplacian not NSD'
-            assert is_symmetric(data_model.laplacian), 'Laplacian not symmetric'
+            if data_model.is_hybrid: 
+                self.surf_laplacian = scipy_to_tf_sparse(lap[0])
+                self.vol_laplacian = scipy_to_tf_sparse(lap[1])
+            else: 
+                self.laplacian = scipy_to_tf_sparse(lap[0])
 
-            self.laplacian = tf.SparseTensor(
-                indices=np.array([
-                    data_model.laplacian.row, 
-                    data_model.laplacian.col]).T,
-                values=data_model.laplacian.data, 
-                dense_shape=data_model.laplacian.shape, 
-            )
 
     @property
     def is_gaussian(self):
@@ -258,13 +262,29 @@ class MRFSpatialPrior(Prior):
         # We infer the log of ak.
         ak_init = kwargs.get("ak", 1e-5)
         if kwargs.get("infer_ak", True):
-            self.logak = tf.Variable(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
+            if self.data_model.is_hybrid: 
+                self.logak = [
+                    tf.Variable(np.log(ak_init), name="log_ak_surf", dtype=TF_DTYPE),
+                    tf.Variable(np.log(ak_init), name="log_ak_vol", dtype=TF_DTYPE),
+                ]
+            else:
+                self.logak = tf.Variable(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
         else:
             self.logak = tf.constant(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
-        self.ak = self.log_tf(tf.exp(self.logak, name="ak"))
+
+        # Convert from log space to real number space 
+        if self.data_model.is_hybrid: 
+            self.ak = [
+                self.log_tf(tf.exp(self.logak[0], name="ak_surf")), 
+                self.log_tf(tf.exp(self.logak[1], name="ak_vol"))
+            ]
+        else:
+            self.ak = self.log_tf(tf.exp(self.logak, name="ak"))
 
         self.q1 = kwargs.get('gamma_q1', 1.0)
         self.q2 = kwargs.get('gamma_q2', 10)
+        print("gamma q1", self.q1)
+        print("gamma q2", self.q2)
 
     def mean_log_pdf(self, samples):
         r"""
@@ -278,17 +298,41 @@ class MRFSpatialPrior(Prior):
         # Method 1: x * (D @ x), existing approach gives a node-wise quantity 
         # which is NOT the mathmetical SSD per node (but the sum across all 
         # nodes is equivalent)
-        samples = tf.reshape(samples, (self.nnodes, -1)) # [W,N]
-        D = self.laplacian # [W, W]
-        Dx = self.log_tf(tf.sparse.sparse_dense_matmul(D, samples)) # [W,N]
-        xDx = self.log_tf(samples * Dx, name="xDx") # [W,N]
-        log_ak = tf.identity(0.5 * self.logak, name="log_ak")
-        half_ak_xDx = tf.identity(0.5 * self.ak * xDx, name="half_ak_xDx")
-        logP = log_ak + half_ak_xDx
-        mean_logP = tf.reduce_mean(logP)
 
-        # Optional extra: cost from gamma prior on ak. 
-        mean_logP += (((self.q1-1) * self.logak) - self.ak / self.q2)
+        def _calc_xDx(D, x):
+            Dx = self.log_tf(tf.sparse.sparse_dense_matmul(D, x)) # [W,N]
+            xDx = self.log_tf(x * Dx, name="xDx") # [W,N]
+            return xDx 
+
+        samples = tf.reshape(samples, (self.nnodes, -1)) # [W,N]
+
+        if self.data_model.is_hybrid: 
+            surf_samples = samples[self.data_model.surf_slicer]
+            vol_samples = samples[self.data_model.vol_slicer]
+
+            xDx_s = _calc_xDx(self.surf_laplacian, surf_samples)
+            xDx_v = _calc_xDx(self.vol_laplacian, vol_samples)
+
+            ak_xDx_s = tf.identity(0.5 * self.ak[0] * xDx_s, name="half_ak_xDx_s")
+            ak_xDx_v = tf.identity(0.5 * self.ak[1] * xDx_v, name="half_ak_xDx_v")
+
+            logP_s = tf.reduce_mean((0.5 * self.logak[0]) + ak_xDx_s)
+            logP_v = tf.reduce_mean((0.5 * self.logak[1]) + ak_xDx_v)
+
+            gamma_s = (((self.q1-1) * self.logak[0]) - self.ak[0] / self.q2)
+            gamma_v = (((self.q1-1) * self.logak[1]) - self.ak[1] / self.q2)
+
+            return logP_s + logP_v + gamma_s + gamma_v
+
+        else: 
+            xDx = _calc_xDx(self.laplacian, samples)
+            log_ak = tf.identity(0.5 * self.logak, name="log_ak")
+            half_ak_xDx = tf.identity(0.5 * self.ak * xDx, name="half_ak_xDx")
+            logP = log_ak + half_ak_xDx
+            mean_logP = tf.reduce_mean(logP)
+
+            # Optional extra: cost from gamma prior on ak. 
+            mean_logP += (((self.q1-1) * self.logak) - self.ak / self.q2)
         return mean_logP
 
     def __str__(self):
