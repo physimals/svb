@@ -415,9 +415,12 @@ def run(data, model_name, output, mask=None, **kwargs):
     # Node-wise parameter history 
     if kwargs.get("save_param_history", False):
         param_history = training_history["node_params"]
+        ak_history = training_history["ak"]
         for idx, param in enumerate(params):
             phist = param_history[...,idx]
             name = f"mean_{param.name}_history"
+            akname = os.path.join(output, f"{param.name}_ak_history.txt")
+            np.savetxt(akname, ak_history[:,idx])
             if 'nii' in outformat: 
                 p = makevpath(name)
                 data_model.nifti_image(phist[vslice,:]).to_filename(p)
@@ -427,7 +430,7 @@ def run(data, model_name, output, mask=None, **kwargs):
     # Model fit across all timepoints (note this can only be a nii volume)
     if kwargs.get("save_model_fit", False):
         p = makevpath("modelfit")
-        data_model.nifti_image(svb.modelfit).to_filename(p)
+        # data_model.nifti_image(svb.modelfit).to_filename(p)
 
     # Posterior (means and upper half of covariance matrix)
     # FIXME: surface is written out as a GIFTI series following the same 

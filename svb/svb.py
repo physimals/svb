@@ -795,7 +795,7 @@ class SvbFit(LogBase):
                         subvar = param_vars[subcort_inds,:].mean(0)
                         space_strings.append("ROIs: param means %s, param vars %s" 
                                             % (submean, subvar))
-                    end_str = ("noise mean/var %s, ak %s, lr %.4g, ss %.4g" 
+                    end_str = ("Noise mean/var %s, ak %s, lr %.4g, ss %.4g" 
                                 % (mean_noise_params, aks, current_lr, current_ss))
                 state_str = ("\n"+10*" ").join((first_line, *space_strings, end_str))
                 self.log.info(" - Epoch %04d: %s - %s", epoch, state_str, outcome)
@@ -841,12 +841,6 @@ class SvbFit(LogBase):
                 ak = 0
             aks.append(ak)
         training_history["ak"][-1,:] = np.array(aks)
-
-        # Evaluate full model prediction across all time points 
-        with tf.Session() as sess: 
-            modelfit_n = self.model.evaluate([*param_means.T], self.model.tpts())
-            modelfit_v = self.data_model.nodes_to_voxels(modelfit_n)
-            self.modelfit = sess.run(modelfit_v)
 
         # Return training history
         return training_history
