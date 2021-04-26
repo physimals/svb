@@ -821,7 +821,7 @@ class SvbFit(LogBase):
                         subvar = param_vars[subcort_inds,:].mean(0)
                         space_strings.append("ROIs: param means %s, param vars %s" 
                                             % (submean, subvar))
-                    end_str = ("noise mean/var %s, lr %.4g, ss %.4g" 
+                    end_str = ("Noise mean/var %s, lr %.4g, ss %.4g" 
                                 % (mean_noise_params, current_lr, current_ss))
                 state_str = ("\n"+10*" ").join((first_line, *space_strings, end_str))
                 self.log.info(" - Epoch %04d: %s - %s", epoch, state_str, outcome)
