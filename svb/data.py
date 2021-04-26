@@ -13,7 +13,7 @@ import toblerone
 from toblerone import utils
 from regtricks import ImageSpace
 
-from .utils import LogBase, NP_DTYPE
+from .utils import LogBase, NP_DTYPE, TF_DTYPE
 
 class DataModel(LogBase):
     """
@@ -28,7 +28,7 @@ class DataModel(LogBase):
 
         self.nii, self.data_vol = self._get_data(data)
         while self.data_vol.ndim < 4:
-            self.data_vol = self.data_vol[np.newaxis, ...]
+            self.data_vol = self.data_vol[...,None]
 
         self.shape = list(self.data_vol.shape)[:3]
         self.n_tpts = self.data_vol.shape[3]
@@ -538,7 +538,7 @@ class HybridModel(SurfaceModel):
         surf_adj = self.projector.adjacency_matrix(distance_weight)
         vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, distance_weight)
         roi_adj = sparse.csr_matrix(2*(self.projector.n_subcortical_nodes,), 
-                                    dtype=np.float32)
+                                    dtype=NP_DTYPE)
         return sparse.block_diag([surf_adj, vol_adj, roi_adj]).astype(NP_DTYPE)
 
     def _calc_laplacian_matrix(self, vox_size, distance_weight=1):
@@ -560,7 +560,7 @@ class HybridModel(SurfaceModel):
         vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, distance_weight)
         vol_lap = _convert_adjacency_to_laplacian(vol_adj)
         roi_lap = sparse.csr_matrix(2*(self.projector.n_subcortical_nodes,), 
-                                    dtype=np.float32)
+                                    dtype=NP_DTYPE)
         return sparse.block_diag([surf_lap, vol_lap, roi_lap]).astype(NP_DTYPE)
 
     @property

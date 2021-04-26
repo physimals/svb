@@ -7,6 +7,7 @@ Examples::
         --model=aslrest --epochs=200 --output=svb_out
 """
 import os
+import os.path as op 
 import sys
 import logging
 import logging.config
@@ -91,13 +92,7 @@ class SvbArgumentParser(argparse.ArgumentParser):
                          dest="suppress_nan",
                          help="Do not suppress NaN values in posterior",
                          action="store_false", default=True)      
-        group.add_argument("--pvcorr", 
-                         help="Perform PVEc (volumetric mode only, this is automatic in surface or hybrid mode)", action='store_true', default=False)
-        group.add_argument("--pvgm", 
-                         help="GM PV estimates for PVEc")     
-        group.add_argument("--pvwm", 
-                         help="GM PV estimates for PVEc")     
-
+   
         group = self.add_argument_group("Training options")
         group.add_argument("--epochs",
                          help="Number of training epochs",
@@ -363,6 +358,7 @@ def run(data, model_name, output, mask=None, **kwargs):
     makepathbase = lambda s: os.path.join(output, s)
     makevpath = lambda s: makepathbase(f"{s}.nii.gz")
     makespath = lambda s,side: makepathbase(f"{s}_{side}_cortex.func.gii")
+    makecpath = lambda s: makepathbase(s)
     gifti_writer = partial(_write_giftis, 
                             data_model=data_model, path_gen=makespath)
 
@@ -378,6 +374,8 @@ def run(data, model_name, output, mask=None, **kwargs):
                 data_model.nifti_image(mean[vslice]).to_filename(p)
             if 'gii' in outformat:
                 gifti_writer(mean[sslice], name)
+            if 'cii' in outformat: 
+                np.savez_compressed(makecpath(name), mean)
 
         # Variances   
         if kwargs.get("save_var", False):
@@ -389,6 +387,8 @@ def run(data, model_name, output, mask=None, **kwargs):
             if 'gii' in outformat:
                 sdata = variances[idx][sslice]
                 gifti_writer(sdata, name)
+            if 'cii' in outformat: 
+                np.savez_compressed(makecpath(name), mean)
 
         # Std deviations
         if kwargs.get("save_std", False):
@@ -399,6 +399,8 @@ def run(data, model_name, output, mask=None, **kwargs):
                 data_model.nifti_image(std[vslice]).to_filename(p)
             if 'gii' in outformat:
                 gifti_writer(std[sslice], name)
+            if 'cii' in outformat: 
+                np.savez_compressed(makecpath(name), mean)
 
     # Noise (volumetric only)
     if kwargs.get("save_noise", False):
@@ -430,6 +432,7 @@ def run(data, model_name, output, mask=None, **kwargs):
     # Model fit across all timepoints (note this can only be a nii volume)
     if kwargs.get("save_model_fit", False):
         p = makevpath("modelfit")
+        # FIXME: disabled 
         # data_model.nifti_image(svb.modelfit).to_filename(p)
 
     # Posterior (means and upper half of covariance matrix)
