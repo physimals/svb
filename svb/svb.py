@@ -617,6 +617,14 @@ class SvbFit(LogBase):
         self.log.info("Starting inference...")
         self.log.info(" - Number of training epochs: %i", epochs)
         self.log.info(" - %i voxels of %i time points (processed in %i batches of target size %i)" , n_voxels, n_timepoints, n_batches, batch_size)
+        if self.data_model.is_pure_surface:
+            self.log.info(" - Projector defines %d surface nodes:", 
+                self.data_model.projector.n_surf_nodes)
+        elif self.data_model.is_hybrid: 
+            self.log.info(" - Projector defines %d surface nodes and %d ROIs: %a", 
+                self.data_model.projector.n_surf_nodes, 
+                self.data_model.projector.n_subcortical_nodes,
+                self.data_model.projector.roi_names)
         self.log.info(" - Initial learning rate: %.5f (decay rate %.3f)", learning_rate, lr_decay_rate)
         self.log.info(" - Initial sample size: %i (increase factor %.3f)", sample_size, ss_increase_factor)
         if revert_post_trials > 0:
@@ -851,6 +859,8 @@ class SvbFit(LogBase):
                 mean_str.append("%s in volume" % param_means[vol_inds,:].mean(0))
             if surf_inds is not None: 
                 mean_str.append("%s on surface" % param_means[surf_inds,:].mean(0))
+            if subcort_inds is not None: 
+                mean_str.append("%s in ROIs" % param_means[subcort_inds,:].mean(0))
             final_str.append("Final parameter means: " + ", ".join(mean_str))
             final_str.append("Final noise variance in volume: %.4g" % mean_noise_params[0])
 

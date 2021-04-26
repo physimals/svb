@@ -28,7 +28,7 @@ class DataModel(LogBase):
 
         self.nii, self.data_vol = self._get_data(data)
         while self.data_vol.ndim < 4:
-            self.data_vol = self.data_vol[np.newaxis, ...]
+            self.data_vol = self.data_vol[...,None]
 
         self.shape = list(self.data_vol.shape)[:3]
         self.n_tpts = self.data_vol.shape[3]
