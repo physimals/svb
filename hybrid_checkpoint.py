@@ -39,7 +39,7 @@ asl_model = AslRestModel(data_model,
             plds=plds, repeats=repeats, casl=True)
 
 ATT = [1.3, 1.6]
-SNR = 20
+SNR = 30
 
 inds = np.indices(projector.spc.size)
 scale = 3
@@ -54,7 +54,7 @@ ctx_sine = interpolate.interpn(
         xi=LMS.points
     )
 
-ctx_cbf = 60 + (20 * np.maximum(ctx_sine, 0))
+ctx_cbf = 60 + (20 * ctx_sine)
 ctx_att = 1.3 * np.ones_like(ctx_cbf)
 LMS.save_metric(ctx_cbf, 'L_ctx_sine.func.gii')
 
@@ -75,7 +75,7 @@ with tf.Session() as sess:
             [ cbf.astype(np.float32), att.astype(np.float32) ], tpts))
 
 data = projector.node2vol(data, edge_scale=True).reshape(*ref_spc.size, -1)
-noise_var = (data.max() * np.sqrt(repeats)) / SNR 
+noise_var = (data.mean(-1).max() * np.sqrt(repeats)) / SNR 
 data[mask,:] += np.random.normal(0, noise_var, size=data[mask,:].shape)
 ref_spc.save_image(data, 'hybrid_simdata.nii.gz')
 
@@ -100,7 +100,7 @@ options = {
     "save_param_history": True, 
 
     'gamma_q1': 1.0, 
-    'gamma_q2': 10, 
+    'gamma_q2': 0.5, 
 
     # "param_overrides": {
     #     "delttiss": {

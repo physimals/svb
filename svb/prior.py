@@ -10,7 +10,7 @@ try:
 except ImportError:
     import tensorflow as tf
 
-from .utils import LogBase, TF_DTYPE
+from .utils import LogBase, TF_DTYPE, scipy_to_tf_sparse
 from .dist import Normal
 
 PRIOR_TYPE_NONSPATIAL = "N"
