@@ -27,9 +27,9 @@ ref_spc = projector.spc
 LMS = tob.Surface('103818.L.very_inflated.32k_fs_LR.surf.gii')
 LMS = LMS.transform(ref_spc.world2vox)
 
-plds = np.arange(0.75, 2.0, 0.25)
+plds = np.arange(0.5, 1.75, 0.25)
 # plds = [1.5]
-repeats = 10
+repeats = 8
 data = np.zeros((*ref_spc.size, len(plds) * repeats))
 mask = (projector.pvs()[...,:2] > 0.01).any(-1)
 
@@ -39,7 +39,7 @@ asl_model = AslRestModel(data_model,
             plds=plds, repeats=repeats, casl=True)
 
 ATT = [1.3, 1.6]
-SNR = 30
+SNR = 8
 
 inds = np.indices(projector.spc.size)
 scale = 3
@@ -65,7 +65,7 @@ with tf.Session() as sess:
 
     cbf = np.concatenate([
             ctx_cbf[:,None],
-            20 * np.ones([nvox, 1]), 
+            np.random.normal(20, 2, size=[nvox, 1]), 
     ])
     att = np.concatenate([
             ctx_att[:,None],
@@ -84,7 +84,7 @@ LMS.save_metric(data_surf, 'hybrid_simdata_mean_proj.func.gii')
 
 options = {
     "mode": "hybrid",
-    "learning_rate" : 0.1,
+    "learning_rate" : 0.3,
     "batch_size" : len(plds),
     "sample_size" : 5,
     "epochs" : 500,
@@ -100,7 +100,7 @@ options = {
     "save_param_history": True, 
 
     'gamma_q1': 1.0, 
-    'gamma_q2': 0.5, 
+    'gamma_q2': 10, 
 
     # "param_overrides": {
     #     "delttiss": {
