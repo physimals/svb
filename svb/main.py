@@ -408,12 +408,20 @@ def run(data, model_name, output, mask=None, **kwargs):
         data_model.nifti_image(noise).to_filename(p)
 
     # Reconstruction cost (volumetric only)
-    cost_history_v = training_history["reconstruction_cost"]
+    recon = training_history["reconstruction_cost"]
+    latent = training_history["param_latent_loss"]
+    noise = training_history["noise_latent_loss"]
     if kwargs.get("save_cost", False):
-        data_model.nifti_image(cost_history_v[..., -1]).to_filename(makevpath("cost"))
+        data_model.nifti_image(recon[...,-1]).to_filename(makevpath("reconstruction_cost"))
+        data_model.nifti_image(noise[...,-1]).to_filename(makevpath("noise_latent_cost"))
+        p = op.join(output, 'param_latent_cost.npz')
+        np.savez_compressed(p, latent[...,-1])
     if kwargs.get("save_cost_history", False):
-        data_model.nifti_image(cost_history_v).to_filename(makevpath("cost_history"))
-
+        data_model.nifti_image(recon).to_filename(makevpath("reconstruction_history"))
+        data_model.nifti_image(noise).to_filename(makevpath("noise_latent_history"))
+        p = op.join(output, 'param_latent_history.npz')
+        np.savez_compressed(p, latent)
+        
     # Node-wise parameter history 
     if kwargs.get("save_param_history", False):
         param_history = training_history["node_params"]
