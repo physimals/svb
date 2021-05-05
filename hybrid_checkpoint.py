@@ -27,8 +27,7 @@ ref_spc = projector.spc
 LMS = tob.Surface('103818.L.very_inflated.32k_fs_LR.surf.gii')
 LMS = LMS.transform(ref_spc.world2vox)
 
-plds = np.arange(0.5, 1.75, 0.25)
-# plds = [1.5]
+plds = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
 repeats = 8
 data = np.zeros((*ref_spc.size, len(plds) * repeats))
 mask = (projector.pvs()[...,:2] > 0.01).any(-1)
@@ -39,7 +38,8 @@ asl_model = AslRestModel(data_model,
             plds=plds, repeats=repeats, casl=True)
 
 ATT = [1.3, 1.6]
-SNR = 8
+SNR = 12
+N_VAR = 58 * np.sqrt(len(plds) * repeats) / SNR 
 
 inds = np.indices(projector.spc.size)
 scale = 3
@@ -54,7 +54,7 @@ ctx_sine = interpolate.interpn(
         xi=LMS.points
     )
 
-ctx_cbf = 60 + (20 * ctx_sine)
+ctx_cbf = 60 + (25 * ctx_sine)
 ctx_att = 1.3 * np.ones_like(ctx_cbf)
 LMS.save_metric(ctx_cbf, 'L_ctx_sine.func.gii')
 
@@ -65,7 +65,7 @@ with tf.Session() as sess:
 
     cbf = np.concatenate([
             ctx_cbf[:,None],
-            np.random.normal(20, 2, size=[nvox, 1]), 
+            20 * np.ones([nvox, 1]), 
     ])
     att = np.concatenate([
             ctx_att[:,None],
@@ -75,8 +75,7 @@ with tf.Session() as sess:
             [ cbf.astype(np.float32), att.astype(np.float32) ], tpts))
 
 data = projector.node2vol(data, edge_scale=True).reshape(*ref_spc.size, -1)
-noise_var = (data.mean(-1).max() * np.sqrt(repeats)) / SNR 
-data[mask,:] += np.random.normal(0, noise_var, size=data[mask,:].shape)
+data[mask,:] += np.random.normal(0, N_VAR, size=data[mask,:].shape)
 ref_spc.save_image(data, 'hybrid_simdata.nii.gz')
 
 data_surf = projector.vol2surf(data.mean(-1).flatten(), edge_scale=False)
@@ -84,10 +83,10 @@ LMS.save_metric(data_surf, 'hybrid_simdata_mean_proj.func.gii')
 
 options = {
     "mode": "hybrid",
-    "learning_rate" : 0.3,
+    "learning_rate" : 0.5,
     "batch_size" : len(plds),
     "sample_size" : 5,
-    "epochs" : 500,
+    "epochs" : 1000,
     "log_stream" : sys.stdout,
     "mask" : mask,
     "projector" : projector,
@@ -98,15 +97,11 @@ options = {
     "save_model_fit": True, 
     "display_step": 10, 
     "save_param_history": True, 
+    "save_cost": True, 
+    "save_cost_history": True, 
 
     'gamma_q1': 1.0, 
-    'gamma_q2': 10, 
-
-    # "param_overrides": {
-    #     "delttiss": {
-    #         "prior_type": "N"
-    #     }
-    # }
+    'gamma_q2': 100, 
 
 }
 
