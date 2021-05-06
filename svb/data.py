@@ -519,8 +519,10 @@ class HybridModel(SurfaceModel):
 
         self.adj_matrix = self._calc_adjacency_matrix(vox_size, distance_weight=1)
         vol_adj = _calc_volumetric_adjacency(self.mask_vol, vox_size, 1)
+        in_weight = kwargs.get('laplacian_in_weight', 100)
+        print('Laplacian in weight', in_weight)
         self.laplacian = [ 
-            self.projector.discriminated_laplacian(distance_weight=1, in_weight=1000),
+            self.projector.discriminated_laplacian(distance_weight=1, in_weight=in_weight),
             _convert_adjacency_to_laplacian(vol_adj) ]
 
     def _calc_adjacency_matrix(self, vox_size, distance_weight=0):
