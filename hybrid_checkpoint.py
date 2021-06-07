@@ -38,8 +38,8 @@ asl_model = AslRestModel(data_model,
             plds=plds, repeats=repeats, casl=True)
 
 ATT = [1.3, 1.6]
-SNR = 12
-N_VAR = 58 * np.sqrt(len(plds) * repeats) / SNR 
+SNR = 10
+N_VAR = 42 * np.sqrt(len(plds) * repeats) / SNR 
 
 inds = np.indices(projector.spc.size)
 scale = 3
@@ -86,19 +86,20 @@ options = {
     "learning_rate" : 0.5,
     "batch_size" : len(plds),
     "sample_size" : 5,
-    "epochs" : 1000,
+    "epochs" : 500,
     "log_stream" : sys.stdout,
     "mask" : mask,
     "projector" : projector,
     "plds": plds, 
     "repeats": repeats, 
     "casl": True, 
-    "prior_type": "M",
+    "prior_type": "N",
     "save_model_fit": True, 
     "display_step": 10, 
     "save_param_history": True, 
     "save_cost": True, 
     "save_cost_history": True, 
+    "save_var": True,
 
     'gamma_q1': 1.0, 
     'gamma_q2': 100, 
